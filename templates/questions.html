@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Question Workspace</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #f7f7f7; color: #111; }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 14px; }
+      .top { margin-bottom: 10px; }
+      .card { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+      .q { border: 1px solid #e1e4ea; border-radius: 8px; padding: 10px; margin-top: 8px; background: #fcfcff; }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid #999; font-size: 12px; }
+      .badge.open { background: #fff7d8; }
+      .badge.resolved { background: #e1f5e6; }
+      .meta { font-size: 12px; color: #334155; margin-top: 6px; }
+      .upd { margin-top: 8px; border-top: 1px solid #eceff4; padding-top: 8px; }
+      blockquote { margin: 6px 0; padding: 8px 10px; background: #f3f5f7; border-left: 3px solid #9aa5b1; }
+      .guidance { border: 1px solid #d6e3f5; border-radius: 8px; background: #f5faff; padding: 10px; margin-top: 8px; }
+      .req-validation { margin-top: 6px; font-size: 11px; color: #334155; background: #f5f8ff; border: 1px solid #d9e3f7; border-radius: 6px; padding: 6px; }
+      pre { white-space: pre-wrap; margin: 0; }
+      a { color: #2255aa; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <a href="/?actor_id={{ actor_id }}">← Back to dashboard</a>
+        <h1>Question Workspace: {{ notebook.actor.display_name }}</h1>
+      </div>
+      <div class="card">
+        <strong>Open questions:</strong> {{ notebook.counts.open_questions }}
+      </div>
+
+      {% if notebook.requirements %}
+      <div class="card">
+        <h2>Generated Requirements (Validation)</h2>
+        {% for req in notebook.requirements %}
+        <div class="q">
+          <div>
+            <span class="badge">{{ req.req_type }}</span>
+            <span class="badge {% if req.status == 'open' %}open{% else %}resolved{% endif %}">{{ req.status }}</span>
+            <strong>{{ req.requirement_text }}</strong>
+          </div>
+          <div class="req-validation">
+            <strong>Validation:</strong> {{ req.validation_score }}/10<br />
+            <strong>Checks:</strong> {{ req.validation_notes or 'passed' }}
+          </div>
+          {% if req.source_url %}
+          <div class="meta"><a href="{{ req.source_url }}" target="_blank" rel="noreferrer">{{ req.source_name or req.source_url }}</a></div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="card">
+        <h2>Question Threads</h2>
+        {% for thread in notebook.threads %}
+        <div class="q">
+          <div>
+            <strong>{{ thread.question_text }}</strong>
+            <span class="badge {% if thread.status == 'open' %}open{% else %}resolved{% endif %}">{{ thread.status }}</span>
+          </div>
+          <div class="meta">Created: {{ thread.created_at }} | Updated: {{ thread.updated_at }}</div>
+
+          {% for update in thread.updates %}
+          <div class="upd">
+            <div><strong>{{ update.source_name }}</strong> | <a href="{{ update.source_url }}" target="_blank" rel="noreferrer">{{ update.source_url }}</a></div>
+            <div class="meta">Published: {{ update.source_published_at or 'unknown' }}</div>
+            <blockquote>{{ update.trigger_excerpt }}</blockquote>
+          </div>
+          {% endfor %}
+
+          {% if thread.status == 'open' %}
+          <form method="post" action="/questions/{{ thread.id }}/resolve">
+            <input type="hidden" name="actor_id" value="{{ actor_id }}" />
+            <button type="submit">Resolve</button>
+          </form>
+          {% endif %}
+
+          {% for entry in notebook.guidance_for_open %}
+          {% if entry.thread_id == thread.id %}
+            {% for guidance in entry.guidance_items %}
+            <div class="guidance">
+              <div><strong>{{ guidance.platform }}</strong></div>
+              <div><strong>What to look for</strong><pre>{{ guidance.what_to_look_for }}</pre></div>
+              <div><strong>Where to look</strong><pre>{{ guidance.where_to_look }}</pre></div>
+              {% if guidance.query_hint %}
+              <div><strong>Query hint:</strong> {{ guidance.query_hint }}</div>
+              {% endif %}
+            </div>
+            {% endfor %}
+          {% endif %}
+          {% endfor %}
+        </div>
+        {% else %}
+        <p>No question threads yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </body>
+</html>

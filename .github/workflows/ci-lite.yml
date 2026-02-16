@@ -1,0 +1,41 @@
+name: ci-lite
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_pytest:
+        description: "Run pytest lane (optional)"
+        required: false
+        default: "false"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest ruff
+
+      - name: Compile check
+        run: |
+          python -m compileall -q app.py tests
+
+      - name: Lint (minimal, deterministic)
+        run: |
+          ruff check --select F,E9 app.py tests
+
+      - name: Optional pytest
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_pytest == 'true' }}
+        run: |
+          pytest -q

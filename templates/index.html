@@ -1,0 +1,456 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Threat Actor Tracker</title>
+    {% if notebook and notebook.actor.notebook_status == 'running' %}
+    <meta http-equiv="refresh" content="4" />
+    {% endif %}
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #f7f7f7; color: #111; }
+      .layout { display: grid; grid-template-columns: 320px 1fr; min-height: 100vh; }
+      .sidebar { background: #1e2430; color: #fff; padding: 16px; }
+      .sidebar h1 { font-size: 20px; margin: 0 0 12px; }
+      .sidebar h3 { margin-top: 18px; }
+      .actor-list { list-style: none; padding: 0; margin: 0 0 16px; }
+      .actor-list li { margin-bottom: 8px; }
+      .actor-link { display: block; padding: 10px; border-radius: 8px; color: #fff; text-decoration: none; background: #2b3445; }
+      .actor-link.selected { background: #3f5f9a; }
+      .actor-name { font-weight: bold; display: block; }
+      .actor-scope { font-size: 12px; opacity: 0.9; margin-top: 4px; }
+      .actor-row { display: flex; gap: 8px; align-items: center; }
+      .actor-row form { margin: 0; display: inline; }
+      .actor-row button { padding: 6px 8px; border-radius: 6px; border: 0; background: #50627f; color: #fff; cursor: pointer; }
+      .sidebar form { display: grid; gap: 8px; }
+      .sidebar input, .sidebar textarea, .sidebar button { padding: 8px; border-radius: 6px; border: 1px solid #6c7586; }
+      .sidebar button { background: #4a7bd0; color: #fff; border: 0; cursor: pointer; }
+      .main { padding: 14px; }
+      .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+      .card { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin-bottom: 0; }
+      .card.span-2 { grid-column: 1 / -1; }
+      .section-title { margin-top: 0; margin-bottom: 8px; font-size: 17px; }
+      .section-body { padding-right: 2px; }
+      .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(100px, 1fr)); gap: 8px; }
+      .meta-box { background: #f1f4f8; border-radius: 8px; padding: 10px; }
+      .event { border-left: 3px solid #3f5f9a; margin: 6px 0; padding: 6px 8px; background: #f8fbff; }
+      .timeline-graphic { position: relative; margin: 10px 0 0 6px; padding-left: 28px; }
+      .timeline-graphic::before { content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 3px; background: #c7d7ef; }
+      .timeline-node { position: relative; margin: 0 0 14px; padding: 10px; border: 1px solid #d8e1ef; border-radius: 8px; background: #f9fbff; }
+      .timeline-node::before { content: ""; position: absolute; left: -24px; top: 14px; width: 12px; height: 12px; border-radius: 50%; background: #3f5f9a; }
+      .timeline-row { display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: start; margin-bottom: 10px; }
+      .timeline-date { font-size: 12px; color: #334155; }
+      .timeline-bar { height: 8px; border-radius: 999px; background: linear-gradient(90deg, #4a7bd0, #9bb7e8); margin: 6px 0 10px; }
+      .timeline-meta { font-size: 12px; color: #334155; margin-top: 4px; }
+      .timeline-ataglance { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: start; margin-bottom: 10px; }
+      .deviation-strip { border: 1px solid #dce7f8; border-radius: 8px; background: #f7fbff; padding: 8px; }
+      .deviation-strip h4 { margin: 0 0 6px; font-size: 13px; }
+      .chip-line { display: flex; flex-wrap: wrap; gap: 6px; }
+      .chip { display: inline-block; font-size: 11px; border-radius: 999px; border: 1px solid #9db2d3; padding: 2px 8px; background: #eef4ff; }
+      .chip.alert { border-color: #e4b26b; background: #fff6e7; }
+      .mini-graph { border: 1px solid #dce7f8; border-radius: 8px; padding: 8px; background: #fbfdff; }
+      .mini-graph h4 { margin: 0 0 6px; font-size: 13px; }
+      .graph-cols { display: flex; align-items: flex-end; gap: 6px; min-height: 110px; }
+      .graph-col { width: 28px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+      .stack { width: 20px; height: 100px; border-radius: 6px; border: 1px solid #d8e1ef; display: flex; flex-direction: column-reverse; overflow: hidden; background: #f1f4fa; }
+      .stack-seg { width: 100%; }
+      .graph-label { font-size: 10px; color: #4a5568; }
+      .graph-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 8px; font-size: 11px; color: #334155; }
+      .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+      .legend-swatch { width: 10px; height: 10px; border-radius: 2px; border: 1px solid #c9d3e5; }
+      .timeline-footer-link { margin-top: 8px; font-size: 12px; }
+      .priority-strip { background: #fff; border: 1px solid #dfe6f3; border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+      .decision-queue { margin-bottom: 0; }
+      .decision-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+      .phase-block { margin-bottom: 8px; }
+      .phase-title { font-size: 11px; text-transform: uppercase; letter-spacing: .02em; color: #475569; margin: 0 0 4px; }
+      .dq-card { border: 1px solid #e3e9f5; border-radius: 8px; padding: 7px 8px; background: #fbfdff; margin-bottom: 6px; }
+      .dq-line { font-size: 12px; line-height: 1.25; color: #1f2937; margin: 2px 0; }
+      .dq-line strong { font-weight: 600; }
+      .deemphasized { opacity: 0.75; }
+      .summary-list { margin: 8px 0 0; padding-left: 18px; }
+      .summary-list li { margin: 4px 0; font-size: 13px; }
+      .kpi-strip { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px; }
+      .kpi-card { background: #fff; border: 1px solid #dfe6f3; border-radius: 10px; padding: 8px 10px; }
+      .kpi-label { font-size: 11px; color: #475569; text-transform: uppercase; letter-spacing: .02em; }
+      .kpi-value { font-size: 18px; font-weight: 700; margin-top: 2px; }
+      .priority-list { display: grid; gap: 6px; }
+      .priority-item { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: start; border: 1px solid #edf1f7; border-radius: 8px; padding: 6px 8px; background: #fbfdff; }
+      .priority-body { display: grid; gap: 4px; }
+      .priority-q { font-size: 13px; line-height: 1.3; }
+      .priority-meta { font-size: 11px; color: #475569; line-height: 1.25; }
+      .pbadge { display: inline-block; border-radius: 999px; padding: 2px 8px; border: 1px solid #aeb8c5; font-size: 11px; }
+      .pbadge.high { background: #ffe9e8; border-color: #e5a7a4; }
+      .pbadge.medium { background: #fff6df; border-color: #e6cb86; }
+      .pbadge.low { background: #edf7ed; border-color: #a8d0aa; }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid #888; }
+      .badge.open { background: #fff7d8; }
+      .badge.resolved { background: #e1f5e6; }
+      .source-item { border-bottom: 1px solid #e3e3e3; padding: 8px 0; }
+      .question { border: 1px solid #ddd; border-radius: 8px; padding: 8px; margin: 8px 0; }
+      blockquote { margin: 6px 0; padding: 8px 10px; background: #f3f5f7; border-left: 3px solid #9aa5b1; }
+      .guidance { border: 1px solid #d6e3f5; border-radius: 8px; background: #f5faff; padding: 10px; margin: 8px 0; }
+      .notice { background: #fff6d9; border: 1px solid #e1cc78; border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; }
+      .top-status-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+      .status-chip { margin-bottom: 0; padding: 4px 8px; font-size: 11px; line-height: 1.25; width: fit-content; max-width: 340px; border-radius: 999px; }
+      .status-chip strong { font-weight: 600; }
+      .status-running { background: #eef6ff; border-color: #a7c2ea; }
+      .status-ready { background: #eaf9ef; border-color: #9fd2ac; }
+      .status-error { background: #ffeceb; border-color: #e4a8a3; }
+      .status-idle { background: #f4f5f7; border-color: #c8ced8; }
+      .status-warning { background: #fff6e8; border-color: #e8c885; }
+      .status-llm-ok { background: #eaf9ef; border-color: #9fd2ac; }
+      .status-llm-bad { background: #ffeceb; border-color: #e4a8a3; }
+      .status-working { background: #eef6ff; border-color: #8fb2e8; }
+      .progress-wrap { margin-top: 4px; background: #dfe9f7; border-radius: 999px; height: 6px; overflow: hidden; width: 120px; }
+      .progress-bar { height: 6px; width: 35%; background: #4a7bd0; border-radius: 999px; animation: loading 1.1s linear infinite; }
+      @keyframes loading { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+      .empty { padding: 40px; text-align: center; background: #fff; border: 1px dashed #bbb; border-radius: 8px; }
+      pre { white-space: pre-wrap; margin: 0; }
+      .track-grid { display: grid; gap: 8px; }
+      .track-row { display: flex; justify-content: space-between; align-items: center; border: 1px solid #ddd; border-radius: 8px; padding: 8px; }
+      .mini-form { display: inline; }
+      .mini-form button { padding: 6px 10px; }
+      details.compact { border: 1px solid #e3e3e3; border-radius: 8px; padding: 6px 8px; margin-top: 8px; background: #fafafa; }
+      details.compact > summary { cursor: pointer; font-weight: 600; }
+      .sidebar-card { margin-top: 14px; padding-top: 12px; border-top: 1px solid #3d4658; }
+      .sidebar-card h3 { margin: 0 0 8px; }
+      .sidebar-card small { display: block; opacity: 0.9; margin-bottom: 8px; line-height: 1.35; }
+      .req-item { border: 1px solid #e3e3e3; border-radius: 8px; padding: 8px; margin-bottom: 8px; background: #fcfcff; }
+      .req-item p { margin: 6px 0; font-size: 13px; line-height: 1.35; }
+      .req-item form { margin-top: 6px; }
+      .req-validation { margin-top: 6px; font-size: 11px; color: #334155; background: #f5f8ff; border: 1px solid #d9e3f7; border-radius: 6px; padding: 6px; }
+      @media (max-width: 1180px) { .dashboard { grid-template-columns: 1fr; } .card.span-2 { grid-column: auto; } .timeline-ataglance { grid-template-columns: 1fr; } .kpi-strip { grid-template-columns: repeat(2, minmax(120px, 1fr)); } }
+      @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } .meta-grid { grid-template-columns: repeat(2, minmax(100px, 1fr)); } .status-chip { max-width: 100%; width: 100%; } }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <h1>Threat Actor Tracker</h1>
+        <h3>Tracked actors</h3>
+        <ul class="actor-list">
+          {% for actor in actors %}
+          <li>
+            <div class="actor-row">
+              <a class="actor-link {% if selected_actor_id == actor.id %}selected{% endif %}" href="/?actor_id={{ actor.id }}">
+                <span class="actor-name">{{ actor.display_name }}</span>
+              </a>
+              <form method="post" action="/actors/{{ actor.id }}/untrack">
+                <button type="submit">Untrack</button>
+              </form>
+            </div>
+          </li>
+          {% else %}
+          <li><span class="actor-scope">No tracked actors yet.</span></li>
+          {% endfor %}
+        </ul>
+
+        <h3>Add actor</h3>
+        <form method="post" action="/actors/new">
+          <input type="text" name="display_name" placeholder="Display name" required />
+          <button type="submit">Add actor</button>
+        </form>
+
+        {% if notebook %}
+        <div class="sidebar-card">
+          <h3>Requirements Builder</h3>
+          <small>Generate PIR/GIR/IR items using actor evidence, org context, and local LLM support.</small>
+          <form method="post" action="/actors/{{ notebook.actor.id }}/requirements/generate">
+            <label for="priority_mode">Priority Mode</label>
+            <select id="priority_mode" name="priority_mode">
+              <option value="Strategic" {% if notebook.requirements_context.priority_mode == 'Strategic' %}selected{% endif %}>Strategic (PIR)</option>
+              <option value="Operational" {% if notebook.requirements_context.priority_mode == 'Operational' %}selected{% endif %}>Operational (GIR)</option>
+              <option value="Tactical" {% if notebook.requirements_context.priority_mode == 'Tactical' %}selected{% endif %}>Tactical (IR)</option>
+            </select>
+            <label for="org_context">Org Context</label>
+            <textarea id="org_context" name="org_context" rows="4" placeholder="Critical assets, business unit, environment, constraints...">{{ notebook.requirements_context.org_context }}</textarea>
+            <button type="submit">Generate PIR/GIR/IR</button>
+          </form>
+          {% if notebook.requirements %}
+          <details class="compact">
+            <summary>Latest Requirements ({{ notebook.requirements | length }})</summary>
+            {% for req in notebook.requirements[:6] %}
+            <div class="req-item">
+              <div><span class="badge">{{ req.req_type }}</span> <span class="badge {% if req.status == 'open' %}open{% else %}resolved{% endif %}">{{ req.status }}</span></div>
+              <p><strong>{{ req.requirement_text }}</strong></p>
+              <div class="req-validation">
+                <strong>Validation:</strong> {{ req.validation_score }}/10<br />
+                <strong>Checks:</strong> {{ req.validation_notes or 'passed' }}
+              </div>
+              {% if req.source_url %}
+              <p><small><a href="{{ req.source_url }}" target="_blank" rel="noreferrer">{{ req.source_name or req.source_url }}</a></small></p>
+              {% endif %}
+              {% if req.status == 'open' %}
+              <form method="post" action="/requirements/{{ req.id }}/resolve">
+                <input type="hidden" name="actor_id" value="{{ notebook.actor.id }}" />
+                <button type="submit">Resolve</button>
+              </form>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </details>
+          {% endif %}
+        </div>
+        {% endif %}
+      </aside>
+
+      <main class="main">
+        <div class="top-status-row">
+          <div class="notice status-chip status-{{ notebook_health.state }}">
+            <strong>Notebook health:</strong> {{ notebook_health.message }}
+            {% if notebook and notebook.actor.notebook_status == 'running' %}
+            <div class="progress-wrap"><div class="progress-bar"></div></div>
+            {% endif %}
+          </div>
+          {% if notice %}
+          <div class="notice status-chip">{{ notice }}</div>
+          {% endif %}
+        </div>
+        {% if not notebook %}
+        <div class="empty">Select an actor to open the notebook.</div>
+        {% else %}
+        <div class="dashboard">
+        <section class="card">
+          <h2 class="section-title">1) Who are they?</h2>
+          <div class="section-body">
+          <p><strong>{{ notebook.actor.display_name }}</strong></p>
+          <p><strong>Common moves they use (top 3)</strong></p>
+          {% if notebook.top_techniques %}
+          <ul>
+            {% for technique in notebook.top_techniques[:3] %}
+            <li>
+              {% if technique.technique_url %}
+              <a href="{{ technique.technique_url }}" target="_blank" rel="noreferrer">
+                {{ technique.technique_id or 'Technique' }}
+              </a>
+              {% else %}
+              {{ technique.technique_id or 'Technique' }}
+              {% endif %}
+              - {{ technique.technique_name }}
+              {% if technique.phase %}
+              <small>({{ technique.phase.replace('_', ' ') }})</small>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p><small>No mapped technique profile available yet.</small></p>
+          {% endif %}
+          <ul class="summary-list">
+            <li><strong>Recent activity count:</strong> {{ notebook.kpis.activity_30d }}</li>
+            <li><strong>New techniques count:</strong> {{ notebook.kpis.new_techniques_30d }}</li>
+            <li><strong>Last checked:</strong> {{ notebook.kpis.last_verified_update }}</li>
+          </ul>
+          <details class="compact">
+            <summary>View profile</summary>
+            <p><small>Framework Group Match: {{ notebook.actor_profile_group_name }}</small></p>
+            <p>{{ notebook.actor_profile_summary }}</p>
+            <p><small>Source: <a href="{{ notebook.actor_profile_source_url }}" target="_blank" rel="noreferrer">{{ notebook.actor_profile_source_label }}</a></small></p>
+            <p><strong>Emerging techniques observed</strong></p>
+            {% if notebook.emerging_technique_ids %}
+            <p>{{ notebook.emerging_technique_ids | join(', ') }}</p>
+            {% else %}
+            <p><small>No new technique IDs observed yet in actor-specific recent reporting.</small></p>
+            {% endif %}
+          </details>
+          <p><small>Created: {{ notebook.actor_created_date }}</small></p>
+          </div>
+          {% if notebook.actor.is_tracked %}
+          <form method="post" action="/actors/{{ notebook.actor.id }}/untrack">
+            <button type="submit">Untrack actor</button>
+          </form>
+          {% else %}
+          <form method="post" action="/actors/{{ notebook.actor.id }}/track">
+            <button type="submit">Track actor</button>
+          </form>
+          {% endif %}
+          <div class="meta-grid">
+            <div class="meta-box deemphasized"><strong>Sources</strong><br />{{ notebook.counts.sources }}</div>
+            <div class="meta-box"><strong>Timeline events</strong><br />{{ notebook.counts.timeline_events }}</div>
+            <div class="meta-box"><strong>Open questions</strong><br />{{ notebook.counts.open_questions }}</div>
+            <div class="meta-box"><strong>Actor ID</strong><br />{{ notebook.actor.id }}</div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 class="section-title">2) What have they been up to recently?</h2>
+          {% if notebook.actor.notebook_status == 'running' %}
+          <div class="notice status-working">Source collection is running in the background. This section will populate automatically.</div>
+          {% endif %}
+          <div class="section-body">
+          {% set recent_change = notebook.get('recent_change_summary', {'new_reports': '0', 'targets': 'Not clear yet', 'damage': 'No clear damage outcome reported yet'}) %}
+          <p><strong>What changed recently:</strong></p>
+          <ul class="summary-list">
+            <li><strong>New reports:</strong> {{ recent_change.new_reports }}</li>
+            <li><strong>Who was targeted:</strong> {{ recent_change.targets }}</li>
+            <li><strong>Damage seen:</strong> {{ recent_change.damage }}</li>
+          </ul>
+          {% if notebook.recent_activity_highlights %}
+          <details class="compact">
+            <summary>Show evidence</summary>
+            {% if notebook.recent_activity_synthesis %}
+            <div class="event">
+              <ul>
+                {% for line in notebook.recent_activity_synthesis[:3] %}
+                <li>
+                  <strong>{{ line.label }}:</strong> {{ line.text }}
+                  <span class="badge">{{ line.confidence }}</span>
+                  <span class="badge">{{ line.lineage }}</span>
+                </li>
+                {% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+            <div class="event">
+              <div><strong>Evidence preview</strong></div>
+            {% for item in notebook.recent_activity_highlights[:2] %}
+            <div class="event">
+              <div><span class="badge">{{ item.date }}</span> <span class="badge">{{ item.category }}</span></div>
+              <div>{{ item.text }}</div>
+              {% if item.target_text %}
+              <div class="timeline-meta"><strong>Targeted:</strong> {{ item.target_text }}</div>
+              {% endif %}
+              {% if item.ttp_ids %}
+              <div class="timeline-meta"><strong>Techniques:</strong> {{ item.ttp_ids }}</div>
+              {% endif %}
+              {% if item.source_url %}
+              <div>Source: <a href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ item.source_name or item.source_url }}</a></div>
+              {% endif %}
+            </div>
+            {% endfor %}
+            <div class="timeline-footer-link"><a href="/actors/{{ notebook.actor.id }}/timeline/details">View all evidence</a></div>
+            </div>
+          </details>
+          {% else %}
+          <p>No recent activity summary yet.</p>
+          {% endif %}
+
+          </div>
+
+          <details class="compact">
+            <summary>Ingest Actions</summary>
+            <h3>Add source by URL</h3>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/sources">
+              <p><input type="url" name="source_url" placeholder="https://..." required style="width: 100%;" /></p>
+              <p><button type="submit">Fetch and add source</button></p>
+            </form>
+
+            <h3>Add IOCs</h3>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/iocs">
+              <p>
+                <select name="ioc_type">
+                  <option value="ip">IP</option>
+                  <option value="domain">Domain</option>
+                  <option value="hash">Hash</option>
+                  <option value="url">URL</option>
+                  <option value="email">Email</option>
+                  <option value="indicator" selected>Indicator</option>
+                </select>
+              </p>
+              <p><input type="text" name="source_ref" placeholder="Source reference (optional)" style="width: 100%;" /></p>
+              <p><textarea name="ioc_values" rows="4" placeholder="One IOC per line or comma-separated" required style="width: 100%;"></textarea></p>
+              <p><button type="submit">Save IOCs</button></p>
+            </form>
+
+            <form method="post" action="/actors/{{ notebook.actor.id }}/sources/import-feeds">
+              <button type="submit">Import established CTI RSS sources</button>
+            </form>
+
+            <form method="post" action="/actors/{{ notebook.actor.id }}/refresh">
+              <button type="submit">Refresh notebook</button>
+            </form>
+          </details>
+
+          {% if notebook.ioc_items %}
+          <details class="compact">
+            <summary>Recent IOCs</summary>
+            <div class="section-body">
+              {% for ioc in notebook.ioc_items[:20] %}
+              <div><span class="badge">{{ ioc.ioc_type }}</span> {{ ioc.ioc_value }}{% if ioc.source_ref %} ({{ ioc.source_ref }}){% endif %}</div>
+              {% endfor %}
+            </div>
+          </details>
+          {% endif %}
+        </section>
+
+        {% if notebook.priority_phase_groups %}
+        <section class="card span-2 decision-queue">
+          <div class="decision-header">
+            <h2 class="section-title" style="margin:0;">3) What should I check first?</h2>
+            <a href="/actors/{{ notebook.actor.id }}/questions">Open workspace</a>
+          </div>
+          <p class="deemphasized" style="margin:0 0 8px;">
+            Based on what this group has been doing recently, here are the first things to look for.
+          </p>
+          {% for q in notebook.priority_questions[:4] %}
+            <div class="dq-card">
+              <div class="dq-line"><strong>{{ q.quick_check_title }}</strong></div>
+              <div class="dq-line"><strong>Where to check:</strong> {{ q.telemetry_anchor }}</div>
+              <div class="dq-line"><strong>Treat as urgent if:</strong> {{ q.escalation_threshold }}</div>
+            </div>
+          {% endfor %}
+        </section>
+        {% endif %}
+
+        <section class="card span-2">
+          <h2 class="section-title">4) Visual timeline</h2>
+          {% if notebook.actor.notebook_status == 'running' %}
+          <div class="notice status-working">Timeline events are being generated from source evidence.</div>
+          {% endif %}
+          <details class="compact">
+            <summary>Show timeline</summary>
+          {% if notebook.timeline_recent_items %}
+          <div class="timeline-ataglance">
+            <div class="deviation-strip">
+              <h4>Recent Deviations ({{ notebook.timeline_window_label }})</h4>
+              <div class="chip-line">
+                {% for dev in notebook.emerging_techniques_with_dates %}
+                <span class="chip alert">{{ dev.technique_id }}{% if dev.first_seen %} ({{ dev.first_seen }}){% endif %}</span>
+                {% else %}
+                <span class="chip">No deviations yet</span>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="mini-graph">
+              <h4>Activity Over Time ({{ notebook.timeline_window_label }})</h4>
+              <div class="graph-cols">
+                {% for bucket in notebook.timeline_graph %}
+                <div class="graph-col" title="{{ bucket.label }} ({{ bucket.total }} events)">
+                  <div class="stack" style="height: {{ bucket.height_pct }}px;">
+                    {% for seg in bucket.segments %}
+                    <div class="stack-seg" style="background: {{ seg.color }}; flex: {{ seg.flex }};" title="{{ seg.category }}: {{ seg.count }}"></div>
+                    {% endfor %}
+                  </div>
+                  <div class="graph-label">{{ bucket.label[5:] }}</div>
+                </div>
+                {% endfor %}
+              </div>
+              <div class="graph-legend">
+                <span class="legend-item"><span class="legend-swatch" style="background:#5b8def;"></span>Initial access</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#49a078;"></span>Execution</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#8a6adf;"></span>Persistence</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#2e8bcb;"></span>Lateral movement</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#d48a2f;"></span>Command and control</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#c44f4f;"></span>Exfiltration</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#9f2d2d;"></span>Impact</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#6f7d8c;"></span>Defense evasion</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#7b8a97;"></span>Report</span>
+              </div>
+            </div>
+          </div>
+          <div class="timeline-footer-link">
+            <a href="/actors/{{ notebook.actor.id }}/timeline/details">View all details</a>
+          </div>
+          {% else %}
+          <p>No timeline entries yet.</p>
+          {% endif %}
+          </details>
+        </section>
+
+        </div>
+        {% endif %}
+      </main>
+    </div>
+  </body>
+</html>

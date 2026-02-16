@@ -1,0 +1,36 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app"]
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=llama3.1:8b
+    ports:
+      - "8001:8000"
+    volumes:
+      - actortracker_db:/data
+      - ./app.py:/app/app.py:rw
+      - ./templates:/app/templates:rw
+    networks:
+      - default
+      - codex_gateway
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - default
+
+volumes:
+  actortracker_db:
+  ollama_data:
+
+networks:
+  codex_gateway:
+    external: true
