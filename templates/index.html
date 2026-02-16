@@ -25,6 +25,21 @@
       .sidebar form { display: grid; gap: 8px; }
       .sidebar input, .sidebar textarea, .sidebar button { padding: 8px; border-radius: 6px; border: 1px solid #6c7586; }
       .sidebar button { background: #4a7bd0; color: #fff; border: 0; cursor: pointer; }
+      .sidebar .action-button {
+        display: block;
+        width: 100%;
+        min-height: 34px;
+        padding: 8px;
+        border-radius: 6px;
+        box-sizing: border-box;
+        border: 0;
+        background: #4a7bd0;
+        color: #fff;
+        font-size: 14px;
+        line-height: 1.2;
+        font-weight: 400;
+        text-align: center;
+      }
       .main { padding: 14px; }
       .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
       .card { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin-bottom: 0; }
@@ -67,6 +82,11 @@
       .dq-card { border: 1px solid #e3e9f5; border-radius: 8px; padding: 7px 8px; background: #fbfdff; margin-bottom: 6px; }
       .dq-line { font-size: 12px; line-height: 1.25; color: #1f2937; margin: 2px 0; }
       .dq-line strong { font-weight: 600; }
+      .dq-list { display: grid; gap: 6px; }
+      .dq-row { border: 1px solid #e3e9f5; border-radius: 8px; background: #fbfdff; }
+      .dq-row > summary { cursor: pointer; padding: 7px 8px; font-size: 12px; list-style: none; }
+      .dq-row > summary::-webkit-details-marker { display: none; }
+      .dq-detail { padding: 0 8px 8px; }
       .deemphasized { opacity: 0.75; }
       .summary-list { margin: 8px 0 0; padding-left: 18px; }
       .summary-list li { margin: 4px 0; font-size: 13px; }
@@ -87,6 +107,16 @@
       .badge.open { background: #fff7d8; }
       .badge.resolved { background: #e1f5e6; }
       .source-item { border-bottom: 1px solid #e3e3e3; padding: 8px 0; }
+      .recent-source-list { margin: 6px 0 0; padding-left: 18px; }
+      .recent-source-list li { margin: 4px 0; font-size: 13px; }
+      .source-title-link {
+        display: inline-block;
+        max-width: 56ch;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        vertical-align: bottom;
+      }
       .question { border: 1px solid #ddd; border-radius: 8px; padding: 8px; margin: 8px 0; }
       blockquote { margin: 6px 0; padding: 8px 10px; background: #f3f5f7; border-left: 3px solid #9aa5b1; }
       .guidance { border: 1px solid #d6e3f5; border-radius: 8px; background: #f5faff; padding: 10px; margin: 8px 0; }
@@ -116,6 +146,25 @@
       .sidebar-card { margin-top: 14px; padding-top: 12px; border-top: 1px solid #3d4658; }
       .sidebar-card h3 { margin: 0 0 8px; }
       .sidebar-card small { display: block; opacity: 0.9; margin-bottom: 8px; line-height: 1.35; }
+      .sidebar details.compact { background: #2b3445; border: 1px solid #3d4658; color: #fff; }
+      .sidebar details.compact > summary { list-style: none; }
+      .sidebar details.compact > summary::-webkit-details-marker { display: none; }
+      .sidebar .secondary-action {
+        margin-top: 8px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+      }
+      .sidebar .secondary-action > summary {
+        cursor: pointer;
+      }
+      .sidebar .secondary-action[open] {
+        padding: 8px;
+        border: 1px solid #3d4658;
+        border-radius: 8px;
+        background: #2b3445;
+      }
+      .sidebar .secondary-action[open] > summary { margin-bottom: 8px; }
       .req-item { border: 1px solid #e3e3e3; border-radius: 8px; padding: 8px; margin-bottom: 8px; background: #fcfcff; }
       .req-item p { margin: 6px 0; font-size: 13px; line-height: 1.35; }
       .req-item form { margin-top: 6px; }
@@ -149,7 +198,7 @@
         <h3>Add actor</h3>
         <form method="post" action="/actors/new">
           <input type="text" name="display_name" placeholder="Display name" required />
-          <button type="submit">Add actor</button>
+          <button class="action-button" type="submit">Add actor</button>
         </form>
 
         {% if notebook %}
@@ -165,8 +214,37 @@
             </select>
             <label for="org_context">Org Context</label>
             <textarea id="org_context" name="org_context" rows="4" placeholder="Critical assets, business unit, environment, constraints...">{{ notebook.requirements_context.org_context }}</textarea>
-            <button type="submit">Generate PIR/GIR/IR</button>
+            <button class="action-button" type="submit">Generate PIR/GIR/IR</button>
           </form>
+          <details class="compact secondary-action">
+            <summary class="action-button">Import sources</summary>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/sources">
+              <input type="url" name="source_url" placeholder="https://..." required />
+              <button type="submit">Fetch and add source</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/sources/import-feeds">
+              <button type="submit">Import established CTI RSS sources</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/refresh">
+              <button type="submit">Refresh notebook</button>
+            </form>
+          </details>
+          <details class="compact secondary-action">
+            <summary class="action-button">Add IOCs</summary>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/iocs">
+              <select name="ioc_type">
+                <option value="ip">IP</option>
+                <option value="domain">Domain</option>
+                <option value="hash">Hash</option>
+                <option value="url">URL</option>
+                <option value="email">Email</option>
+                <option value="indicator" selected>Indicator</option>
+              </select>
+              <input type="text" name="source_ref" placeholder="Source reference (optional)" />
+              <textarea name="ioc_values" rows="4" placeholder="One IOC per line or comma-separated" required></textarea>
+              <button type="submit">Save IOCs</button>
+            </form>
+          </details>
           {% if notebook.requirements %}
           <details class="compact">
             <summary>Latest Requirements ({{ notebook.requirements | length }})</summary>
@@ -280,46 +358,67 @@
           {% endif %}
           <div class="section-body">
           {% set recent_change = notebook.get('recent_change_summary', {'new_reports': '0', 'targets': 'Not clear yet', 'damage': 'No clear damage outcome reported yet'}) %}
-          <p><strong>What changed recently:</strong></p>
+          <p><strong>Recent activity snapshot:</strong></p>
           <ul class="summary-list">
-            <li><strong>New reports:</strong> {{ recent_change.new_reports }}</li>
-            <li><strong>Who was targeted:</strong> {{ recent_change.targets }}</li>
-            <li><strong>Damage seen:</strong> {{ recent_change.damage }}</li>
+            <li><strong>Report count:</strong> {{ recent_change.new_reports }}</li>
+            <li><strong>Target sectors:</strong> {{ recent_change.targets }}</li>
+            <li><strong>Reported impact:</strong> {{ recent_change.damage }}</li>
           </ul>
           {% if notebook.recent_activity_highlights %}
+          <p><strong>Latest 3 sources:</strong></p>
+          {% set latest_diverse = namespace(items=[], seen_domains=[]) %}
+          {% for item in notebook.recent_activity_highlights %}
+          {% set domain_key = (item.evidence_group_domain or item.evidence_source_label or item.source_name or 'unknown')|lower %}
+          {% if domain_key not in latest_diverse.seen_domains %}
+          {% set _ = latest_diverse.items.append(item) %}
+          {% set _ = latest_diverse.seen_domains.append(domain_key) %}
+          {% endif %}
+          {% endfor %}
+          <ul class="recent-source-list">
+            {% for item in latest_diverse.items[:3] %}
+            {% set raw_title = (item.evidence_title or 'Untitled article') %}
+            {% if raw_title.startswith('http://') or raw_title.startswith('https://') or (raw_title.count('/') >= 2 and ' ' not in raw_title) %}
+            {% set display_title = 'Untitled article' %}
+            {% else %}
+            {% set display_title = raw_title %}
+            {% endif %}
+            <li>
+              <span class="badge">{{ item.date }}</span>
+              {% if item.source_url %}
+              <a class="source-title-link" href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ display_title }}</a>
+              {% else %}
+              <span class="source-title-link">{{ display_title }}</span>
+              {% endif %}
+              <small>{{ item.evidence_source_label or item.source_name or 'Unknown source' }}</small>
+            </li>
+            {% endfor %}
+          </ul>
           <details class="compact">
-            <summary>Show evidence</summary>
-            {% if notebook.recent_activity_synthesis %}
+            <summary>All sources</summary>
             <div class="event">
-              <ul>
-                {% for line in notebook.recent_activity_synthesis[:3] %}
+              <div><strong>Recent sources</strong></div>
+              <ul class="summary-list">
+                {% for item in notebook.recent_activity_highlights %}
+                {% set raw_title = (item.evidence_title or 'Untitled article') %}
+                {% if raw_title.startswith('http://') or raw_title.startswith('https://') or (raw_title.count('/') >= 2 and ' ' not in raw_title) %}
+                {% set display_title = 'Untitled article' %}
+                {% else %}
+                {% set display_title = raw_title %}
+                {% endif %}
                 <li>
-                  <strong>{{ line.label }}:</strong> {{ line.text }}
-                  <span class="badge">{{ line.confidence }}</span>
-                  <span class="badge">{{ line.lineage }}</span>
+                  <span class="badge">{{ item.date }}</span>
+                  {% if item.source_url %}
+                  <a href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ display_title }}</a>
+                  {% else %}
+                  {{ display_title }}
+                  {% endif %}
+                  <small>{{ item.evidence_source_label or item.source_name or 'Unknown source' }}</small>
+                  {% if item.category %}<span class="badge">{{ item.category }}</span>{% endif %}
+                  {% if item.ttp_ids %}<span class="badge">{{ item.ttp_ids }}</span>{% endif %}
                 </li>
                 {% endfor %}
               </ul>
-            </div>
-            {% endif %}
-            <div class="event">
-              <div><strong>Evidence preview</strong></div>
-            {% for item in notebook.recent_activity_highlights[:2] %}
-            <div class="event">
-              <div><span class="badge">{{ item.date }}</span> <span class="badge">{{ item.category }}</span></div>
-              <div>{{ item.text }}</div>
-              {% if item.target_text %}
-              <div class="timeline-meta"><strong>Targeted:</strong> {{ item.target_text }}</div>
-              {% endif %}
-              {% if item.ttp_ids %}
-              <div class="timeline-meta"><strong>Techniques:</strong> {{ item.ttp_ids }}</div>
-              {% endif %}
-              {% if item.source_url %}
-              <div>Source: <a href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ item.source_name or item.source_url }}</a></div>
-              {% endif %}
-            </div>
-            {% endfor %}
-            <div class="timeline-footer-link"><a href="/actors/{{ notebook.actor.id }}/timeline/details">View all evidence</a></div>
+              <div class="timeline-footer-link"><a href="/actors/{{ notebook.actor.id }}/timeline/details">View all sources</a></div>
             </div>
           </details>
           {% else %}
@@ -327,40 +426,6 @@
           {% endif %}
 
           </div>
-
-          <details class="compact">
-            <summary>Ingest Actions</summary>
-            <h3>Add source by URL</h3>
-            <form method="post" action="/actors/{{ notebook.actor.id }}/sources">
-              <p><input type="url" name="source_url" placeholder="https://..." required style="width: 100%;" /></p>
-              <p><button type="submit">Fetch and add source</button></p>
-            </form>
-
-            <h3>Add IOCs</h3>
-            <form method="post" action="/actors/{{ notebook.actor.id }}/iocs">
-              <p>
-                <select name="ioc_type">
-                  <option value="ip">IP</option>
-                  <option value="domain">Domain</option>
-                  <option value="hash">Hash</option>
-                  <option value="url">URL</option>
-                  <option value="email">Email</option>
-                  <option value="indicator" selected>Indicator</option>
-                </select>
-              </p>
-              <p><input type="text" name="source_ref" placeholder="Source reference (optional)" style="width: 100%;" /></p>
-              <p><textarea name="ioc_values" rows="4" placeholder="One IOC per line or comma-separated" required style="width: 100%;"></textarea></p>
-              <p><button type="submit">Save IOCs</button></p>
-            </form>
-
-            <form method="post" action="/actors/{{ notebook.actor.id }}/sources/import-feeds">
-              <button type="submit">Import established CTI RSS sources</button>
-            </form>
-
-            <form method="post" action="/actors/{{ notebook.actor.id }}/refresh">
-              <button type="submit">Refresh notebook</button>
-            </form>
-          </details>
 
           {% if notebook.ioc_items %}
           <details class="compact">
@@ -383,13 +448,30 @@
           <p class="deemphasized" style="margin:0 0 8px;">
             Based on what this group has been doing recently, here are the first things to look for.
           </p>
-          {% for q in notebook.priority_questions[:4] %}
-            <div class="dq-card">
-              <div class="dq-line"><strong>{{ q.quick_check_title }}</strong></div>
-              <div class="dq-line"><strong>Where to check:</strong> {{ q.telemetry_anchor }}</div>
-              <div class="dq-line"><strong>Treat as urgent if:</strong> {{ q.escalation_threshold }}</div>
-            </div>
-          {% endfor %}
+          {% set environment_checks = notebook.get('environment_checks', []) %}
+          {% if not environment_checks %}
+          {% set environment_checks = [{
+            'primary_area': 'Firewall/VPN',
+            'short_cue': 'Start with unusual remote access and login patterns',
+            'where_to_look': 'Firewall/VPN logs, identity sign-in logs',
+            'what_to_look_for': 'Repeated failed logins followed by success; sign-ins from new geographies or devices.',
+            'why_this_matters': 'This gives a reliable first pass when recent actor reporting is limited or ambiguous.',
+            'based_on': 'Based on: limited recent reporting.'
+          }] %}
+          {% endif %}
+          <div class="dq-list">
+            {% for check in environment_checks[:3] %}
+            <details class="dq-row">
+              <summary><strong>{{ check.primary_area }}</strong> — {{ check.short_cue }}</summary>
+              <div class="dq-detail">
+                <div class="dq-line"><strong>Where to look:</strong> {{ check.where_to_look }}</div>
+                <div class="dq-line"><strong>What to look for:</strong> {{ check.what_to_look_for }}</div>
+                <div class="dq-line"><strong>Why this matters:</strong> {{ check.why_this_matters }}</div>
+                <div class="dq-line"><strong>Based on:</strong> {{ check.based_on.replace('Based on: ', '') }}</div>
+              </div>
+            </details>
+            {% endfor %}
+          </div>
         </section>
         {% endif %}
 

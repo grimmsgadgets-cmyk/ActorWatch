@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import Lock
-from urllib.parse import quote, quote_plus, urljoin, urlparse
+from urllib.parse import parse_qs, quote, quote_plus, urljoin, urlparse
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
@@ -1378,6 +1378,181 @@ def _quick_check_title(question_text: str, phase_label: str) -> str:
     return f'Quick check for {phase_label.lower()} activity'
 
 
+def _latest_reporting_recency_label(timeline_recent_items: list[dict[str, object]]) -> str:
+    parsed_dates: list[datetime] = []
+    for item in timeline_recent_items:
+        dt = _parse_published_datetime(str(item.get('occurred_at') or ''))
+        if dt is not None:
+            parsed_dates.append(dt)
+    if not parsed_dates:
+        return 'recency unclear'
+    newest = max(parsed_dates)
+    days_old = max(0, (datetime.now(timezone.utc) - newest).days)
+    if days_old <= 7:
+        return 'latest reporting in the last 7 days'
+    if days_old <= 30:
+        return 'latest reporting in the last 30 days'
+    return 'latest reporting in the last 90 days'
+
+
+def _build_environment_checks(
+    timeline_recent_items: list[dict[str, object]],
+    recent_activity_highlights: list[dict[str, object]],
+    top_techniques: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    categories = {str(item.get('category') or '').lower() for item in timeline_recent_items}
+    text_blob = ' '.join(
+        [
+            str(item.get('title') or '')
+            for item in timeline_recent_items
+        ]
+        + [
+            str(item.get('summary') or '')
+            for item in timeline_recent_items
+        ]
+        + [
+            str(item.get('text') or '')
+            for item in recent_activity_highlights
+        ]
+    ).lower()
+    recent_ttps: set[str] = set()
+    for item in timeline_recent_items:
+        for ttp in item.get('ttp_ids', []):
+            token = str(ttp or '').upper().strip()
+            if token:
+                recent_ttps.add(token)
+    for item in recent_activity_highlights:
+        csv_ids = str(item.get('ttp_ids') or '')
+        for token in csv_ids.split(','):
+            token_norm = token.strip().upper()
+            if token_norm:
+                recent_ttps.add(token_norm)
+    known_ttps = {
+        str(item.get('technique_id') or '').upper().strip()
+        for item in top_techniques
+        if str(item.get('technique_id') or '').strip()
+    }
+    source_ids = {
+        str(item.get('source_id') or '').strip()
+        for item in timeline_recent_items
+        if str(item.get('source_id') or '').strip()
+    }
+    source_urls = {
+        str(item.get('source_url') or '').strip()
+        for item in recent_activity_highlights
+        if str(item.get('source_url') or '').strip()
+    }
+    source_count = len(source_ids | source_urls)
+    recency_label = _latest_reporting_recency_label(timeline_recent_items)
+
+    theme_defs = [
+        {
+            'id': 'remote_access',
+            'check': 'Unusual remote access and edge logins',
+            'primary_area': 'Firewall/VPN',
+            'short_cue': 'Look for unusual remote logins and edge access activity',
+            'where': 'Firewall/VPN logs, identity sign-in logs, EDR',
+            'look_for': 'Repeated failed VPN logins followed by success; sign-ins from new geographies or devices.',
+            'why': 'Recent reporting links this actor to external-access paths before follow-on activity.',
+            'keyword_tags': ['vpn', 'edge', 'remote access', 'login', 'external authentication', 'exploit'],
+            'category_tags': {'initial_access', 'lateral_movement', 'command_and_control'},
+            'ttp_tags': {'T1133', 'T1078', 'T1190'},
+        },
+        {
+            'id': 'endpoint_activity',
+            'check': 'Suspicious endpoint command activity',
+            'primary_area': 'Endpoint',
+            'short_cue': 'Look for unusual script execution and startup persistence changes',
+            'where': 'EDR, Windows Event Logs, PowerShell logs',
+            'look_for': 'PowerShell or command shell launched by unusual parent processes; new scheduled tasks or startup entries.',
+            'why': 'Recent actor-linked behavior includes host execution and persistence techniques.',
+            'keyword_tags': ['powershell', 'cmd.exe', 'wmi', 'scheduled task', 'execution', 'persistence'],
+            'category_tags': {'execution', 'persistence', 'defense_evasion'},
+            'ttp_tags': {'T1059', 'T1547', 'T1053'},
+        },
+        {
+            'id': 'early_impact',
+            'check': 'Early signs of data theft or disruption',
+            'primary_area': 'DNS/Proxy',
+            'short_cue': 'Look for early data movement and disruptive file behavior',
+            'where': 'DNS/Proxy logs, EDR file activity, storage/backup audit logs',
+            'look_for': 'Large outbound transfers to new domains; unusual mass file changes or rapid archive creation.',
+            'why': 'Recent reporting references ransomware and data-theft style outcomes tied to this actor.',
+            'keyword_tags': ['ransom', 'data theft', 'exfil', 'encrypt', 'disrupt', 'leak'],
+            'category_tags': {'exfiltration', 'impact', 'command_and_control'},
+            'ttp_tags': {'T1041', 'T1486', 'T1567'},
+        },
+    ]
+
+    candidates: list[dict[str, object]] = []
+    for theme in theme_defs:
+        matched_tags: list[str] = []
+        score = 0
+
+        for cat in theme['category_tags']:
+            if cat in categories:
+                score += 2
+                matched_tags.append(cat.replace('_', ' '))
+
+        for keyword in theme['keyword_tags']:
+            if keyword in text_blob:
+                score += 1
+                if keyword not in matched_tags:
+                    matched_tags.append(keyword)
+
+        ttp_hits = (recent_ttps | known_ttps).intersection(theme['ttp_tags'])
+        if ttp_hits:
+            score += 2
+            for ttp in sorted(ttp_hits):
+                if ttp not in matched_tags:
+                    matched_tags.append(ttp)
+
+        if score > 0:
+            based_tags = ', '.join(matched_tags[:3]) if matched_tags else 'actor activity evidence'
+            source_label = f'{source_count} sources' if source_count > 0 else 'limited source coverage'
+            candidates.append(
+                {
+                    'score': score,
+                    'primary_where': str(theme['where']).split(',')[0].strip().lower(),
+                    'card': {
+                        'check': str(theme['check']),
+                        'primary_area': str(theme['primary_area']),
+                        'short_cue': str(theme['short_cue']),
+                        'where_to_look': str(theme['where']),
+                        'what_to_look_for': str(theme['look_for']),
+                        'why_this_matters': str(theme['why']),
+                        'based_on': f'Based on: {based_tags} mentioned in {source_label} ({recency_label}).',
+                    },
+                }
+            )
+
+    if not candidates:
+        return [
+            {
+                'check': 'Start with unusual remote access and logins',
+                'primary_area': 'Firewall/VPN',
+                'short_cue': 'Start with unusual remote access and login patterns',
+                'where_to_look': 'Firewall/VPN logs, identity sign-in logs',
+                'what_to_look_for': 'Repeated failed logins followed by success; sign-ins from new geographies or devices.',
+                'why_this_matters': 'This gives a reliable first pass when recent actor reporting is limited or ambiguous.',
+                'based_on': 'Based on: limited recent reporting.',
+            }
+        ]
+
+    deduped: list[dict[str, str]] = []
+    seen_primary_where: set[str] = set()
+    for candidate in sorted(candidates, key=lambda item: int(item['score']), reverse=True):
+        primary_where = str(candidate['primary_where'])
+        if primary_where in seen_primary_where:
+            continue
+        seen_primary_where.add(primary_where)
+        deduped.append(candidate['card'])  # type: ignore[arg-type]
+        if len(deduped) >= 3:
+            break
+
+    return deduped[:3]
+
+
 def _recent_change_summary(
     timeline_recent_items: list[dict[str, object]],
     recent_activity_highlights: list[dict[str, object]],
@@ -1704,6 +1879,9 @@ def _build_recent_activity_highlights(
                 'ttp_ids': ', '.join(str(t) for t in item.get('ttp_ids', [])),
                 'source_name': str(source['source_name']) if source else None,
                 'source_url': source_url if source else None,
+                'evidence_title': _evidence_title_from_source(source) if source else _fallback_title_from_url(source_url),
+                'evidence_source_label': _evidence_source_label_from_source(source) if source else (_source_domain(source_url) or 'Unknown source'),
+                'evidence_group_domain': _canonical_group_domain(source) if source else (_source_domain(source_url) or 'unknown-source'),
                 'source_published_at': str(source['published_at']) if source and source.get('published_at') else None,
             }
         )
@@ -1762,6 +1940,9 @@ def _build_recent_activity_highlights(
                 'ttp_ids': ', '.join(_extract_ttp_ids(synthesized)[:4]),
                 'source_name': str(source['source_name']) if source else None,
                 'source_url': str(source['url']) if source else None,
+                'evidence_title': _evidence_title_from_source(source) if source else _fallback_title_from_url(str(source.get('url') or '')),
+                'evidence_source_label': _evidence_source_label_from_source(source) if source else (_source_domain(str(source.get('url') or '')) or 'Unknown source'),
+                'evidence_group_domain': _canonical_group_domain(source) if source else (_source_domain(str(source.get('url') or '')) or 'unknown-source'),
                 'source_published_at': str(source['published_at']) if source and source.get('published_at') else None,
             }
         )
@@ -2082,6 +2263,77 @@ def _extract_meta(content: str, key_patterns: list[str]) -> str | None:
     return None
 
 
+def _fallback_title_from_url(source_url: str) -> str:
+    return 'Untitled article'
+
+
+def _evidence_title_from_source(source: dict[str, object]) -> str:
+    for key in ('title', 'headline', 'og_title', 'html_title'):
+        value = str(source.get(key) or '').strip()
+        if value:
+            # Avoid showing raw URL/path-like strings as the visible title.
+            if value.startswith(('http://', 'https://')) or (value.count('/') >= 2 and ' ' not in value):
+                continue
+            return value
+    pasted_text = str(source.get('pasted_text') or '').strip()
+    if pasted_text:
+        first_sentence = _split_sentences(pasted_text)[0] if _split_sentences(pasted_text) else pasted_text
+        first_sentence = ' '.join(first_sentence.split()).strip()
+        if (
+            first_sentence
+            and not first_sentence.lower().startswith('actor-matched feed item from')
+            and not first_sentence.startswith(('http://', 'https://'))
+            and not (first_sentence.count('/') >= 2 and ' ' not in first_sentence)
+        ):
+            return first_sentence[:120]
+    return _fallback_title_from_url(str(source.get('url') or ''))
+
+
+def _evidence_source_label_from_source(source: dict[str, object]) -> str:
+    source_url = str(source.get('url') or '').strip()
+    parsed_source = urlparse(source_url)
+    source_host = (parsed_source.netloc or '').lower()
+    if source_host.endswith('news.google.com'):
+        title_hint = _evidence_title_from_source(source)
+        if ' - ' in title_hint:
+            publisher_hint = title_hint.rsplit(' - ', 1)[-1].strip()
+            if publisher_hint and publisher_hint.lower() not in {'google news', 'news'}:
+                return publisher_hint
+    for key in ('publisher', 'site_name'):
+        value = str(source.get(key) or '').strip()
+        if value:
+            return value
+    parsed = urlparse(source_url)
+    hostname = (parsed.netloc or '').strip()
+    if hostname:
+        return hostname
+    return str(source.get('source_name') or 'Unknown source').strip() or 'Unknown source'
+
+
+def _canonical_group_domain(source: dict[str, object]) -> str:
+    source_url = str(source.get('url') or '').strip()
+    parsed = urlparse(source_url)
+    host = (parsed.netloc or '').lower()
+    if host.endswith('news.google.com'):
+        # Google News links can contain the original article URL in query params.
+        query_params = parse_qs(parsed.query)
+        for key in ('url', 'u', 'q'):
+            candidate = str((query_params.get(key) or [''])[0]).strip()
+            if not candidate.startswith(('http://', 'https://')):
+                continue
+            candidate_host = (urlparse(candidate).netloc or '').lower()
+            if candidate_host and not candidate_host.endswith('news.google.com'):
+                return candidate_host
+        source_label = _evidence_source_label_from_source(source)
+        source_label_lower = source_label.lower().strip()
+        if re.match(r'^[a-z0-9.-]+\.[a-z]{2,}$', source_label_lower):
+            return source_label_lower
+        normalized = re.sub(r'[^a-z0-9]+', '-', source_label_lower).strip('-')
+        if normalized:
+            return f'publisher:{normalized}'
+    return host or 'unknown-source'
+
+
 def _is_blocked_outbound_ip(ip_value: str) -> bool:
     try:
         ip_addr = ipaddress.ip_address(ip_value)
@@ -2175,22 +2427,51 @@ def derive_source_from_url(source_url: str, fallback_source_name: str | None = N
     parsed = urlparse(str(response.url))
     domain = parsed.netloc or 'unknown'
 
-    source_name = _extract_meta(
+    site_name = _extract_meta(
         content,
         [
             r'<meta[^>]+property=["\']og:site_name["\'][^>]+content=["\']([^"\']+)["\']',
             r'<meta[^>]+name=["\']application-name["\'][^>]+content=["\']([^"\']+)["\']',
         ],
     )
-    if not source_name:
-        source_name = fallback_source_name or domain
+    publisher = _extract_meta(
+        content,
+        [
+            r'<meta[^>]+property=["\']article:publisher["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+name=["\']publisher["\'][^>]+content=["\']([^"\']+)["\']',
+        ],
+    )
+    source_name = site_name or fallback_source_name or domain
 
-    title = _extract_meta(
+    og_title = _extract_meta(
         content,
         [
             r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+        ],
+    )
+    html_title = _extract_meta(
+        content,
+        [
             r'<title[^>]*>([^<]+)</title>',
         ],
+    )
+    headline = _extract_meta(
+        content,
+        [
+            r'<meta[^>]+name=["\']headline["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<h1[^>]*>([^<]+)</h1>',
+        ],
+    )
+    title = (
+        _extract_meta(
+            content,
+            [
+                r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']',
+            ],
+        )
+        or headline
+        or og_title
+        or html_title
     )
 
     published_at = _extract_meta(
@@ -2225,6 +2506,12 @@ def derive_source_from_url(source_url: str, fallback_source_name: str | None = N
 
     return {
         'source_name': source_name,
+        'site_name': site_name,
+        'publisher': publisher,
+        'title': title,
+        'headline': headline,
+        'og_title': og_title,
+        'html_title': html_title,
         'source_url': str(response.url),
         'published_at': published_at,
         'pasted_text': pasted_text,
@@ -2819,12 +3106,41 @@ def _upsert_source_for_actor(
     published_at: str | None,
     pasted_text: str,
     trigger_excerpt: str | None = None,
+    title: str | None = None,
+    headline: str | None = None,
+    og_title: str | None = None,
+    html_title: str | None = None,
+    publisher: str | None = None,
+    site_name: str | None = None,
 ) -> str:
     existing = connection.execute(
         'SELECT id FROM sources WHERE actor_id = ? AND url = ?',
         (actor_id, source_url),
     ).fetchone()
     if existing is not None:
+        metadata_values = [title, headline, og_title, html_title, publisher, site_name]
+        if any(str(value or '').strip() for value in metadata_values):
+            connection.execute(
+                '''
+                UPDATE sources
+                SET title = COALESCE(NULLIF(title, ''), ?),
+                    headline = COALESCE(NULLIF(headline, ''), ?),
+                    og_title = COALESCE(NULLIF(og_title, ''), ?),
+                    html_title = COALESCE(NULLIF(html_title, ''), ?),
+                    publisher = COALESCE(NULLIF(publisher, ''), ?),
+                    site_name = COALESCE(NULLIF(site_name, ''), ?)
+                WHERE id = ?
+                ''',
+                (
+                    str(title or '').strip() or None,
+                    str(headline or '').strip() or None,
+                    str(og_title or '').strip() or None,
+                    str(html_title or '').strip() or None,
+                    str(publisher or '').strip() or None,
+                    str(site_name or '').strip() or None,
+                    existing[0],
+                ),
+            )
         return existing[0]
 
     final_text = pasted_text
@@ -2835,9 +3151,10 @@ def _upsert_source_for_actor(
     connection.execute(
         '''
         INSERT INTO sources (
-            id, actor_id, source_name, url, published_at, retrieved_at, pasted_text
+            id, actor_id, source_name, url, published_at, retrieved_at, pasted_text,
+            title, headline, og_title, html_title, publisher, site_name
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             source_id,
@@ -2847,6 +3164,12 @@ def _upsert_source_for_actor(
             published_at,
             utc_now_iso(),
             final_text,
+            str(title or '').strip() or None,
+            str(headline or '').strip() or None,
+            str(og_title or '').strip() or None,
+            str(html_title or '').strip() or None,
+            str(publisher or '').strip() or None,
+            str(site_name or '').strip() or None,
         ),
     )
     return source_id
@@ -2934,6 +3257,10 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
                     )
                     if actor_terms and not _text_contains_actor_term(combined_text, actor_terms):
                         continue
+                    resolved_title = str(derived.get('title') or title_text or '').strip() or None
+                    resolved_headline = str(derived.get('headline') or title_text or '').strip() or None
+                    resolved_og_title = str(derived.get('og_title') or title_text or '').strip() or None
+                    resolved_html_title = str(derived.get('html_title') or title_text or '').strip() or None
                     _upsert_source_for_actor(
                         connection,
                         actor_id,
@@ -2942,6 +3269,12 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
                         str(derived['published_at']) if derived['published_at'] else None,
                         str(derived['pasted_text']),
                         str(derived['trigger_excerpt']) if derived['trigger_excerpt'] else None,
+                        resolved_title,
+                        resolved_headline,
+                        resolved_og_title,
+                        resolved_html_title,
+                        str(derived.get('publisher') or '') or None,
+                        str(derived.get('site_name') or '') or None,
                     )
                     imported += 1
                     if imported >= imported_limit:
@@ -2958,6 +3291,12 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
                                 entry.get('published_at'),
                                 title_text or f'Actor-matched feed item from {feed_name}.',
                                 title_text or None,
+                                title_text or None,
+                                title_text or None,
+                                title_text or None,
+                                title_text or None,
+                                None,
+                                feed_name,
                             )
                             imported += 1
                             if imported >= imported_limit:
@@ -2990,6 +3329,12 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
                     str(derived['published_at']) if derived['published_at'] else None,
                     str(derived['pasted_text']),
                     str(derived['trigger_excerpt']) if derived['trigger_excerpt'] else None,
+                    str(derived.get('title') or '') or None,
+                    str(derived.get('headline') or '') or None,
+                    str(derived.get('og_title') or '') or None,
+                    str(derived.get('html_title') or '') or None,
+                    str(derived.get('publisher') or '') or None,
+                    str(derived.get('site_name') or '') or None,
                 )
                 imported += 1
                 if imported >= imported_limit:
@@ -3383,7 +3728,9 @@ def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
 
         sources = connection.execute(
             '''
-            SELECT id, source_name, url, published_at, retrieved_at, pasted_text
+            SELECT
+                id, source_name, url, published_at, retrieved_at, pasted_text,
+                title, headline, og_title, html_title, publisher, site_name
             FROM sources
             WHERE actor_id = ?
             ORDER BY COALESCE(published_at, retrieved_at) DESC
@@ -3655,6 +4002,12 @@ def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
             'published_at': row[3],
             'retrieved_at': row[4],
             'pasted_text': row[5],
+            'title': row[6],
+            'headline': row[7],
+            'og_title': row[8],
+            'html_title': row[9],
+            'publisher': row[10],
+            'site_name': row[11],
         }
         for row in sources
     ]
@@ -3675,6 +4028,11 @@ def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
     recent_activity_highlights = _build_recent_activity_highlights(timeline_items, source_items, actor_terms)
     recent_activity_synthesis = _build_recent_activity_synthesis(recent_activity_highlights)
     recent_change_summary = _recent_change_summary(timeline_recent_items, recent_activity_highlights, source_items)
+    environment_checks = _build_environment_checks(
+        timeline_recent_items,
+        recent_activity_highlights,
+        top_techniques,
+    )
     notebook_kpis = _build_notebook_kpis(
         timeline_items,
         known_technique_ids,
@@ -3704,6 +4062,7 @@ def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
         'recent_activity_highlights': recent_activity_highlights,
         'recent_activity_synthesis': recent_activity_synthesis,
         'recent_change_summary': recent_change_summary,
+        'environment_checks': environment_checks,
         'kpis': notebook_kpis,
         'ioc_items': [
             {
@@ -3854,6 +4213,19 @@ def initialize_sqlite() -> None:
             )
             '''
         )
+        source_cols = connection.execute('PRAGMA table_info(sources)').fetchall()
+        if not any(col[1] == 'title' for col in source_cols):
+            connection.execute("ALTER TABLE sources ADD COLUMN title TEXT")
+        if not any(col[1] == 'headline' for col in source_cols):
+            connection.execute("ALTER TABLE sources ADD COLUMN headline TEXT")
+        if not any(col[1] == 'og_title' for col in source_cols):
+            connection.execute("ALTER TABLE sources ADD COLUMN og_title TEXT")
+        if not any(col[1] == 'html_title' for col in source_cols):
+            connection.execute("ALTER TABLE sources ADD COLUMN html_title TEXT")
+        if not any(col[1] == 'publisher' for col in source_cols):
+            connection.execute("ALTER TABLE sources ADD COLUMN publisher TEXT")
+        if not any(col[1] == 'site_name' for col in source_cols):
+            connection.execute("ALTER TABLE sources ADD COLUMN site_name TEXT")
         connection.execute(
             '''
             CREATE TABLE IF NOT EXISTS timeline_events (
@@ -4176,6 +4548,12 @@ async def add_source(actor_id: str, request: Request) -> RedirectResponse:
     published_at = str(form_data.get('published_at', '')).strip() or None
     pasted_text = str(form_data.get('pasted_text', '')).strip()
     trigger_excerpt = str(form_data.get('trigger_excerpt', '')).strip() or None
+    source_title: str | None = None
+    source_headline: str | None = None
+    source_og_title: str | None = None
+    source_html_title: str | None = None
+    source_publisher: str | None = None
+    source_site_name: str | None = None
 
     if not source_url:
         raise HTTPException(status_code=400, detail='source_url is required')
@@ -4187,6 +4565,12 @@ async def add_source(actor_id: str, request: Request) -> RedirectResponse:
         published_at = str(derived['published_at']) if derived['published_at'] else published_at
         pasted_text = str(derived['pasted_text'])
         trigger_excerpt = str(derived['trigger_excerpt']) if derived['trigger_excerpt'] else trigger_excerpt
+        source_title = str(derived.get('title') or '') or None
+        source_headline = str(derived.get('headline') or '') or None
+        source_og_title = str(derived.get('og_title') or '') or None
+        source_html_title = str(derived.get('html_title') or '') or None
+        source_publisher = str(derived.get('publisher') or '') or None
+        source_site_name = str(derived.get('site_name') or '') or None
 
     with sqlite3.connect(DB_PATH) as connection:
         _upsert_source_for_actor(
@@ -4197,6 +4581,12 @@ async def add_source(actor_id: str, request: Request) -> RedirectResponse:
             published_at,
             pasted_text,
             trigger_excerpt,
+            source_title,
+            source_headline,
+            source_og_title,
+            source_html_title,
+            source_publisher,
+            source_site_name,
         )
         connection.commit()
 
