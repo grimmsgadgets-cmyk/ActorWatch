@@ -2,6 +2,7 @@
 
 A lightweight threat actor lookup tool that turns reporting into a clear starting point for defensive review.
 
+![App Screenshot](screenshots/mainscreenshot.png)
 ## What it does
 
 Enter an actor name to see:
