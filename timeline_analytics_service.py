@@ -192,3 +192,97 @@ def compact_timeline_rows_core(
             }
         )
     return rows
+
+
+def emerging_techniques_from_timeline_core(
+    timeline_items: list[dict[str, object]],
+    known_technique_ids: set[str],
+    *,
+    limit: int,
+    min_distinct_sources: int,
+    min_event_count: int,
+    deps: dict[str, object],
+) -> list[dict[str, object]]:
+    _mitre_technique_index = deps['mitre_technique_index']
+    _parse_published_datetime = deps['parse_published_datetime']
+    _normalize_technique_id = deps['normalize_technique_id']
+
+    stats: dict[str, dict[str, object]] = {}
+    technique_index = _mitre_technique_index()
+    valid_ids = set(technique_index.keys())
+    for item in timeline_items:
+        occurred_raw = str(item.get('occurred_at') or '')
+        occurred_dt = _parse_published_datetime(occurred_raw)
+        if occurred_dt is None:
+            continue
+
+        source_id = str(item.get('source_id') or '').strip()
+        for technique_id in item.get('ttp_ids', []):
+            tid = _normalize_technique_id(str(technique_id))
+            if valid_ids and tid not in valid_ids:
+                continue
+            if not tid or tid in known_technique_ids:
+                continue
+            entry = stats.setdefault(
+                tid,
+                {
+                    'first_seen': occurred_dt,
+                    'latest_seen': occurred_dt,
+                    'event_count': 0,
+                    'source_ids': set(),
+                    'categories': set(),
+                },
+            )
+            entry['event_count'] = int(entry.get('event_count') or 0) + 1
+            first_seen = entry.get('first_seen')
+            if isinstance(first_seen, datetime):
+                if occurred_dt < first_seen:
+                    entry['first_seen'] = occurred_dt
+            else:
+                entry['first_seen'] = occurred_dt
+            latest_seen = entry.get('latest_seen')
+            if isinstance(latest_seen, datetime):
+                if occurred_dt > latest_seen:
+                    entry['latest_seen'] = occurred_dt
+            else:
+                entry['latest_seen'] = occurred_dt
+            source_ids = entry.get('source_ids')
+            if isinstance(source_ids, set) and source_id:
+                source_ids.add(source_id)
+            category = str(item.get('category') or '').strip().replace('_', ' ')
+            categories = entry.get('categories')
+            if isinstance(categories, set) and category:
+                categories.add(category)
+
+    ranked: list[tuple[str, datetime, int, int, dict[str, object]]] = []
+    for tid, entry in stats.items():
+        latest_seen = entry.get('latest_seen')
+        if not isinstance(latest_seen, datetime):
+            continue
+        event_count = int(entry.get('event_count') or 0)
+        source_ids = entry.get('source_ids')
+        source_count = len(source_ids) if isinstance(source_ids, set) else 0
+        if source_count < min_distinct_sources and event_count < min_event_count:
+            continue
+        ranked.append((tid, latest_seen, source_count, event_count, entry))
+
+    ranked.sort(key=lambda item: (item[1], item[2], item[3], item[0]), reverse=True)
+    emerging: list[dict[str, object]] = []
+    for tid, _latest, source_count, event_count, entry in ranked[:limit]:
+        first_seen = entry.get('first_seen')
+        latest_seen = entry.get('latest_seen')
+        categories = entry.get('categories')
+        technique = technique_index.get(tid, {})
+        emerging.append(
+            {
+                'technique_id': tid,
+                'technique_name': str(technique.get('name') or ''),
+                'technique_url': str(technique.get('url') or ''),
+                'first_seen': first_seen.date().isoformat() if isinstance(first_seen, datetime) else '',
+                'last_seen': latest_seen.date().isoformat() if isinstance(latest_seen, datetime) else '',
+                'source_count': source_count,
+                'event_count': event_count,
+                'categories': sorted(str(item) for item in categories) if isinstance(categories, set) else [],
+            }
+        )
+    return emerging

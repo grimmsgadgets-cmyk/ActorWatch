@@ -21,6 +21,7 @@ import generation_service
 import feed_import_service
 import legacy_ui
 import mitre_store
+import db_schema_service
 import priority_questions
 import priority_service
 import rate_limit_service
@@ -702,85 +703,18 @@ def _emerging_techniques_from_timeline(
     min_distinct_sources: int = 2,
     min_event_count: int = 2,
 ) -> list[dict[str, object]]:
-    stats: dict[str, dict[str, object]] = {}
-    technique_index = _mitre_technique_index()
-    valid_ids = set(technique_index.keys())
-    for item in timeline_items:
-        occurred_raw = str(item.get('occurred_at') or '')
-        occurred_dt = _parse_published_datetime(occurred_raw)
-        if occurred_dt is None:
-            continue
-
-        source_id = str(item.get('source_id') or '').strip()
-        for technique_id in item.get('ttp_ids', []):
-            tid = _normalize_technique_id(str(technique_id))
-            if valid_ids and tid not in valid_ids:
-                continue
-            if not tid or tid in known_technique_ids:
-                continue
-            entry = stats.setdefault(
-                tid,
-                {
-                    'first_seen': occurred_dt,
-                    'latest_seen': occurred_dt,
-                    'event_count': 0,
-                    'source_ids': set(),
-                    'categories': set(),
-                },
-            )
-            entry['event_count'] = int(entry.get('event_count') or 0) + 1
-            first_seen = entry.get('first_seen')
-            if isinstance(first_seen, datetime):
-                if occurred_dt < first_seen:
-                    entry['first_seen'] = occurred_dt
-            else:
-                entry['first_seen'] = occurred_dt
-            latest_seen = entry.get('latest_seen')
-            if isinstance(latest_seen, datetime):
-                if occurred_dt > latest_seen:
-                    entry['latest_seen'] = occurred_dt
-            else:
-                entry['latest_seen'] = occurred_dt
-            source_ids = entry.get('source_ids')
-            if isinstance(source_ids, set) and source_id:
-                source_ids.add(source_id)
-            category = str(item.get('category') or '').strip().replace('_', ' ')
-            categories = entry.get('categories')
-            if isinstance(categories, set) and category:
-                categories.add(category)
-
-    ranked: list[tuple[str, datetime, int, int, dict[str, object]]] = []
-    for tid, entry in stats.items():
-        latest_seen = entry.get('latest_seen')
-        if not isinstance(latest_seen, datetime):
-            continue
-        event_count = int(entry.get('event_count') or 0)
-        source_ids = entry.get('source_ids')
-        source_count = len(source_ids) if isinstance(source_ids, set) else 0
-        if source_count < min_distinct_sources and event_count < min_event_count:
-            continue
-        ranked.append((tid, latest_seen, source_count, event_count, entry))
-
-    ranked.sort(key=lambda item: (item[1], item[2], item[3], item[0]), reverse=True)
-    emerging: list[dict[str, object]] = []
-    for tid, _latest, source_count, event_count, entry in ranked[:limit]:
-        first_seen = entry.get('first_seen')
-        latest_seen = entry.get('latest_seen')
-        categories = entry.get('categories')
-        technique = technique_index.get(tid, {})
-        emerging.append(
-            {
-                'technique_id': tid,
-                'technique_name': str(technique.get('name') or ''),
-                'technique_url': str(technique.get('url') or ''),
-                'first_seen': first_seen.date().isoformat() if isinstance(first_seen, datetime) else '',
-                'last_seen': latest_seen.date().isoformat() if isinstance(latest_seen, datetime) else '',
-                'source_count': source_count,
-                'event_count': event_count,
-                'categories': sorted(str(item) for item in categories) if isinstance(categories, set) else [],
-            }
-        )
-    return emerging
+    return timeline_analytics_service.emerging_techniques_from_timeline_core(
+        timeline_items,
+        known_technique_ids,
+        limit=limit,
+        min_distinct_sources=min_distinct_sources,
+        min_event_count=min_event_count,
+        deps={
+            'mitre_technique_index': _mitre_technique_index,
+            'parse_published_datetime': _parse_published_datetime,
+            'normalize_technique_id': _normalize_technique_id,
+        },
+    )
 
 
 def _emerging_technique_ids_from_timeline(
@@ -1767,240 +1701,7 @@ def initialize_sqlite() -> None:
     MITRE_TECHNIQUE_INDEX_CACHE = None
     _ensure_mitre_attack_dataset()
     with sqlite3.connect(DB_PATH) as connection:
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS actor_profiles (
-                id TEXT PRIMARY KEY,
-                display_name TEXT NOT NULL,
-                scope_statement TEXT,
-                created_at TEXT NOT NULL
-            )
-            '''
-        )
-        actor_cols = connection.execute('PRAGMA table_info(actor_profiles)').fetchall()
-        if not any(col[1] == 'is_tracked' for col in actor_cols):
-            connection.execute(
-                "ALTER TABLE actor_profiles ADD COLUMN is_tracked INTEGER NOT NULL DEFAULT 0"
-            )
-        if not any(col[1] == 'notebook_status' for col in actor_cols):
-            connection.execute(
-                "ALTER TABLE actor_profiles ADD COLUMN notebook_status TEXT NOT NULL DEFAULT 'idle'"
-            )
-        if not any(col[1] == 'notebook_message' for col in actor_cols):
-            connection.execute(
-                "ALTER TABLE actor_profiles ADD COLUMN notebook_message TEXT NOT NULL DEFAULT 'Waiting for tracking action.'"
-            )
-        if not any(col[1] == 'notebook_updated_at' for col in actor_cols):
-            connection.execute(
-                "ALTER TABLE actor_profiles ADD COLUMN notebook_updated_at TEXT"
-            )
-        if not any(col[1] == 'last_refresh_duration_ms' for col in actor_cols):
-            connection.execute(
-                "ALTER TABLE actor_profiles ADD COLUMN last_refresh_duration_ms INTEGER"
-            )
-        if not any(col[1] == 'last_refresh_sources_processed' for col in actor_cols):
-            connection.execute(
-                "ALTER TABLE actor_profiles ADD COLUMN last_refresh_sources_processed INTEGER"
-            )
-
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS actor_state (
-                actor_id TEXT PRIMARY KEY,
-                capability_grid_json TEXT NOT NULL,
-                behavioral_model_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            '''
-        )
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS observation_records (
-                id TEXT PRIMARY KEY,
-                actor_id TEXT NOT NULL,
-                source_type TEXT NOT NULL,
-                source_ref TEXT,
-                source_date TEXT,
-                ttp_json TEXT NOT NULL,
-                tools_json TEXT NOT NULL,
-                infra_json TEXT NOT NULL,
-                targets_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            '''
-        )
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS delta_proposals (
-                id TEXT PRIMARY KEY,
-                actor_id TEXT NOT NULL,
-                observation_id TEXT NOT NULL,
-                delta_type TEXT NOT NULL,
-                affected_category TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            '''
-        )
-        delta_columns = connection.execute('PRAGMA table_info(delta_proposals)').fetchall()
-        if not any(column[1] == 'validation_template_json' for column in delta_columns):
-            connection.execute(
-                "ALTER TABLE delta_proposals ADD COLUMN validation_template_json TEXT NOT NULL DEFAULT '{}'"
-            )
-
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS state_transition_log (
-                id TEXT PRIMARY KEY,
-                actor_id TEXT NOT NULL,
-                delta_id TEXT NOT NULL,
-                previous_state_json TEXT NOT NULL,
-                new_state_json TEXT NOT NULL,
-                action TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            '''
-        )
-
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS sources (
-                id TEXT PRIMARY KEY,
-                actor_id TEXT NOT NULL,
-                source_name TEXT NOT NULL,
-                url TEXT NOT NULL,
-                published_at TEXT,
-                retrieved_at TEXT NOT NULL,
-                pasted_text TEXT NOT NULL,
-                source_fingerprint TEXT
-            )
-            '''
-        )
-        source_cols = connection.execute('PRAGMA table_info(sources)').fetchall()
-        if not any(col[1] == 'source_fingerprint' for col in source_cols):
-            connection.execute("ALTER TABLE sources ADD COLUMN source_fingerprint TEXT")
-        if not any(col[1] == 'title' for col in source_cols):
-            connection.execute("ALTER TABLE sources ADD COLUMN title TEXT")
-        if not any(col[1] == 'headline' for col in source_cols):
-            connection.execute("ALTER TABLE sources ADD COLUMN headline TEXT")
-        if not any(col[1] == 'og_title' for col in source_cols):
-            connection.execute("ALTER TABLE sources ADD COLUMN og_title TEXT")
-        if not any(col[1] == 'html_title' for col in source_cols):
-            connection.execute("ALTER TABLE sources ADD COLUMN html_title TEXT")
-        if not any(col[1] == 'publisher' for col in source_cols):
-            connection.execute("ALTER TABLE sources ADD COLUMN publisher TEXT")
-        if not any(col[1] == 'site_name' for col in source_cols):
-            connection.execute("ALTER TABLE sources ADD COLUMN site_name TEXT")
-        connection.execute(
-            '''
-            CREATE INDEX IF NOT EXISTS idx_sources_actor_fingerprint
-            ON sources(actor_id, source_fingerprint)
-            '''
-        )
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS timeline_events (
-                id TEXT PRIMARY KEY,
-                actor_id TEXT NOT NULL,
-                occurred_at TEXT NOT NULL,
-                category TEXT NOT NULL,
-                title TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                source_id TEXT,
-                target_text TEXT NOT NULL DEFAULT '',
-                ttp_ids_json TEXT NOT NULL DEFAULT '[]'
-            )
-            '''
-        )
-        timeline_cols = connection.execute('PRAGMA table_info(timeline_events)').fetchall()
-        if not any(col[1] == 'target_text' for col in timeline_cols):
-            connection.execute("ALTER TABLE timeline_events ADD COLUMN target_text TEXT NOT NULL DEFAULT ''")
-        if not any(col[1] == 'ttp_ids_json' for col in timeline_cols):
-            connection.execute("ALTER TABLE timeline_events ADD COLUMN ttp_ids_json TEXT NOT NULL DEFAULT '[]'")
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS question_threads (
-                id TEXT PRIMARY KEY,
-                actor_id TEXT NOT NULL,
-                question_text TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            '''
-        )
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS question_updates (
-                id TEXT PRIMARY KEY,
-                thread_id TEXT NOT NULL,
-                source_id TEXT NOT NULL,
-                trigger_excerpt TEXT NOT NULL,
-                update_note TEXT,
-                created_at TEXT NOT NULL
-            )
-            '''
-        )
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS environment_guidance (
-                id TEXT PRIMARY KEY,
-                actor_id TEXT NOT NULL,
-                thread_id TEXT,
-                platform TEXT NOT NULL,
-                what_to_look_for TEXT NOT NULL,
-                where_to_look TEXT NOT NULL,
-                query_hint TEXT,
-                created_at TEXT NOT NULL
-            )
-            '''
-        )
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS ioc_items (
-                id TEXT PRIMARY KEY,
-                actor_id TEXT NOT NULL,
-                ioc_type TEXT NOT NULL,
-                ioc_value TEXT NOT NULL,
-                source_ref TEXT,
-                created_at TEXT NOT NULL
-            )
-            '''
-        )
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS requirement_context (
-                actor_id TEXT PRIMARY KEY,
-                org_context TEXT NOT NULL DEFAULT '',
-                priority_mode TEXT NOT NULL DEFAULT 'Operational',
-                updated_at TEXT NOT NULL
-            )
-            '''
-        )
-        connection.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS requirement_items (
-                id TEXT PRIMARY KEY,
-                actor_id TEXT NOT NULL,
-                req_type TEXT NOT NULL,
-                requirement_text TEXT NOT NULL,
-                rationale_text TEXT NOT NULL,
-                source_name TEXT,
-                source_url TEXT,
-                source_published_at TEXT,
-                validation_score INTEGER NOT NULL DEFAULT 0,
-                validation_notes TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'open',
-                created_at TEXT NOT NULL
-            )
-            '''
-        )
-        requirement_cols = connection.execute('PRAGMA table_info(requirement_items)').fetchall()
-        if not any(col[1] == 'validation_score' for col in requirement_cols):
-            connection.execute("ALTER TABLE requirement_items ADD COLUMN validation_score INTEGER NOT NULL DEFAULT 0")
-        if not any(col[1] == 'validation_notes' for col in requirement_cols):
-            connection.execute("ALTER TABLE requirement_items ADD COLUMN validation_notes TEXT NOT NULL DEFAULT ''")
-        connection.commit()
+        db_schema_service.ensure_schema(connection)
 app.include_router(
     routes_dashboard.create_dashboard_router(
         deps={

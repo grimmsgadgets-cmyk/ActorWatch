@@ -1,0 +1,235 @@
+def ensure_schema(connection) -> None:
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_profiles (
+            id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            scope_statement TEXT,
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    actor_cols = connection.execute('PRAGMA table_info(actor_profiles)').fetchall()
+    if not any(col[1] == 'is_tracked' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN is_tracked INTEGER NOT NULL DEFAULT 0"
+        )
+    if not any(col[1] == 'notebook_status' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN notebook_status TEXT NOT NULL DEFAULT 'idle'"
+        )
+    if not any(col[1] == 'notebook_message' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN notebook_message TEXT NOT NULL DEFAULT 'Waiting for tracking action.'"
+        )
+    if not any(col[1] == 'notebook_updated_at' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN notebook_updated_at TEXT"
+        )
+    if not any(col[1] == 'last_refresh_duration_ms' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN last_refresh_duration_ms INTEGER"
+        )
+    if not any(col[1] == 'last_refresh_sources_processed' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN last_refresh_sources_processed INTEGER"
+        )
+
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_state (
+            actor_id TEXT PRIMARY KEY,
+            capability_grid_json TEXT NOT NULL,
+            behavioral_model_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS observation_records (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_ref TEXT,
+            source_date TEXT,
+            ttp_json TEXT NOT NULL,
+            tools_json TEXT NOT NULL,
+            infra_json TEXT NOT NULL,
+            targets_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS delta_proposals (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            observation_id TEXT NOT NULL,
+            delta_type TEXT NOT NULL,
+            affected_category TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    delta_columns = connection.execute('PRAGMA table_info(delta_proposals)').fetchall()
+    if not any(column[1] == 'validation_template_json' for column in delta_columns):
+        connection.execute(
+            "ALTER TABLE delta_proposals ADD COLUMN validation_template_json TEXT NOT NULL DEFAULT '{}'"
+        )
+
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS state_transition_log (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            delta_id TEXT NOT NULL,
+            previous_state_json TEXT NOT NULL,
+            new_state_json TEXT NOT NULL,
+            action TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS sources (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            published_at TEXT,
+            retrieved_at TEXT NOT NULL,
+            pasted_text TEXT NOT NULL,
+            source_fingerprint TEXT
+        )
+        '''
+    )
+    source_cols = connection.execute('PRAGMA table_info(sources)').fetchall()
+    if not any(col[1] == 'source_fingerprint' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN source_fingerprint TEXT")
+    if not any(col[1] == 'title' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN title TEXT")
+    if not any(col[1] == 'headline' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN headline TEXT")
+    if not any(col[1] == 'og_title' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN og_title TEXT")
+    if not any(col[1] == 'html_title' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN html_title TEXT")
+    if not any(col[1] == 'publisher' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN publisher TEXT")
+    if not any(col[1] == 'site_name' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN site_name TEXT")
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_sources_actor_fingerprint
+        ON sources(actor_id, source_fingerprint)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS timeline_events (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            category TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            source_id TEXT,
+            target_text TEXT NOT NULL DEFAULT '',
+            ttp_ids_json TEXT NOT NULL DEFAULT '[]'
+        )
+        '''
+    )
+    timeline_cols = connection.execute('PRAGMA table_info(timeline_events)').fetchall()
+    if not any(col[1] == 'target_text' for col in timeline_cols):
+        connection.execute("ALTER TABLE timeline_events ADD COLUMN target_text TEXT NOT NULL DEFAULT ''")
+    if not any(col[1] == 'ttp_ids_json' for col in timeline_cols):
+        connection.execute("ALTER TABLE timeline_events ADD COLUMN ttp_ids_json TEXT NOT NULL DEFAULT '[]'")
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS question_threads (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            question_text TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS question_updates (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            trigger_excerpt TEXT NOT NULL,
+            update_note TEXT,
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS environment_guidance (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            thread_id TEXT,
+            platform TEXT NOT NULL,
+            what_to_look_for TEXT NOT NULL,
+            where_to_look TEXT NOT NULL,
+            query_hint TEXT,
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS ioc_items (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            ioc_type TEXT NOT NULL,
+            ioc_value TEXT NOT NULL,
+            source_ref TEXT,
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS requirement_context (
+            actor_id TEXT PRIMARY KEY,
+            org_context TEXT NOT NULL DEFAULT '',
+            priority_mode TEXT NOT NULL DEFAULT 'Operational',
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS requirement_items (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            req_type TEXT NOT NULL,
+            requirement_text TEXT NOT NULL,
+            rationale_text TEXT NOT NULL,
+            source_name TEXT,
+            source_url TEXT,
+            source_published_at TEXT,
+            validation_score INTEGER NOT NULL DEFAULT 0,
+            validation_notes TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    requirement_cols = connection.execute('PRAGMA table_info(requirement_items)').fetchall()
+    if not any(col[1] == 'validation_score' for col in requirement_cols):
+        connection.execute("ALTER TABLE requirement_items ADD COLUMN validation_score INTEGER NOT NULL DEFAULT 0")
+    if not any(col[1] == 'validation_notes' for col in requirement_cols):
+        connection.execute("ALTER TABLE requirement_items ADD COLUMN validation_notes TEXT NOT NULL DEFAULT ''")
+    connection.commit()
