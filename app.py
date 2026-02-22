@@ -21,6 +21,7 @@ import guidance_catalog
 import mitre_store
 import priority_questions
 import routes_api
+import routes_actor_ops
 import routes_ui
 import timeline_extraction
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
@@ -2429,6 +2430,24 @@ app.include_router(
         }
     )
 )
+app.include_router(
+    routes_actor_ops.create_actor_ops_router(
+        deps={
+            'enforce_request_size': _enforce_request_size,
+            'source_upload_body_limit_bytes': SOURCE_UPLOAD_BODY_LIMIT_BYTES,
+            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+            'db_path': lambda: DB_PATH,
+            'actor_exists': actor_exists,
+            'derive_source_from_url': derive_source_from_url,
+            'upsert_source_for_actor': _upsert_source_for_actor,
+            'import_default_feeds_for_actor': import_default_feeds_for_actor,
+            'parse_ioc_values': _parse_ioc_values,
+            'utc_now_iso': utc_now_iso,
+            'set_actor_notebook_status': set_actor_notebook_status,
+            'run_actor_generation': run_actor_generation,
+        }
+    )
+)
 
 
 def actors_ui() -> str:
@@ -2552,122 +2571,6 @@ def root(
             'ollama_status': ollama_status,
             'notebook_health': notebook_health,
         },
-    )
-
-
-@app.post('/actors/{actor_id}/sources')
-async def add_source(actor_id: str, request: Request) -> RedirectResponse:
-    await _enforce_request_size(request, SOURCE_UPLOAD_BODY_LIMIT_BYTES)
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-
-    form_data = await request.form()
-    source_url = str(form_data.get('source_url', '')).strip()
-
-    # Backward-compatible fields (still accepted if provided)
-    source_name = str(form_data.get('source_name', '')).strip()
-    published_at = str(form_data.get('published_at', '')).strip() or None
-    pasted_text = str(form_data.get('pasted_text', '')).strip()
-    trigger_excerpt = str(form_data.get('trigger_excerpt', '')).strip() or None
-    source_title: str | None = None
-    source_headline: str | None = None
-    source_og_title: str | None = None
-    source_html_title: str | None = None
-    source_publisher: str | None = None
-    source_site_name: str | None = None
-
-    if not source_url:
-        raise HTTPException(status_code=400, detail='source_url is required')
-
-    if not pasted_text:
-        derived = derive_source_from_url(source_url)
-        source_name = str(derived['source_name'])
-        source_url = str(derived['source_url'])
-        published_at = str(derived['published_at']) if derived['published_at'] else published_at
-        pasted_text = str(derived['pasted_text'])
-        trigger_excerpt = str(derived['trigger_excerpt']) if derived['trigger_excerpt'] else trigger_excerpt
-        source_title = str(derived.get('title') or '') or None
-        source_headline = str(derived.get('headline') or '') or None
-        source_og_title = str(derived.get('og_title') or '') or None
-        source_html_title = str(derived.get('html_title') or '') or None
-        source_publisher = str(derived.get('publisher') or '') or None
-        source_site_name = str(derived.get('site_name') or '') or None
-    elif not source_name:
-        parsed = urlparse(source_url)
-        source_name = (parsed.hostname or parsed.netloc or 'Manual source').strip()
-
-    with sqlite3.connect(DB_PATH) as connection:
-        _upsert_source_for_actor(
-            connection,
-            actor_id,
-            source_name,
-            source_url,
-            published_at,
-            pasted_text,
-            trigger_excerpt,
-            source_title,
-            source_headline,
-            source_og_title,
-            source_html_title,
-            source_publisher,
-            source_site_name,
-        )
-        connection.commit()
-
-    return RedirectResponse(url=f'/?actor_id={actor_id}', status_code=303)
-
-
-@app.post('/actors/{actor_id}/sources/import-feeds')
-def import_feeds(actor_id: str) -> RedirectResponse:
-    import_default_feeds_for_actor(actor_id)
-    return RedirectResponse(url=f'/?actor_id={actor_id}', status_code=303)
-
-
-@app.post('/actors/{actor_id}/iocs')
-async def add_iocs(actor_id: str, request: Request) -> RedirectResponse:
-    await _enforce_request_size(request, DEFAULT_BODY_LIMIT_BYTES)
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-
-    form_data = await request.form()
-    ioc_type = str(form_data.get('ioc_type', 'indicator')).strip() or 'indicator'
-    ioc_values_raw = str(form_data.get('ioc_values', '')).strip()
-    source_ref = str(form_data.get('source_ref', '')).strip() or None
-
-    values = _parse_ioc_values(ioc_values_raw)
-    if not values:
-        raise HTTPException(status_code=400, detail='ioc_values is required')
-
-    with sqlite3.connect(DB_PATH) as connection:
-        for value in values:
-            connection.execute(
-                '''
-                INSERT INTO ioc_items (id, actor_id, ioc_type, ioc_value, source_ref, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ''',
-                (str(uuid.uuid4()), actor_id, ioc_type, value, source_ref, utc_now_iso()),
-            )
-        connection.commit()
-
-    return RedirectResponse(url=f'/?actor_id={actor_id}', status_code=303)
-
-
-@app.post('/actors/{actor_id}/refresh')
-def refresh_notebook(actor_id: str, background_tasks: BackgroundTasks) -> RedirectResponse:
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-    set_actor_notebook_status(
-        actor_id,
-        'running',
-        'Refreshing sources, questions, and timeline entries...',
-    )
-    background_tasks.add_task(run_actor_generation, actor_id)
-    return RedirectResponse(
-        url=f'/?actor_id={actor_id}&notice=Notebook refresh started',
-        status_code=303,
     )
 
 
