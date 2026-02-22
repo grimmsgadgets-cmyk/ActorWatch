@@ -4,9 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Threat Actor Tracker</title>
-    {% if notebook and notebook.actor.notebook_status == 'running' %}
-    <meta http-equiv="refresh" content="4" />
-    {% endif %}
     <style>
       body { margin: 0; font-family: Arial, sans-serif; background: #f7f7f7; color: #111; line-height: 1.4; }
       .layout { display: grid; grid-template-columns: 320px 1fr; min-height: 100vh; }
@@ -186,11 +183,36 @@
       .req-item p { margin: 6px 0; font-size: 13px; line-height: 1.35; }
       .req-item form { margin-top: 6px; }
       .req-validation { margin-top: 6px; font-size: 11px; color: #334155; background: #f5f8ff; border: 1px solid #d9e3f7; border-radius: 6px; padding: 6px; }
+      .flow-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+      .flow-btn { border: 1px solid #c7d4ea; background: #fff; color: #1f2937; border-radius: 999px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+      .flow-btn.active { background: #e7f0ff; border-color: #86a8da; }
+      .flow-btn:hover { background: #f3f7ff; }
+      .flow-help { font-size: 11px; color: #475569; margin-top: -2px; margin-bottom: 8px; }
+      .focus-who [data-step]:not([data-step="who"]),
+      .focus-recent [data-step]:not([data-step="recent"]),
+      .focus-action [data-step]:not([data-step="action"]) { opacity: 0.5; }
+      .live-pill { border: 1px solid #c7d4ea; border-radius: 999px; padding: 4px 8px; font-size: 11px; color: #334155; background: #f8fbff; }
+      .interactive-panel { border: 1px solid #dce7f8; border-radius: 8px; background: #f9fcff; padding: 8px; margin-top: 8px; }
+      .interactive-panel h4 { margin: 0 0 6px; font-size: 13px; }
+      .filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+      .filter-row select, .filter-row button, .filter-row input { padding: 5px 8px; border-radius: 6px; border: 1px solid #c7d4ea; background: #fff; font-size: 12px; }
+      .timeline-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .timeline-table th, .timeline-table td { border-bottom: 1px solid #e3ebf8; text-align: left; padding: 6px; vertical-align: top; }
+      .timeline-table tr:hover { background: #f3f8ff; }
+      .timeline-empty { margin-top: 8px; font-size: 12px; color: #475569; }
+      .observation-meta { margin-top: 4px; font-size: 11px; color: #475569; }
+      .obs-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+      .obs-row input, .obs-row select, .obs-row textarea { width: 100%; box-sizing: border-box; padding: 6px; border-radius: 6px; border: 1px solid #cdd8ea; font-size: 12px; }
+      .obs-row textarea { min-height: 70px; resize: vertical; grid-column: 1 / -1; }
+      .obs-actions { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+      .obs-actions button { border: 1px solid #b8c7e2; background: #f7fbff; border-radius: 6px; padding: 5px 8px; font-size: 12px; cursor: pointer; }
+      .live-controls { display: inline-flex; gap: 6px; align-items: center; }
+      .live-controls button { border: 1px solid #c7d4ea; background: #fff; border-radius: 999px; font-size: 11px; padding: 4px 8px; cursor: pointer; }
       @media (max-width: 1180px) { .dashboard { grid-template-columns: 1fr; } .card.span-2 { grid-column: auto; } .timeline-ataglance { grid-template-columns: 1fr; } .kpi-strip { grid-template-columns: repeat(2, minmax(120px, 1fr)); } .snapshot-grid { grid-template-columns: 1fr; } }
-      @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } .status-chip { max-width: 100%; width: 100%; } }
+      @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } .status-chip { max-width: 100%; width: 100%; } .obs-row { grid-template-columns: 1fr; } }
     </style>
   </head>
-  <body>
+  <body {% if notebook %}data-actor-id="{{ notebook.actor.id }}"{% endif %}>
     <div class="layout">
       <aside class="sidebar">
         <h1>Threat Actor Tracker</h1>
@@ -221,7 +243,7 @@
         {% if notebook %}
         <div class="sidebar-card">
           <h3>Data Operations</h3>
-          <small>Use these controls to update evidence and generate requirements without interrupting triage.</small>
+          <small>Use these controls to update evidence and generate requirements without interrupting review.</small>
           <details class="compact secondary-action">
             <summary class="action-button">Open data operations</summary>
             <form method="post" action="/actors/{{ notebook.actor.id }}/requirements/generate">
@@ -299,6 +321,13 @@
           {% if notice %}
           <div class="notice status-chip">{{ notice }}</div>
           {% endif %}
+          {% if notebook %}
+          <div class="live-controls">
+            <span class="live-pill" id="live-indicator">Live sync on</span>
+            <button type="button" id="live-toggle">Pause</button>
+            <button type="button" id="live-refresh">Refresh now</button>
+          </div>
+          {% endif %}
         </div>
         {% if not notebook %}
         <div class="empty">Select an actor to open the notebook.</div>
@@ -314,6 +343,13 @@
               <li><strong>Step 3 - What do I do now?</strong> Follow the top action cards and escalate only when threshold is met.</li>
             </ul>
           </div>
+          <div class="flow-nav" id="flow-nav">
+            <button class="flow-btn active" type="button" data-flow="all">Full flow</button>
+            <button class="flow-btn" type="button" data-flow="who">Focus: Who</button>
+            <button class="flow-btn" type="button" data-flow="recent">Focus: Recent</button>
+            <button class="flow-btn" type="button" data-flow="action">Focus: Action</button>
+          </div>
+          <div class="flow-help">Focus mode only dims non-selected sections; nothing is hidden or blocked.</div>
           <details class="compact">
             <summary>Quick definitions (optional)</summary>
             <div class="helper-box">
@@ -324,7 +360,7 @@
           </details>
         </section>
 
-        <section class="card">
+        <section class="card" data-step="who">
           <h2 class="section-title">1) Who are they?</h2>
           <div class="section-body">
           <p>{{ notebook.actor_profile_summary }}</p>
@@ -385,7 +421,7 @@
           {% endif %}
         </section>
 
-        <section class="card">
+        <section class="card" data-step="recent">
           <h2 class="section-title">2) What have they been up to recently?</h2>
           {% if notebook.actor.notebook_status == 'running' %}
           <div class="notice status-working">Source collection is running in the background. This section will populate automatically.</div>
@@ -394,9 +430,9 @@
           {% set recent_change = notebook.get('recent_change_summary', {'new_reports': '0', 'targets': 'Not clear yet', 'damage': 'No clear damage outcome reported yet'}) %}
           <p><strong>Recent activity snapshot:</strong></p>
           <ul class="summary-list">
-            <li><strong>Report count:</strong> {{ recent_change.new_reports }}</li>
-            <li><strong>Target sectors:</strong> {{ recent_change.targets }}</li>
-            <li><strong>Reported impact:</strong> {{ recent_change.damage }}</li>
+            <li><strong>Report count:</strong> <span id="recent-reports">{{ recent_change.new_reports }}</span></li>
+            <li><strong>Target sectors:</strong> <span id="recent-targets">{{ recent_change.targets }}</span></li>
+            <li><strong>Reported impact:</strong> <span id="recent-impact">{{ recent_change.damage }}</span></li>
           </ul>
           {% if notebook.recent_activity_synthesis %}
           <p class="inline-note"><strong>How to read:</strong> left to right = change, affected area, and recommended first action.</p>
@@ -441,6 +477,7 @@
             {% else %}
             {% set display_title = raw_title %}
             {% endif %}
+            {% set observation_key = item.source_id or item.timeline_event_id or ('highlight-' ~ loop.index0) %}
             <li>
               <span class="badge">{{ item.date }}</span>
               <span class="badge {{ item.freshness_class }}">{{ item.freshness_label }}</span>
@@ -450,6 +487,59 @@
               <span class="source-title-link">{{ display_title }}</span>
               {% endif %}
               <small>{{ item.evidence_source_label or item.source_name or 'Unknown source' }} | corroboration: {{ item.corroboration_sources or '1' }} source(s)</small>
+              <details class="compact">
+                <summary>Analyst observation (optional)</summary>
+                <div class="interactive-panel" data-observation-item-type="source" data-observation-item-key="{{ observation_key }}">
+                  <p class="inline-note" style="margin:0 0 6px;"><strong>Reference format:</strong> note + confidence + source reliability (A-F) + information credibility (1-6).</p>
+                  <div class="obs-row">
+                    <div>
+                      <label>Analyst</label>
+                      <input type="text" class="observation-analyst" placeholder="name or handle" />
+                    </div>
+                    <div>
+                      <label>Confidence</label>
+                      <select class="observation-confidence">
+                        <option value="moderate">Moderate</option>
+                        <option value="high">High</option>
+                        <option value="low">Low</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Source reliability (A-F)</label>
+                      <select class="observation-source-reliability">
+                        <option value="">n/a</option>
+                        <option value="A">A</option>
+                        <option value="B">B</option>
+                        <option value="C">C</option>
+                        <option value="D">D</option>
+                        <option value="E">E</option>
+                        <option value="F">F</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Info credibility (1-6)</label>
+                      <select class="observation-information-credibility">
+                        <option value="">n/a</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Source reference (optional)</label>
+                      <input type="text" class="observation-source-ref" placeholder="report id, tweet id, case link..." />
+                    </div>
+                    <textarea class="observation-note" placeholder="Historical context, pattern shift, or caveats..."></textarea>
+                  </div>
+                  <div class="obs-actions">
+                    <button type="button" class="observation-save">Save observation</button>
+                    <span class="observation-meta" data-observation-meta></span>
+                  </div>
+                </div>
+              </details>
             </li>
             {% endfor %}
           </ul>
@@ -498,10 +588,66 @@
             </div>
           </details>
           {% endif %}
+          <details class="compact">
+            <summary>Interactive event view (optional)</summary>
+            <div class="interactive-panel">
+              <h4>Filter timeline events quickly</h4>
+              <div class="filter-row">
+                <label for="timeline-severity">Severity</label>
+                <select id="timeline-severity">
+                  <option value="">All</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+                <label for="timeline-category">Category</label>
+                <select id="timeline-category">
+                  <option value="">All</option>
+                  {% for item in notebook.timeline_compact_rows %}
+                  <option value="{{ item.category|lower }}">{{ item.category }}</option>
+                  {% endfor %}
+                </select>
+                <label for="timeline-search">Contains</label>
+                <input id="timeline-search" type="text" placeholder="target, technique, action..." />
+                <button type="button" id="timeline-reset">Reset</button>
+              </div>
+              {% if notebook.timeline_compact_rows %}
+              <table class="timeline-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Severity</th>
+                    <th>Category</th>
+                    <th>Action</th>
+                    <th>Target</th>
+                  </tr>
+                </thead>
+                <tbody id="timeline-filter-body">
+                  {% for item in notebook.timeline_compact_rows %}
+                  <tr
+                    data-severity="{{ item.severity|lower }}"
+                    data-category="{{ item.category|lower }}"
+                    data-search="{{ (item.action ~ ' ' ~ item.target ~ ' ' ~ item.techniques ~ ' ' ~ item.summary)|lower }}"
+                  >
+                    <td>{{ item.date }}</td>
+                    <td><span class="badge">{{ item.severity }}</span></td>
+                    <td>{{ item.category }}</td>
+                    <td>{{ item.action }}</td>
+                    <td>{{ item.target or 'n/a' }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              <div id="timeline-empty" class="timeline-empty" style="display:none;">No events match the current filter.</div>
+              {% else %}
+              <div class="timeline-empty">No compact events available yet.</div>
+              {% endif %}
+            </div>
+          </details>
         </section>
 
         {% if notebook.priority_questions %}
-        <section class="card span-2 decision-queue">
+        <section class="card span-2 decision-queue" data-step="action">
           <div class="decision-header">
             <h2 class="section-title" style="margin:0;">3) What do I do about it?</h2>
             <a href="/actors/{{ notebook.actor.id }}/questions">Open workspace</a>
@@ -550,7 +696,7 @@
         </section>
         {% endif %}
 
-        <section class="card span-2">
+        <section class="card span-2" data-step="recent">
           <h2 class="section-title">4) Visual timeline</h2>
           {% if notebook.actor.notebook_status == 'running' %}
           <div class="notice status-working">Timeline events are being generated from source evidence.</div>
@@ -609,5 +755,202 @@
         {% endif %}
       </main>
     </div>
+    {% if notebook %}
+    <script>
+      (function () {
+        const actorId = document.body.dataset.actorId || "";
+        if (!actorId) return;
+
+        const dashboard = document.querySelector(".dashboard");
+        const flowButtons = document.querySelectorAll("#flow-nav .flow-btn");
+        const liveIndicator = document.getElementById("live-indicator");
+        const liveToggle = document.getElementById("live-toggle");
+        const liveRefresh = document.getElementById("live-refresh");
+        const reportNode = document.getElementById("recent-reports");
+        const targetsNode = document.getElementById("recent-targets");
+        const impactNode = document.getElementById("recent-impact");
+        let liveEnabled = true;
+
+        function applyFlow(mode) {
+          if (!dashboard) return;
+          dashboard.classList.remove("focus-who", "focus-recent", "focus-action");
+          if (mode !== "all") dashboard.classList.add("focus-" + mode);
+          flowButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.flow === mode));
+        }
+
+        flowButtons.forEach((btn) => {
+          btn.addEventListener("click", () => applyFlow(btn.dataset.flow || "all"));
+        });
+
+        async function fetchLiveState() {
+          const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/ui/live", { headers: { "Accept": "application/json" } });
+          if (!response.ok) return null;
+          return response.json();
+        }
+
+        function applyLiveState(data) {
+          if (!data) return;
+          if (liveIndicator) {
+            const state = String(data.notebook_status || "idle");
+            liveIndicator.textContent = "Live: " + state;
+          }
+          const recent = data.recent_change_summary || {};
+          if (reportNode && recent.new_reports !== undefined) reportNode.textContent = String(recent.new_reports);
+          if (targetsNode && recent.targets !== undefined) targetsNode.textContent = String(recent.targets);
+          if (impactNode && recent.damage !== undefined) impactNode.textContent = String(recent.damage);
+        }
+
+        async function runLiveRefresh() {
+          try {
+            const data = await fetchLiveState();
+            applyLiveState(data);
+          } catch (error) {
+            if (liveIndicator) liveIndicator.textContent = "Live sync unavailable";
+          }
+        }
+
+        if (liveToggle) {
+          liveToggle.addEventListener("click", () => {
+            liveEnabled = !liveEnabled;
+            liveToggle.textContent = liveEnabled ? "Pause" : "Resume";
+            if (liveIndicator) liveIndicator.textContent = liveEnabled ? "Live sync on" : "Live sync paused";
+          });
+        }
+        if (liveRefresh) liveRefresh.addEventListener("click", runLiveRefresh);
+        setInterval(() => {
+          if (liveEnabled) runLiveRefresh();
+        }, 20000);
+        runLiveRefresh();
+
+        const severitySelect = document.getElementById("timeline-severity");
+        const categorySelect = document.getElementById("timeline-category");
+        const searchInput = document.getElementById("timeline-search");
+        const timelineRows = Array.from(document.querySelectorAll("#timeline-filter-body tr"));
+        const timelineEmpty = document.getElementById("timeline-empty");
+        const timelineReset = document.getElementById("timeline-reset");
+        const observationCards = Array.from(document.querySelectorAll("[data-observation-item-type][data-observation-item-key]"));
+
+        function applyTimelineFilter() {
+          const severity = (severitySelect && severitySelect.value || "").toLowerCase();
+          const category = (categorySelect && categorySelect.value || "").toLowerCase();
+          const query = (searchInput && searchInput.value || "").trim().toLowerCase();
+          let visibleCount = 0;
+          timelineRows.forEach((row) => {
+            const rowSeverity = (row.dataset.severity || "").toLowerCase();
+            const rowCategory = (row.dataset.category || "").toLowerCase();
+            const rowSearch = (row.dataset.search || "").toLowerCase();
+            const matchesSeverity = !severity || rowSeverity === severity;
+            const matchesCategory = !category || rowCategory === category;
+            const matchesQuery = !query || rowSearch.includes(query);
+            const visible = matchesSeverity && matchesCategory && matchesQuery;
+            row.style.display = visible ? "" : "none";
+            if (visible) visibleCount += 1;
+          });
+          if (timelineEmpty) timelineEmpty.style.display = visibleCount === 0 ? "" : "none";
+        }
+
+        [severitySelect, categorySelect, searchInput].forEach((element) => {
+          if (!element) return;
+          element.addEventListener("input", applyTimelineFilter);
+          element.addEventListener("change", applyTimelineFilter);
+        });
+        if (timelineReset) {
+          timelineReset.addEventListener("click", () => {
+            if (severitySelect) severitySelect.value = "";
+            if (categorySelect) categorySelect.value = "";
+            if (searchInput) searchInput.value = "";
+            applyTimelineFilter();
+          });
+        }
+
+        const observationStore = new Map();
+        function observationMapKey(itemType, itemKey) {
+          return String(itemType || "") + "::" + String(itemKey || "");
+        }
+
+        function applyObservationCard(card) {
+          const itemType = card.dataset.observationItemType || "";
+          const itemKey = card.dataset.observationItemKey || "";
+          const data = observationStore.get(observationMapKey(itemType, itemKey)) || {};
+          const analystField = card.querySelector(".observation-analyst");
+          const confidenceField = card.querySelector(".observation-confidence");
+          const sourceReliabilityField = card.querySelector(".observation-source-reliability");
+          const infoCredibilityField = card.querySelector(".observation-information-credibility");
+          const sourceRefField = card.querySelector(".observation-source-ref");
+          const noteField = card.querySelector(".observation-note");
+          const metaNode = card.querySelector("[data-observation-meta]");
+
+          if (analystField && data.updated_by) analystField.value = data.updated_by;
+          if (confidenceField && data.confidence) confidenceField.value = data.confidence;
+          if (sourceReliabilityField && data.source_reliability !== undefined) sourceReliabilityField.value = data.source_reliability;
+          if (infoCredibilityField && data.information_credibility !== undefined) infoCredibilityField.value = data.information_credibility;
+          if (sourceRefField && data.source_ref) sourceRefField.value = data.source_ref;
+          if (noteField && data.note) noteField.value = data.note;
+          if (metaNode) {
+            const updatedAt = String(data.updated_at || "");
+            const updatedBy = String(data.updated_by || "");
+            const confidence = String(data.confidence || "moderate");
+            const rating = [String(data.source_reliability || ""), String(data.information_credibility || "")].join("");
+            const ratingText = rating.trim() ? " | rating " + rating : "";
+            metaNode.textContent = updatedAt ? "Saved " + updatedAt + " by " + (updatedBy || "analyst") + " | " + confidence + ratingText : "";
+          }
+        }
+
+        async function loadObservations() {
+          try {
+            const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/observations", { headers: { "Accept": "application/json" } });
+            if (!response.ok) return;
+            const payload = await response.json();
+            const items = Array.isArray(payload.items) ? payload.items : [];
+            items.forEach((item) => {
+              observationStore.set(observationMapKey(item.item_type, item.item_key), item);
+            });
+            observationCards.forEach(applyObservationCard);
+          } catch (error) {
+            // Keep page usable even if observation endpoint is unavailable.
+          }
+        }
+
+        observationCards.forEach((card) => {
+          const saveButton = card.querySelector(".observation-save");
+          if (!saveButton) return;
+          saveButton.addEventListener("click", async () => {
+            const itemType = card.dataset.observationItemType || "";
+            const itemKey = card.dataset.observationItemKey || "";
+            const updatedBy = String((card.querySelector(".observation-analyst") || {}).value || "");
+            const confidence = String((card.querySelector(".observation-confidence") || {}).value || "moderate");
+            const sourceReliability = String((card.querySelector(".observation-source-reliability") || {}).value || "");
+            const informationCredibility = String((card.querySelector(".observation-information-credibility") || {}).value || "");
+            const sourceRef = String((card.querySelector(".observation-source-ref") || {}).value || "");
+            const note = String((card.querySelector(".observation-note") || {}).value || "");
+            const payload = {
+              updated_by: updatedBy,
+              confidence: confidence,
+              source_reliability: sourceReliability,
+              information_credibility: informationCredibility,
+              source_ref: sourceRef,
+              note: note
+            };
+            try {
+              const response = await fetch(
+                "/actors/" + encodeURIComponent(actorId) + "/observations/" + encodeURIComponent(itemType) + "/" + encodeURIComponent(itemKey),
+                { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(payload) }
+              );
+              if (!response.ok) return;
+              const data = await response.json();
+              observationStore.set(observationMapKey(itemType, itemKey), data);
+              applyObservationCard(card);
+            } catch (error) {
+              const metaNode = card.querySelector("[data-observation-meta]");
+              if (metaNode) metaNode.textContent = "Save failed. Retry.";
+            }
+          });
+        });
+
+        loadObservations();
+
+      })();
+    </script>
+    {% endif %}
   </body>
 </html>

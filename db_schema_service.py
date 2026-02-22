@@ -232,6 +232,29 @@ def ensure_schema(connection) -> None:
         connection.execute("ALTER TABLE requirement_items ADD COLUMN validation_score INTEGER NOT NULL DEFAULT 0")
     if not any(col[1] == 'validation_notes' for col in requirement_cols):
         connection.execute("ALTER TABLE requirement_items ADD COLUMN validation_notes TEXT NOT NULL DEFAULT ''")
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS analyst_observations (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            item_key TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            source_ref TEXT NOT NULL DEFAULT '',
+            confidence TEXT NOT NULL DEFAULT 'moderate',
+            source_reliability TEXT NOT NULL DEFAULT '',
+            information_credibility TEXT NOT NULL DEFAULT '',
+            updated_by TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_actor_item
+        ON analyst_observations(actor_id, item_type, item_key)
+        '''
+    )
     connection.commit()
 
 

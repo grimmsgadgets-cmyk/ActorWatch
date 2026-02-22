@@ -78,6 +78,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'safe_json_string_list': deps['safe_json_string_list'],
                 'fetch_actor_notebook': deps['fetch_actor_notebook'],
                 'templates': deps['templates'],
+                'actor_exists': deps['actor_exists'],
             }
         )
     )

@@ -414,6 +414,8 @@ def build_recent_activity_highlights(
         ttp_values = [str(t) for t in item.get('ttp_ids', [])]
         highlights.append(
             {
+                'timeline_event_id': str(item.get('id') or ''),
+                'source_id': str(item.get('source_id') or ''),
                 'date': str(item.get('occurred_at') or ''),
                 'text': str(candidate.get('summary') or ''),
                 'category': str(item['category']).replace('_', ' '),
@@ -478,6 +480,8 @@ def build_recent_activity_highlights(
         freshness_label, freshness_class = freshness_badge(str(source.get('published_at') or source.get('retrieved_at') or ''))
         highlights.append(
             {
+                'timeline_event_id': '',
+                'source_id': str(source.get('id') or ''),
                 'date': str(source.get('published_at') or source.get('retrieved_at') or ''),
                 'text': synthesized,
                 'category': 'activity synthesis',

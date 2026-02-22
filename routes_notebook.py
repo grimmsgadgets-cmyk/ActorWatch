@@ -1,8 +1,9 @@
 import html
 import sqlite3
+import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 
 def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
@@ -16,6 +17,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
     _safe_json_string_list = deps['safe_json_string_list']
     _fetch_actor_notebook = deps['fetch_actor_notebook']
     _templates = deps['templates']
+    _actor_exists = deps['actor_exists']
 
     @router.post('/actors/{actor_id}/requirements/generate')
     async def generate_requirements(actor_id: str, request: Request) -> RedirectResponse:
@@ -176,5 +178,125 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 'notebook': notebook,
             },
         )
+
+    @router.get('/actors/{actor_id}/ui/live', response_class=JSONResponse)
+    def actor_live_state(actor_id: str) -> dict[str, object]:
+        notebook = _fetch_actor_notebook(actor_id)
+        return {
+            'actor_id': actor_id,
+            'notebook_status': str(notebook.get('actor', {}).get('notebook_status') or 'idle'),
+            'notebook_message': str(notebook.get('actor', {}).get('notebook_message') or ''),
+            'kpis': notebook.get('kpis', {}),
+            'recent_change_summary': notebook.get('recent_change_summary', {}),
+            'priority_questions': notebook.get('priority_questions', []),
+            'timeline_compact_rows': notebook.get('timeline_compact_rows', []),
+            'timeline_window_label': notebook.get('timeline_window_label', ''),
+        }
+
+    @router.get('/actors/{actor_id}/observations', response_class=JSONResponse)
+    def list_observations(actor_id: str) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            rows = connection.execute(
+                '''
+                SELECT item_type, item_key, note, source_ref, confidence,
+                       source_reliability, information_credibility, updated_by, updated_at
+                FROM analyst_observations
+                WHERE actor_id = ?
+                ''',
+                (actor_id,),
+            ).fetchall()
+        return {
+            'actor_id': actor_id,
+            'items': [
+                {
+                    'item_type': row[0],
+                    'item_key': row[1],
+                    'note': row[2] or '',
+                    'source_ref': row[3] or '',
+                    'confidence': row[4] or 'moderate',
+                    'source_reliability': row[5] or '',
+                    'information_credibility': row[6] or '',
+                    'updated_by': row[7] or '',
+                    'updated_at': row[8] or '',
+                }
+                for row in rows
+            ],
+        }
+
+    @router.post('/actors/{actor_id}/observations/{item_type}/{item_key}', response_class=JSONResponse)
+    async def upsert_observation(actor_id: str, item_type: str, item_key: str, request: Request) -> dict[str, object]:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        payload = await request.json()
+
+        note = str(payload.get('note') or '').strip()[:4000]
+        source_ref = str(payload.get('source_ref') or '').strip()[:500]
+        confidence = str(payload.get('confidence') or 'moderate').strip().lower()
+        if confidence not in {'low', 'moderate', 'high'}:
+            confidence = 'moderate'
+        source_reliability = str(payload.get('source_reliability') or '').strip().upper()[:1]
+        if source_reliability and source_reliability not in {'A', 'B', 'C', 'D', 'E', 'F'}:
+            source_reliability = ''
+        information_credibility = str(payload.get('information_credibility') or '').strip()[:1]
+        if information_credibility and information_credibility not in {'1', '2', '3', '4', '5', '6'}:
+            information_credibility = ''
+        updated_by = str(payload.get('updated_by') or '').strip()[:120]
+        updated_at = _utc_now_iso()
+
+        safe_item_type = item_type.strip().lower()[:40]
+        safe_item_key = item_key.strip()[:200]
+        if not safe_item_type or not safe_item_key:
+            raise HTTPException(status_code=400, detail='invalid observation key')
+
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            connection.execute(
+                '''
+                INSERT INTO analyst_observations (
+                    id, actor_id, item_type, item_key, note, source_ref,
+                    confidence, source_reliability, information_credibility,
+                    updated_by, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(actor_id, item_type, item_key)
+                DO UPDATE SET
+                    note = excluded.note,
+                    source_ref = excluded.source_ref,
+                    confidence = excluded.confidence,
+                    source_reliability = excluded.source_reliability,
+                    information_credibility = excluded.information_credibility,
+                    updated_by = excluded.updated_by,
+                    updated_at = excluded.updated_at
+                ''',
+                (
+                    str(uuid.uuid4()),
+                    actor_id,
+                    safe_item_type,
+                    safe_item_key,
+                    note,
+                    source_ref,
+                    confidence,
+                    source_reliability,
+                    information_credibility,
+                    updated_by,
+                    updated_at,
+                ),
+            )
+            connection.commit()
+
+        return {
+            'ok': True,
+            'item_type': safe_item_type,
+            'item_key': safe_item_key,
+            'note': note,
+            'source_ref': source_ref,
+            'confidence': confidence,
+            'source_reliability': source_reliability,
+            'information_credibility': information_credibility,
+            'updated_by': updated_by,
+            'updated_at': updated_at,
+        }
 
     return router
