@@ -1912,10 +1912,11 @@ def build_notebook(
 
 
 def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
-    return pipeline_fetch_actor_notebook_core(
-        actor_id,
-        db_path=DB_PATH,
+    return notebook_service.fetch_actor_notebook_wrapper_core(
+        actor_id=actor_id,
         deps={
+            'pipeline_fetch_actor_notebook_core': pipeline_fetch_actor_notebook_core,
+            'db_path': lambda: DB_PATH,
             'parse_published_datetime': _parse_published_datetime,
             'safe_json_string_list': _safe_json_string_list,
             'actor_signal_categories': _actor_signal_categories,
