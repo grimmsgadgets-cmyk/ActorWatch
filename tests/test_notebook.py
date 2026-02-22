@@ -63,6 +63,23 @@ def test_build_notebook_creates_thread_and_update_with_excerpt(tmp_path):
         assert update[3] == '2026-02-15'
 
 
+def test_build_notebook_wrapper_delegates_to_builder_core(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_build_core(actor_id, **kwargs):
+        captured['actor_id'] = actor_id
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app_module, 'build_notebook_core', _fake_build_core)
+
+    app_module.build_notebook('actor-wrapper-test', generate_questions=False, rebuild_timeline=False)
+
+    assert captured['actor_id'] == 'actor-wrapper-test'
+    assert captured['db_path'] == app_module.DB_PATH
+    assert captured['generate_questions'] is False
+    assert captured['rebuild_timeline'] is False
+
+
 def test_validate_outbound_url_blocks_localhost():
     with pytest.raises(app_module.HTTPException):
         app_module._validate_outbound_url('http://localhost/internal')  # noqa: SLF001

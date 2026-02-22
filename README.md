@@ -21,6 +21,21 @@ platform.
 
 ------------------------------------------------------------------------
 
+## Architecture
+
+Current module layout:
+
+-   `app.py` - FastAPI routes and application composition
+-   `network_safety.py` - outbound URL validation and safe HTTP fetch helpers
+-   `actor_ingest.py` - source upsert and source-fingerprint dedupe logic
+-   `notebook_pipeline.py` - notebook summary/highlight synthesis helpers
+-   `notebook_builder.py` - notebook build orchestration for timeline/questions/guidance
+
+This split keeps request handling and orchestration clear while reducing
+single-file complexity.
+
+------------------------------------------------------------------------
+
 ## Requirements
 
 Before starting, ensure you have:
