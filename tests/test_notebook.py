@@ -229,6 +229,32 @@ def test_evidence_title_prefers_structured_title_over_pasted_text():
     assert title == 'Executive Threat Update'
 
 
+def test_priority_where_to_check_wrapper_delegates_to_priority_module(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_priority_where_to_check(guidance_items, question_text, **kwargs):
+        captured['guidance_items'] = guidance_items
+        captured['question_text'] = question_text
+        captured.update(kwargs)
+        return 'Firewall/VPN'
+
+    monkeypatch.setattr(app_module.priority_questions, 'priority_where_to_check', _fake_priority_where_to_check)
+
+    result = app_module._priority_where_to_check([{'platform': 'EDR'}], 'Is edge access compromised?')  # noqa: SLF001
+
+    assert result == 'Firewall/VPN'
+    assert captured['question_text'] == 'Is edge access compromised?'
+    assert callable(captured['platforms_for_question'])
+
+
+def test_question_org_alignment_preserves_overlap_scoring():
+    score = app_module._question_org_alignment(  # noqa: SLF001
+        'How should we protect finance payment systems from ransomware?',
+        'Priority assets include finance payment systems and payroll operations.',
+    )
+    assert score >= 2
+
+
 def test_validate_outbound_url_blocks_localhost():
     with pytest.raises(app_module.HTTPException):
         app_module._validate_outbound_url('http://localhost/internal')  # noqa: SLF001
