@@ -20,7 +20,7 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
     _parse_ioc_values = deps['parse_ioc_values']
     _utc_now_iso = deps['utc_now_iso']
     _set_actor_notebook_status = deps['set_actor_notebook_status']
-    _run_actor_generation = deps['run_actor_generation']
+    _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
 
     @router.post('/actors/{actor_id}/sources')
     async def add_source(actor_id: str, request: Request) -> RedirectResponse:
@@ -127,7 +127,7 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
             'running',
             'Refreshing sources, questions, and timeline entries...',
         )
-        background_tasks.add_task(_run_actor_generation, actor_id)
+        _enqueue_actor_generation(actor_id)
         return RedirectResponse(
             url=f'/?actor_id={actor_id}&notice=Notebook refresh started',
             status_code=303,

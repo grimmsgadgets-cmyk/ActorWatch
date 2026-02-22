@@ -1,7 +1,7 @@
 import sqlite3
 
-from actor_ingest import source_fingerprint as build_source_fingerprint
-from actor_ingest import upsert_source_for_actor
+from pipelines.actor_ingest import source_fingerprint as build_source_fingerprint
+from pipelines.actor_ingest import upsert_source_for_actor
 
 
 def source_fingerprint_core(

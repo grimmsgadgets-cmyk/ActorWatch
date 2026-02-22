@@ -4,7 +4,7 @@ import sqlite3
 import uuid
 import csv
 
-import observation_service
+import services.observation_service as observation_service
 import route_paths
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response

@@ -3,7 +3,6 @@
         if (!actorId) return;
 
         const liveIndicator = document.getElementById("live-indicator");
-        const liveRefreshTop = document.getElementById("live-refresh-top");
         const reportNode = document.getElementById("recent-reports");
         const targetsNode = document.getElementById("recent-targets");
         const impactNode = document.getElementById("recent-impact");
@@ -35,7 +34,6 @@
           }
         }
 
-        if (liveRefreshTop) liveRefreshTop.addEventListener("click", runLiveRefresh);
         setInterval(runLiveRefresh, 20000);
         runLiveRefresh();
 

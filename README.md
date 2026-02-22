@@ -3,7 +3,7 @@
 A lightweight threat actor lookup tool that turns reporting into a clear
 starting point for defensive review.
 
-![App Screenshot](screenshots/updated2.png)
+![App Screenshot](docs/screenshots/updated2.png)
 
 ------------------------------------------------------------------------
 
@@ -27,9 +27,9 @@ Current module layout:
 
 -   `app.py` - FastAPI routes and application composition
 -   `network_safety.py` - outbound URL validation and safe HTTP fetch helpers
--   `actor_ingest.py` - source upsert and source-fingerprint dedupe logic
--   `notebook_pipeline.py` - notebook summary/highlight synthesis helpers
--   `notebook_builder.py` - notebook build orchestration for timeline/questions/guidance
+-   `pipelines/actor_ingest.py` - source upsert and source-fingerprint dedupe logic
+-   `pipelines/notebook_pipeline.py` - notebook summary/highlight synthesis helpers
+-   `pipelines/notebook_builder.py` - notebook build orchestration for timeline/questions/guidance
 
 This split keeps request handling and orchestration clear while reducing
 single-file complexity.

@@ -13,58 +13,58 @@ from threading import Lock
 from urllib.parse import urlparse
 
 import httpx
-import actor_state_service
-import actor_profile_service
+import services.actor_state_service as actor_state_service
+import services.actor_profile_service as actor_profile_service
 import guidance_catalog
-import generation_service
-import feed_import_service
+import services.generation_service as generation_service
+import services.feed_import_service as feed_import_service
 import legacy_ui
 import mitre_store
-import db_schema_service
-import activity_highlight_service
-import analyst_text_service
-import actor_search_service
-import app_wiring_service
+import services.db_schema_service as db_schema_service
+import services.activity_highlight_service as activity_highlight_service
+import services.analyst_text_service as analyst_text_service
+import services.actor_search_service as actor_search_service
+import services.app_wiring_service as app_wiring_service
 import priority_questions
-import priority_service
-import rate_limit_service
-import recent_activity_service
-import routes_api
-import routes_actor_ops
-import routes_dashboard
-import routes_evolution
-import routes_notebook
-import routes_ui
-import network_service
-import notebook_service
-import source_ingest_service
-import source_derivation_service
-import source_store_service
-import requirements_service
-import status_service
-import timeline_extraction
-import timeline_analytics_service
-import timeline_view_service
+import services.priority_service as priority_service
+import services.rate_limit_service as rate_limit_service
+import services.recent_activity_service as recent_activity_service
+import routes.routes_api as routes_api
+import routes.routes_actor_ops as routes_actor_ops
+import routes.routes_dashboard as routes_dashboard
+import routes.routes_evolution as routes_evolution
+import routes.routes_notebook as routes_notebook
+import routes.routes_ui as routes_ui
+import services.network_service as network_service
+import services.notebook_service as notebook_service
+import services.source_ingest_service as source_ingest_service
+import services.source_derivation_service as source_derivation_service
+import services.source_store_service as source_store_service
+import services.requirements_service as requirements_service
+import services.status_service as status_service
+import pipelines.timeline_extraction as timeline_extraction
+import services.timeline_analytics_service as timeline_analytics_service
+import services.timeline_view_service as timeline_view_service
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from feed_ingest import import_default_feeds_for_actor_core as pipeline_import_default_feeds_for_actor_core
-from generation_runner import run_actor_generation_core as pipeline_run_actor_generation_core
-from notebook_builder import build_notebook_core
-from notebook_pipeline import build_environment_checks as pipeline_build_environment_checks
-from notebook_pipeline import fetch_actor_notebook_core as pipeline_fetch_actor_notebook_core
-from notebook_pipeline import build_recent_activity_highlights as pipeline_build_recent_activity_highlights
-from notebook_pipeline import latest_reporting_recency_label as pipeline_latest_reporting_recency_label
-from notebook_pipeline import recent_change_summary as pipeline_recent_change_summary
-from requirements_pipeline import generate_actor_requirements_core as pipeline_generate_actor_requirements_core
-from source_derivation import canonical_group_domain as pipeline_canonical_group_domain
-from source_derivation import derive_source_from_url_core as pipeline_derive_source_from_url_core
-from source_derivation import evidence_source_label_from_source as pipeline_evidence_source_label_from_source
-from source_derivation import evidence_title_from_source as pipeline_evidence_title_from_source
-from source_derivation import extract_meta as pipeline_extract_meta
-from source_derivation import fallback_title_from_url as pipeline_fallback_title_from_url
-from source_derivation import strip_html as pipeline_strip_html
+from pipelines.feed_ingest import import_default_feeds_for_actor_core as pipeline_import_default_feeds_for_actor_core
+from pipelines.generation_runner import run_actor_generation_core as pipeline_run_actor_generation_core
+from pipelines.notebook_builder import build_notebook_core
+from pipelines.notebook_pipeline import build_environment_checks as pipeline_build_environment_checks
+from pipelines.notebook_pipeline import fetch_actor_notebook_core as pipeline_fetch_actor_notebook_core
+from pipelines.notebook_pipeline import build_recent_activity_highlights as pipeline_build_recent_activity_highlights
+from pipelines.notebook_pipeline import latest_reporting_recency_label as pipeline_latest_reporting_recency_label
+from pipelines.notebook_pipeline import recent_change_summary as pipeline_recent_change_summary
+from pipelines.requirements_pipeline import generate_actor_requirements_core as pipeline_generate_actor_requirements_core
+from pipelines.source_derivation import canonical_group_domain as pipeline_canonical_group_domain
+from pipelines.source_derivation import derive_source_from_url_core as pipeline_derive_source_from_url_core
+from pipelines.source_derivation import evidence_source_label_from_source as pipeline_evidence_source_label_from_source
+from pipelines.source_derivation import evidence_title_from_source as pipeline_evidence_title_from_source
+from pipelines.source_derivation import extract_meta as pipeline_extract_meta
+from pipelines.source_derivation import fallback_title_from_url as pipeline_fallback_title_from_url
+from pipelines.source_derivation import strip_html as pipeline_strip_html
 
 
 @asynccontextmanager
@@ -1319,6 +1319,15 @@ def run_actor_generation(actor_id: str) -> None:
     )
 
 
+def enqueue_actor_generation(actor_id: str) -> None:
+    generation_service.enqueue_actor_generation_core(
+        actor_id=actor_id,
+        deps={
+            'run_actor_generation': run_actor_generation,
+        },
+    )
+
+
 def list_actor_profiles() -> list[dict[str, object]]:
     return actor_profile_service.list_actor_profiles_core(
         deps={
@@ -1570,6 +1579,7 @@ def _register_routers() -> None:
             'fetch_actor_notebook': _fetch_actor_notebook,
             'set_actor_notebook_status': set_actor_notebook_status,
             'run_actor_generation': run_actor_generation,
+            'enqueue_actor_generation': enqueue_actor_generation,
             'get_ollama_status': get_ollama_status,
             'format_duration_ms': _format_duration_ms,
             'templates': templates,
@@ -1632,6 +1642,7 @@ def root(
             'fetch_actor_notebook': _fetch_actor_notebook,
             'set_actor_notebook_status': set_actor_notebook_status,
             'run_actor_generation': run_actor_generation,
+            'enqueue_actor_generation': enqueue_actor_generation,
             'get_ollama_status': get_ollama_status,
             'format_duration_ms': _format_duration_ms,
             'templates': templates,

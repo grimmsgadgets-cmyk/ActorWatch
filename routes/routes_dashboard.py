@@ -14,7 +14,7 @@ def render_dashboard_root(
     _list_actor_profiles = deps['list_actor_profiles']
     _fetch_actor_notebook = deps['fetch_actor_notebook']
     _set_actor_notebook_status = deps['set_actor_notebook_status']
-    _run_actor_generation = deps['run_actor_generation']
+    _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
     _get_ollama_status = deps['get_ollama_status']
     _format_duration_ms = deps['format_duration_ms']
     _templates = deps['templates']
@@ -60,7 +60,7 @@ def render_dashboard_root(
                     'running',
                     'Collecting actor-specific sources and rebuilding recent activity...',
                 )
-                background_tasks.add_task(_run_actor_generation, selected_actor_id)
+                _enqueue_actor_generation(selected_actor_id)
                 actor_meta['notebook_status'] = 'running'
                 actor_meta['notebook_message'] = 'Collecting actor-specific sources and rebuilding recent activity...'
                 if not notice:

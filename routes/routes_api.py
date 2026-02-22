@@ -14,7 +14,7 @@ def create_api_router(*, deps: dict[str, object]) -> APIRouter:
     _db_path = deps['db_path']
     _actor_exists = deps['actor_exists']
     _set_actor_notebook_status = deps['set_actor_notebook_status']
-    _run_actor_generation = deps['run_actor_generation']
+    _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
 
     @router.get('/health')
     def health() -> dict[str, str]:
@@ -69,7 +69,7 @@ def create_api_router(*, deps: dict[str, object]) -> APIRouter:
             'running',
             'Fetching sources and generating open analytic questions and timeline entries...',
         )
-        background_tasks.add_task(_run_actor_generation, actor_id)
+        _enqueue_actor_generation(actor_id)
         return RedirectResponse(
             url=f'/?actor_id={actor_id}&notice=Notebook generation started',
             status_code=303,

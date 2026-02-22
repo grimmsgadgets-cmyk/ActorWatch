@@ -1,4 +1,4 @@
-from threading import Lock
+from threading import Lock, Thread
 
 
 _ACTOR_GENERATION_RUNNING: set[str] = set()
@@ -41,3 +41,14 @@ def run_actor_generation_core(*, actor_id: str, deps: dict[str, object]) -> None
         )
     finally:
         _mark_finished(actor_id)
+
+
+def enqueue_actor_generation_core(*, actor_id: str, deps: dict[str, object]) -> None:
+    _run_actor_generation = deps['run_actor_generation']
+    worker = Thread(
+        target=_run_actor_generation,
+        args=(actor_id,),
+        daemon=True,
+        name=f'actor-generation-{actor_id[:8]}',
+    )
+    worker.start()

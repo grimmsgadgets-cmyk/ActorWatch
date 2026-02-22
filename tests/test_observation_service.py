@@ -1,4 +1,4 @@
-import observation_service
+import services.observation_service as observation_service
 
 
 def test_normalize_observation_filters_handles_invalid_inputs():

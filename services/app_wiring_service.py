@@ -13,6 +13,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'fetch_actor_notebook': deps['fetch_actor_notebook'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
                 'run_actor_generation': deps['run_actor_generation'],
+                'enqueue_actor_generation': deps['enqueue_actor_generation'],
                 'get_ollama_status': deps['get_ollama_status'],
                 'format_duration_ms': deps['format_duration_ms'],
                 'templates': deps['templates'],
@@ -31,6 +32,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'actor_exists': deps['actor_exists'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
                 'run_actor_generation': deps['run_actor_generation'],
+                'enqueue_actor_generation': deps['enqueue_actor_generation'],
             }
         )
     )
@@ -43,6 +45,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'create_actor_profile': deps['create_actor_profile'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
                 'run_actor_generation': deps['run_actor_generation'],
+                'enqueue_actor_generation': deps['enqueue_actor_generation'],
                 'list_actor_profiles': deps['list_actor_profiles'],
             }
         )
@@ -63,6 +66,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'utc_now_iso': deps['utc_now_iso'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
                 'run_actor_generation': deps['run_actor_generation'],
+                'enqueue_actor_generation': deps['enqueue_actor_generation'],
             }
         )
     )
