@@ -47,6 +47,7 @@ import timeline_analytics_service
 import timeline_view_service
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from feed_ingest import import_default_feeds_for_actor_core as pipeline_import_default_feeds_for_actor_core
 from generation_runner import run_actor_generation_core as pipeline_run_actor_generation_core
@@ -76,6 +77,7 @@ app = FastAPI(lifespan=app_lifespan)
 DB_PATH = '/data/app.db'
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / 'templates'))
+app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'static')), name='static')
 ATTACK_ENTERPRISE_STIX_URL = (
     'https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json'
 )
