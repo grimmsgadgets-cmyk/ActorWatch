@@ -121,6 +121,32 @@ def test_fetch_actor_notebook_payload_shape_regression(tmp_path):
     assert isinstance(notebook['kpis'], dict)
 
 
+def test_generate_actor_requirements_wrapper_delegates_to_pipeline_core(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_generate_core(actor_id, org_context, priority_mode, **kwargs):
+        captured['actor_id'] = actor_id
+        captured['org_context'] = org_context
+        captured['priority_mode'] = priority_mode
+        captured.update(kwargs)
+        return 2
+
+    monkeypatch.setattr(app_module, 'pipeline_generate_actor_requirements_core', _fake_generate_core)
+
+    inserted = app_module.generate_actor_requirements('actor-1', 'finance org', 'Operational')
+
+    assert inserted == 2
+    assert captured['actor_id'] == 'actor-1'
+    assert captured['org_context'] == 'finance org'
+    assert captured['priority_mode'] == 'Operational'
+    assert captured['db_path'] == app_module.DB_PATH
+    deps = captured['deps']
+    assert isinstance(deps, dict)
+    assert 'actor_exists' in deps
+    assert 'build_actor_profile_from_mitre' in deps
+    assert 'new_id' in deps
+
+
 def test_validate_outbound_url_blocks_localhost():
     with pytest.raises(app_module.HTTPException):
         app_module._validate_outbound_url('http://localhost/internal')  # noqa: SLF001
