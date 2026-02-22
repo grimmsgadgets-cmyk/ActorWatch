@@ -186,14 +186,6 @@
       .req-item p { margin: 6px 0; font-size: 13px; line-height: 1.35; }
       .req-item form { margin-top: 6px; }
       .req-validation { margin-top: 6px; font-size: 11px; color: #334155; background: #f5f8ff; border: 1px solid #d9e3f7; border-radius: 6px; padding: 6px; }
-      .flow-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-      .flow-btn { border: 1px solid #c7d4ea; background: #fff; color: #1f2937; border-radius: 999px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
-      .flow-btn.active { background: #e7f0ff; border-color: #86a8da; }
-      .flow-btn:hover { background: #f3f7ff; }
-      .flow-help { font-size: 11px; color: #475569; margin-top: -2px; margin-bottom: 8px; }
-      .focus-who [data-step]:not([data-step="who"]),
-      .focus-recent [data-step]:not([data-step="recent"]),
-      .focus-action [data-step]:not([data-step="action"]) { opacity: 0.5; }
       .live-pill { border: 1px solid #c7d4ea; border-radius: 999px; padding: 4px 8px; font-size: 11px; color: #334155; background: #f8fbff; }
       .interactive-panel { border: 1px solid #dce7f8; border-radius: 8px; background: #f9fcff; padding: 8px; margin-top: 8px; }
       .interactive-panel h4 { margin: 0 0 6px; font-size: 13px; }
@@ -359,7 +351,6 @@
           {% if notebook %}
           <div class="live-controls">
             <span class="live-pill" id="live-indicator">Live sync on</span>
-            <button type="button" id="live-toggle">Pause</button>
             <button type="button" id="live-refresh">Refresh now</button>
           </div>
           {% endif %}
@@ -378,13 +369,6 @@
               <li><strong>Step 3 - How is the assessment changing?</strong> Capture observations tied to source evidence over time.</li>
             </ul>
           </div>
-          <div class="flow-nav" id="flow-nav">
-            <button class="flow-btn active" type="button" data-flow="all">Full flow</button>
-            <button class="flow-btn" type="button" data-flow="who">Focus: Who</button>
-            <button class="flow-btn" type="button" data-flow="recent">Focus: Recent</button>
-            <button class="flow-btn" type="button" data-flow="action">Focus: Action</button>
-          </div>
-          <div class="flow-help">Focus mode only dims non-selected sections; nothing is hidden or blocked.</div>
           <details class="compact">
             <summary>Quick definitions (optional)</summary>
             <div class="helper-box">
@@ -931,26 +915,11 @@
         const actorId = document.body.dataset.actorId || "";
         if (!actorId) return;
 
-        const dashboard = document.querySelector(".dashboard");
-        const flowButtons = document.querySelectorAll("#flow-nav .flow-btn");
         const liveIndicator = document.getElementById("live-indicator");
-        const liveToggle = document.getElementById("live-toggle");
         const liveRefresh = document.getElementById("live-refresh");
         const reportNode = document.getElementById("recent-reports");
         const targetsNode = document.getElementById("recent-targets");
         const impactNode = document.getElementById("recent-impact");
-        let liveEnabled = true;
-
-        function applyFlow(mode) {
-          if (!dashboard) return;
-          dashboard.classList.remove("focus-who", "focus-recent", "focus-action");
-          if (mode !== "all") dashboard.classList.add("focus-" + mode);
-          flowButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.flow === mode));
-        }
-
-        flowButtons.forEach((btn) => {
-          btn.addEventListener("click", () => applyFlow(btn.dataset.flow || "all"));
-        });
 
         async function fetchLiveState() {
           const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/ui/live", { headers: { "Accept": "application/json" } });
@@ -979,17 +948,8 @@
           }
         }
 
-        if (liveToggle) {
-          liveToggle.addEventListener("click", () => {
-            liveEnabled = !liveEnabled;
-            liveToggle.textContent = liveEnabled ? "Pause" : "Resume";
-            if (liveIndicator) liveIndicator.textContent = liveEnabled ? "Live sync on" : "Live sync paused";
-          });
-        }
         if (liveRefresh) liveRefresh.addEventListener("click", runLiveRefresh);
-        setInterval(() => {
-          if (liveEnabled) runLiveRefresh();
-        }, 20000);
+        setInterval(runLiveRefresh, 20000);
         runLiveRefresh();
 
         const severitySelect = document.getElementById("timeline-severity");
@@ -1295,10 +1255,6 @@
           { label: "Go to Recent section", run: () => scrollToStep("#section-recent") },
           { label: "Go to Interpretation section", run: () => scrollToStep("#section-history") },
           { label: "Go to Timeline section", run: () => scrollToStep("#section-timeline") },
-          { label: "Focus mode: Full flow", run: () => applyFlow("all") },
-          { label: "Focus mode: Who", run: () => applyFlow("who") },
-          { label: "Focus mode: Recent", run: () => applyFlow("recent") },
-          { label: "Focus mode: Action", run: () => applyFlow("action") },
           { label: "Refresh live now", run: () => runLiveRefresh() },
           { label: "Open timeline details", run: () => window.open("/actors/" + encodeURIComponent(actorId) + "/timeline/details", "_blank", "noopener,noreferrer") },
           { label: "Export observations CSV", run: () => window.open("/actors/" + encodeURIComponent(actorId) + "/observations/export.csv", "_blank", "noopener,noreferrer") },
