@@ -449,7 +449,7 @@
               {% else %}
               <span class="source-title-link">{{ display_title }}</span>
               {% endif %}
-              <small>{{ item.evidence_source_label or item.source_name or 'Unknown source' }}</small>
+              <small>{{ item.evidence_source_label or item.source_name or 'Unknown source' }} | corroboration: {{ item.corroboration_sources or '1' }} source(s)</small>
             </li>
             {% endfor %}
           </ul>
@@ -473,7 +473,7 @@
                   {% else %}
                   {{ display_title }}
                   {% endif %}
-                  <small>{{ item.evidence_source_label or item.source_name or 'Unknown source' }}</small>
+                  <small>{{ item.evidence_source_label or item.source_name or 'Unknown source' }} | corroboration: {{ item.corroboration_sources or '1' }} source(s)</small>
                   {% if item.category %}<span class="badge">{{ item.category }}</span>{% endif %}
                   {% if item.ttp_ids %}<span class="badge">{{ item.ttp_ids }}</span>{% endif %}
                 </li>
