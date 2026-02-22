@@ -21,6 +21,7 @@ import guidance_catalog
 import mitre_store
 import priority_questions
 import routes_api
+import routes_ui
 import timeline_extraction
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -2416,6 +2417,42 @@ app.include_router(
         }
     )
 )
+app.include_router(
+    routes_ui.create_ui_router(
+        deps={
+            'enforce_request_size': _enforce_request_size,
+            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+            'create_actor_profile': create_actor_profile,
+            'set_actor_notebook_status': set_actor_notebook_status,
+            'run_actor_generation': run_actor_generation,
+            'list_actor_profiles': list_actor_profiles,
+        }
+    )
+)
+
+
+def actors_ui() -> str:
+    actor_items = ''.join(
+        (
+            f'<li>{html.escape(str(actor["id"]), quote=True)} - '
+            f'{html.escape(str(actor["display_name"]), quote=True)}</li>'
+        )
+        for actor in list_actor_profiles()
+    )
+    return (
+        '<!doctype html>'
+        '<html><body>'
+        '<h1>Actors</h1>'
+        '<form method="post" action="/actors">'
+        '<label for="display_name">Display Name</label>'
+        '<input id="display_name" name="display_name" required />'
+        '<button type="submit">Create</button>'
+        '</form>'
+        '<ul>'
+        f'{actor_items}'
+        '</ul>'
+        '</body></html>'
+    )
 
 
 @app.get('/', response_class=HTMLResponse)
@@ -2515,53 +2552,6 @@ def root(
             'ollama_status': ollama_status,
             'notebook_health': notebook_health,
         },
-    )
-
-
-@app.post('/actors/new')
-async def create_actor_ui(request: Request, background_tasks: BackgroundTasks) -> RedirectResponse:
-    await _enforce_request_size(request, DEFAULT_BODY_LIMIT_BYTES)
-    form_data = await request.form()
-    display_name = str(form_data.get('display_name', '')).strip()
-    scope_statement = None
-    is_tracked = True
-    if not display_name:
-        raise HTTPException(status_code=400, detail='display_name is required')
-    actor = create_actor_profile(display_name, scope_statement, is_tracked=is_tracked)
-    set_actor_notebook_status(
-        actor['id'],
-        'running',
-        'Actor added. Importing sources and generating notebook sections...',
-    )
-    background_tasks.add_task(run_actor_generation, actor['id'])
-    return RedirectResponse(
-        url=f'/?actor_id={actor["id"]}&notice=Tracking+started.+Building+notebook+in+the+background.',
-        status_code=303,
-    )
-
-
-@app.get('/actors/ui', response_class=HTMLResponse)
-def actors_ui() -> str:
-    actor_items = ''.join(
-        (
-            f'<li>{html.escape(str(actor["id"]), quote=True)} - '
-            f'{html.escape(str(actor["display_name"]), quote=True)}</li>'
-        )
-        for actor in list_actor_profiles()
-    )
-    return (
-        '<!doctype html>'
-        '<html><body>'
-        '<h1>Actors</h1>'
-        '<form method="post" action="/actors">'
-        '<label for="display_name">Display Name</label>'
-        '<input id="display_name" name="display_name" required />'
-        '<button type="submit">Create</button>'
-        '</form>'
-        '<ul>'
-        f'{actor_items}'
-        '</ul>'
-        '</body></html>'
     )
 
 
