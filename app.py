@@ -38,6 +38,7 @@ import source_store_service
 import requirements_service
 import status_service
 import timeline_extraction
+import timeline_view_service
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -854,53 +855,43 @@ def _parse_iso_for_sort(value: str) -> datetime:
 
 
 def _short_date(value: str) -> str:
-    dt = _parse_published_datetime(value)
-    if dt is None:
-        return value[:10]
-    return dt.date().isoformat()
+    return timeline_view_service.short_date_core(
+        value,
+        deps={
+            'parse_published_datetime': _parse_published_datetime,
+        },
+    )
 
 
 def _format_date_or_unknown(value: str) -> str:
-    dt = _parse_published_datetime(value)
-    if dt is None:
-        return 'Unknown'
-    return dt.date().isoformat()
+    return timeline_view_service.format_date_or_unknown_core(
+        value,
+        deps={
+            'parse_published_datetime': _parse_published_datetime,
+        },
+    )
 
 
 def _freshness_badge(value: str | None) -> tuple[str, str]:
-    dt = _parse_published_datetime(value)
-    if dt is None:
-        return ('unknown', 'freshness-unknown')
-    days_old = max(0, (datetime.now(timezone.utc) - dt).days)
-    if days_old <= 1:
-        return ('<=24h', 'freshness-new')
-    if days_old <= 7:
-        return (f'{days_old}d', 'freshness-recent')
-    if days_old <= 30:
-        return (f'{days_old}d stale', 'freshness-stale')
-    return (f'{days_old}d old', 'freshness-old')
+    return timeline_view_service.freshness_badge_core(
+        value,
+        deps={
+            'parse_published_datetime': _parse_published_datetime,
+        },
+    )
 
 
 def _bucket_label(value: str) -> str:
-    dt = _parse_iso_for_sort(value)
-    if dt == datetime.min.replace(tzinfo=timezone.utc):
-        return value[:7]
-    return dt.strftime('%Y-%m')
+    return timeline_view_service.bucket_label_core(
+        value,
+        deps={
+            'parse_iso_for_sort': _parse_iso_for_sort,
+        },
+    )
 
 
 def _timeline_category_color(category: str) -> str:
-    palette = {
-        'initial_access': '#5b8def',
-        'execution': '#49a078',
-        'persistence': '#8a6adf',
-        'lateral_movement': '#2e8bcb',
-        'command_and_control': '#d48a2f',
-        'exfiltration': '#c44f4f',
-        'impact': '#9f2d2d',
-        'defense_evasion': '#6f7d8c',
-        'report': '#7b8a97',
-    }
-    return palette.get(category, '#7b8a97')
+    return timeline_view_service.timeline_category_color_core(category)
 
 
 def _build_notebook_kpis(
