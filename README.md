@@ -83,6 +83,14 @@ This will:
 
 The first run may take a few minutes.
 
+Security defaults:
+
+-   The app is published on `127.0.0.1:8000` (local machine only)
+-   Reverse-proxy headers are not trusted by default (`TRUST_PROXY_HEADERS=0`)
+-   Outbound URL fetches use a built-in domain allowlist unless you set
+    `OUTBOUND_ALLOWED_DOMAINS`
+-   Cross-site browser write requests are blocked (Origin/Referer validation)
+
 ------------------------------------------------------------------------
 
 ### 3. Access the Application
@@ -105,8 +113,6 @@ Press:
 Then optionally clean up containers:
 
     docker compose down
-
-------------------------------------------------------------------------
 
 ## Minimal Troubleshooting Checklist
 

@@ -41,12 +41,13 @@ def rate_limit_bucket_core(
     return ('write_default', rate_limit_default_per_minute)
 
 
-def request_client_id_core(request) -> str:
-    forwarded_for = request.headers.get('x-forwarded-for', '').strip()
-    if forwarded_for:
-        first_hop = forwarded_for.split(',', 1)[0].strip()
-        if first_hop:
-            return first_hop
+def request_client_id_core(request, *, trust_proxy_headers: bool = False) -> str:
+    if trust_proxy_headers:
+        forwarded_for = request.headers.get('x-forwarded-for', '').strip()
+        if forwarded_for:
+            first_hop = forwarded_for.split(',', 1)[0].strip()
+            if first_hop:
+                return first_hop
     if request.client and request.client.host:
         return request.client.host
     return 'unknown'

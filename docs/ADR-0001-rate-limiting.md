@@ -17,7 +17,9 @@ Constraints:
 ## Decision
 Implement application-layer, per-client, sliding-window rate limiting for write methods:
 - methods: `POST`, `PUT`, `PATCH`, `DELETE`
-- client identity: first IP from `X-Forwarded-For` (if present), else socket peer IP
+- client identity:
+  - default: socket peer IP
+  - optional: first IP from `X-Forwarded-For` when `TRUST_PROXY_HEADERS=1`
 - buckets:
   - `write_default`: normal write routes
   - `write_heavy`: source/ingest/refresh style routes
@@ -62,4 +64,3 @@ Cons:
 If deployment needs change (e.g., multiple app instances or higher concurrency), the limiter may need to move to shared state storage to maintain consistency across processes.
 
 For now, the in-memory implementation provides sufficient protection for single-instance and small self-hosted deployments.
-

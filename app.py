@@ -196,9 +196,25 @@ OUTBOUND_ALLOWED_DOMAINS = {
     for domain in os.environ.get('OUTBOUND_ALLOWED_DOMAINS', '').split(',')
     if domain.strip()
 }
+_DEFAULT_OUTBOUND_ALLOWED_DOMAINS = set(ACTOR_SEARCH_DOMAINS)
+for _, _feed_url in DEFAULT_CTI_FEEDS:
+    _host = urlparse(_feed_url).hostname
+    if _host:
+        _DEFAULT_OUTBOUND_ALLOWED_DOMAINS.add(_host.strip('.').lower())
+_DEFAULT_OUTBOUND_ALLOWED_DOMAINS.update(
+    {
+        'attack.mitre.org',
+        'raw.githubusercontent.com',
+    }
+)
+if not OUTBOUND_ALLOWED_DOMAINS:
+    OUTBOUND_ALLOWED_DOMAINS = _DEFAULT_OUTBOUND_ALLOWED_DOMAINS
 DEFAULT_BODY_LIMIT_BYTES = 256 * 1024
 SOURCE_UPLOAD_BODY_LIMIT_BYTES = 2 * 1024 * 1024
 OBSERVATION_BODY_LIMIT_BYTES = 512 * 1024
+TRUST_PROXY_HEADERS = os.environ.get('TRUST_PROXY_HEADERS', '0').strip().lower() in {
+    '1', 'true', 'yes', 'on',
+}
 RATE_LIMIT_ENABLED = os.environ.get('RATE_LIMIT_ENABLED', '1').strip().lower() not in {
     '0', 'false', 'no', 'off',
 }
@@ -292,7 +308,10 @@ def _rate_limit_bucket(method: str, path: str) -> tuple[str, int] | None:
 
 
 def _request_client_id(request: Request) -> str:
-    return rate_limit_service.request_client_id_core(request)
+    return rate_limit_service.request_client_id_core(
+        request,
+        trust_proxy_headers=TRUST_PROXY_HEADERS,
+    )
 
 
 def _prune_rate_limit_state(now: float) -> None:
@@ -322,8 +341,40 @@ def _check_rate_limit(request: Request) -> tuple[bool, int, int]:
     return (limited, retry_after, limit)
 
 
+def _csrf_request_allowed(request: Request) -> bool:
+    if request.method.upper() not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
+        return True
+    host = request.headers.get('host', '').strip().lower()
+    if not host:
+        return True
+
+    sec_fetch_site = request.headers.get('sec-fetch-site', '').strip().lower()
+    if sec_fetch_site in {'cross-site'}:
+        return False
+
+    origin = request.headers.get('origin', '').strip()
+    if origin:
+        parsed_origin = urlparse(origin)
+        if (parsed_origin.netloc or '').strip().lower() != host:
+            return False
+
+    referer = request.headers.get('referer', '').strip()
+    if referer:
+        parsed_referer = urlparse(referer)
+        if (parsed_referer.netloc or '').strip().lower() != host:
+            return False
+
+    return True
+
+
 @app.middleware('http')
 async def add_security_headers(request: Request, call_next):
+    if not _csrf_request_allowed(request):
+        return JSONResponse(
+            status_code=403,
+            content={'detail': 'cross-site request blocked'},
+        )
+
     limit = _request_body_limit_bytes(request.method, request.url.path)
     if limit > 0:
         content_length = request.headers.get('content-length', '').strip()
