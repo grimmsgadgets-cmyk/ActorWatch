@@ -796,6 +796,7 @@
                 <div class="dq-line"><strong>Where to check first:</strong> {{ question.first_step or question.telemetry_anchor }}</div>
                 <div class="dq-line"><strong>Signal to confirm or deny:</strong> {{ question.what_to_look_for or question.success_condition or question.decision_trigger }}</div>
                 <div class="dq-line"><strong>What to record:</strong> {{ question.confidence_change_threshold or question.escalation_threshold }} | confidence: {{ question.confidence }} | recency: {{ question.evidence_recency }} | corroboration: {{ question.corroborating_sources }} source(s)</div>
+                <div class="dq-line"><strong>Expected output:</strong> {{ question.expected_output }}</div>
               </div>
             </details>
             {% endfor %}
