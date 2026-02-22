@@ -163,6 +163,8 @@ _RATE_LIMIT_STATE: dict[str, deque[float]] = defaultdict(deque)
 _RATE_LIMIT_LOCK = Lock()
 _RATE_LIMIT_REQUEST_COUNTER = 0
 _RATE_LIMIT_CLEANUP_EVERY = 512
+_ACTOR_GENERATION_RUNNING: set[str] = set()
+_ACTOR_GENERATION_LOCK = Lock()
 
 
 def _request_body_limit_bytes(method: str, path: str) -> int:
@@ -2372,7 +2374,15 @@ def _extract_target_hint(sentence: str) -> str:
 
 def _sentence_mentions_actor_terms(sentence: str, actor_terms: list[str]) -> bool:
     lowered = sentence.lower()
-    return any(term in lowered for term in actor_terms if term)
+    for term in actor_terms:
+        value = term.strip().lower()
+        if not value:
+            continue
+        escaped = re.escape(value).replace(r'\ ', r'\s+')
+        pattern = rf'(?<![a-z0-9]){escaped}(?![a-z0-9])'
+        if re.search(pattern, lowered):
+            return True
+    return False
 
 
 def _looks_like_activity_sentence(sentence: str) -> bool:
@@ -2388,10 +2398,21 @@ def _looks_like_activity_sentence(sentence: str) -> bool:
 
 def _actor_terms(actor_name: str, mitre_group_name: str, aliases_csv: str) -> list[str]:
     raw_terms = [actor_name, mitre_group_name] + [part.strip() for part in aliases_csv.split(',') if part.strip()]
+    generic_terms = {
+        'apt',
+        'group',
+        'team',
+        'actor',
+        'threat actor',
+        'intrusion set',
+        'cluster',
+    }
     terms: list[str] = []
     for raw in raw_terms:
         value = raw.strip().lower()
         if len(value) < 3:
+            continue
+        if value in generic_terms:
             continue
         if value not in terms:
             terms.append(value)
@@ -2399,8 +2420,7 @@ def _actor_terms(actor_name: str, mitre_group_name: str, aliases_csv: str) -> li
 
 
 def _text_contains_actor_term(text: str, actor_terms: list[str]) -> bool:
-    lowered = text.lower()
-    return any(term in lowered for term in actor_terms if term)
+    return _sentence_mentions_actor_terms(text, actor_terms)
 
 
 def _actor_query_feeds(actor_terms: list[str]) -> list[tuple[str, str]]:
@@ -2560,13 +2580,39 @@ def _build_recent_activity_highlights(
     def _actor_specific_text(text: str, terms: list[str]) -> bool:
         return bool(text and terms and _sentence_mentions_actor_terms(text, terms))
 
+    def _candidate_signal_key(
+        summary: str,
+        category: str,
+        target_text: str,
+        ttp_values: list[str],
+    ) -> str:
+        normalized_summary = _normalize_text(summary)
+        key_summary = ' '.join(normalized_summary.split()[:14])
+        key_target = _normalize_text(target_text)
+        key_ttps = ','.join(sorted(str(value).upper() for value in ttp_values[:4]))
+        return f'{_normalize_text(category)}|{key_target}|{key_ttps}|{key_summary}'
+
+    def _recency_points(value: str | None) -> int:
+        dt = _parse_published_datetime(value)
+        if dt is None:
+            return 0
+        days_old = max(0, (datetime.now(timezone.utc) - dt).days)
+        if days_old <= 1:
+            return 4
+        if days_old <= 7:
+            return 3
+        if days_old <= 30:
+            return 2
+        return 1
+
     source_by_id = {str(source['id']): source for source in sources}
     highlights: list[dict[str, str | None]] = []
     terms = [term.lower() for term in actor_terms if term]
     if not terms:
         return highlights
 
-    for item in sorted(timeline_items, key=lambda entry: str(entry['occurred_at']), reverse=True):
+    candidates: list[dict[str, object]] = []
+    for item in timeline_items:
         source = source_by_id.get(str(item['source_id']))
         summary = str(item.get('summary') or '')
         source_text = str(source.get('pasted_text') if source else '')
@@ -2578,21 +2624,92 @@ def _build_recent_activity_highlights(
         # Strict gating: require trusted domains unless summary is explicitly actor-tagged.
         if source_url and not _is_trusted_domain(source_url) and not _actor_specific_text(summary, terms):
             continue
+
+        ttp_list = [str(t) for t in item.get('ttp_ids', [])]
+        signal_key = _candidate_signal_key(
+            summary,
+            str(item.get('category') or ''),
+            str(item.get('target_text') or ''),
+            ttp_list,
+        )
+        candidates.append(
+            {
+                'item': item,
+                'source': source,
+                'source_url': source_url,
+                'summary': summary,
+                'signal_key': signal_key,
+                'date_value': str(source.get('published_at') if source else '') or str(item.get('occurred_at') or ''),
+            }
+        )
+
+    signal_domains: dict[str, set[str]] = {}
+    for candidate in candidates:
+        signal_key = str(candidate.get('signal_key') or '')
+        source_obj = candidate.get('source')
+        source_domain = (
+            _canonical_group_domain(source_obj)
+            if isinstance(source_obj, dict)
+            else _source_domain(str(candidate.get('source_url') or ''))
+        )
+        if not signal_key or not source_domain:
+            continue
+        signal_domains.setdefault(signal_key, set()).add(source_domain)
+
+    ranked_candidates: list[dict[str, object]] = []
+    for candidate in candidates:
+        signal_key = str(candidate.get('signal_key') or '')
+        source_url = str(candidate.get('source_url') or '')
+        corroboration_sources = len(signal_domains.get(signal_key, set()))
+        score = _recency_points(str(candidate.get('date_value') or ''))
+        if _is_trusted_domain(source_url):
+            score += 2
+        if corroboration_sources >= 3:
+            score += 3
+        elif corroboration_sources == 2:
+            score += 2
+        elif corroboration_sources == 1:
+            score += 1
+
+        date_dt = _parse_published_datetime(str(candidate.get('date_value') or ''))
+        ranked = dict(candidate)
+        ranked['score'] = score
+        ranked['corroboration_sources'] = corroboration_sources
+        ranked['date_dt'] = date_dt or datetime.min.replace(tzinfo=timezone.utc)
+        ranked_candidates.append(ranked)
+
+    ranked_candidates.sort(
+        key=lambda entry: (
+            int(entry.get('score') or 0),
+            int(entry.get('corroboration_sources') or 0),
+            entry.get('date_dt') or datetime.min.replace(tzinfo=timezone.utc),
+        ),
+        reverse=True,
+    )
+
+    for candidate in ranked_candidates:
+        item = candidate.get('item')
+        source = candidate.get('source')
+        if not isinstance(item, dict):
+            continue
         freshness_value = str(source['published_at']) if source and source.get('published_at') else str(item.get('occurred_at') or '')
         freshness_label, freshness_class = _freshness_badge(freshness_value)
+        source_url = str(candidate.get('source_url') or '')
+        ttp_values = [str(t) for t in item.get('ttp_ids', [])]
         highlights.append(
             {
                 'date': _format_date_or_unknown(str(item['occurred_at'])),
-                'text': summary,
+                'text': str(candidate.get('summary') or ''),
                 'category': str(item['category']).replace('_', ' '),
                 'target_text': str(item.get('target_text') or ''),
-                'ttp_ids': ', '.join(str(t) for t in item.get('ttp_ids', [])),
+                'ttp_ids': ', '.join(ttp_values),
                 'source_name': str(source['source_name']) if source else None,
                 'source_url': source_url if source else None,
                 'evidence_title': _evidence_title_from_source(source) if source else _fallback_title_from_url(source_url),
                 'evidence_source_label': _evidence_source_label_from_source(source) if source else (_source_domain(source_url) or 'Unknown source'),
                 'evidence_group_domain': _canonical_group_domain(source) if source else (_source_domain(source_url) or 'unknown-source'),
                 'source_published_at': str(source['published_at']) if source and source.get('published_at') else None,
+                'corroboration_sources': str(candidate.get('corroboration_sources') or '0'),
                 'freshness_label': freshness_label,
                 'freshness_class': freshness_class,
             }
@@ -2657,6 +2774,7 @@ def _build_recent_activity_highlights(
                 'evidence_source_label': _evidence_source_label_from_source(source) if source else (_source_domain(str(source.get('url') or '')) or 'Unknown source'),
                 'evidence_group_domain': _canonical_group_domain(source) if source else (_source_domain(str(source.get('url') or '')) or 'unknown-source'),
                 'source_published_at': str(source['published_at']) if source and source.get('published_at') else None,
+                'corroboration_sources': '1',
                 'freshness_label': freshness_label,
                 'freshness_class': freshness_class,
             }
@@ -3742,11 +3860,42 @@ def _format_duration_ms(milliseconds: int | None) -> str:
     return f'{minutes}m {remaining}s'
 
 
+def _mark_actor_generation_started(actor_id: str) -> bool:
+    with _ACTOR_GENERATION_LOCK:
+        if actor_id in _ACTOR_GENERATION_RUNNING:
+            return False
+        _ACTOR_GENERATION_RUNNING.add(actor_id)
+        return True
+
+
+def _mark_actor_generation_finished(actor_id: str) -> None:
+    with _ACTOR_GENERATION_LOCK:
+        _ACTOR_GENERATION_RUNNING.discard(actor_id)
+
+
 def run_actor_generation(actor_id: str) -> None:
+    if not _mark_actor_generation_started(actor_id):
+        return
     started_at = time.perf_counter()
     try:
+        set_actor_notebook_status(
+            actor_id,
+            'running',
+            'Collecting sources...',
+        )
         imported = import_default_feeds_for_actor(actor_id)
-        build_notebook(actor_id)
+        set_actor_notebook_status(
+            actor_id,
+            'running',
+            f'Sources collected ({imported}). Building timeline preview...',
+        )
+        build_notebook(actor_id, generate_questions=False, rebuild_timeline=True)
+        set_actor_notebook_status(
+            actor_id,
+            'running',
+            'Timeline ready. Generating question threads and guidance...',
+        )
+        build_notebook(actor_id, generate_questions=True, rebuild_timeline=False)
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         with sqlite3.connect(DB_PATH) as connection:
             connection.execute(
@@ -3779,6 +3928,8 @@ def run_actor_generation(actor_id: str) -> None:
         except Exception:
             pass
         set_actor_notebook_status(actor_id, 'error', f'Notebook generation failed: {exc}')
+    finally:
+        _mark_actor_generation_finished(actor_id)
 
 
 def list_actor_profiles() -> list[dict[str, object]]:
@@ -4244,7 +4395,12 @@ def generate_actor_requirements(actor_id: str, org_context: str, priority_mode: 
     return inserted
 
 
-def build_notebook(actor_id: str) -> None:
+def build_notebook(
+    actor_id: str,
+    *,
+    generate_questions: bool = True,
+    rebuild_timeline: bool = True,
+) -> None:
     now = utc_now_iso()
     with sqlite3.connect(DB_PATH) as connection:
         if not actor_exists(connection, actor_id):
@@ -4273,44 +4429,49 @@ def build_notebook(actor_id: str) -> None:
             (actor_id,),
         ).fetchall()
 
-        connection.execute('DELETE FROM timeline_events WHERE actor_id = ?', (actor_id,))
-        timeline_candidates: list[dict[str, object]] = []
-        for source in sources:
-            occurred_at = source[3] or source[4]
-            text = source[5] or ''
-            moves = _extract_major_move_events(source[1], source[0], occurred_at, text, actor_terms)
-            if moves:
-                timeline_candidates.extend(moves[:6])
+        if rebuild_timeline:
+            connection.execute('DELETE FROM timeline_events WHERE actor_id = ?', (actor_id,))
+            timeline_candidates: list[dict[str, object]] = []
+            for source in sources:
+                occurred_at = source[3] or source[4]
+                text = source[5] or ''
+                moves = _extract_major_move_events(source[1], source[0], occurred_at, text, actor_terms)
+                if moves:
+                    timeline_candidates.extend(moves[:6])
 
-        deduped_timeline: list[dict[str, object]] = []
-        seen_summaries: list[str] = []
-        for event in sorted(timeline_candidates, key=lambda item: str(item['occurred_at'])):
-            norm = _normalize_text(str(event['summary']))
-            if any(_token_overlap(norm, existing) >= 0.75 for existing in seen_summaries):
-                continue
-            deduped_timeline.append(event)
-            seen_summaries.append(norm)
+            deduped_timeline: list[dict[str, object]] = []
+            seen_summaries: list[str] = []
+            for event in sorted(timeline_candidates, key=lambda item: str(item['occurred_at'])):
+                norm = _normalize_text(str(event['summary']))
+                if any(_token_overlap(norm, existing) >= 0.75 for existing in seen_summaries):
+                    continue
+                deduped_timeline.append(event)
+                seen_summaries.append(norm)
 
-        for event in deduped_timeline:
-            connection.execute(
-                '''
-                INSERT INTO timeline_events (
-                    id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+            for event in deduped_timeline:
+                connection.execute(
+                    '''
+                    INSERT INTO timeline_events (
+                        id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    (
+                        str(event['id']),
+                        actor_id,
+                        str(event['occurred_at']),
+                        str(event['category']),
+                        str(event['title']),
+                        str(event['summary']),
+                        str(event['source_id']),
+                        str(event.get('target_text') or ''),
+                        json.dumps(event.get('ttp_ids') or []),
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''',
-                (
-                    str(event['id']),
-                    actor_id,
-                    str(event['occurred_at']),
-                    str(event['category']),
-                    str(event['title']),
-                    str(event['summary']),
-                    str(event['source_id']),
-                    str(event.get('target_text') or ''),
-                    json.dumps(event.get('ttp_ids') or []),
-                ),
-            )
+
+        if not generate_questions:
+            connection.commit()
+            return
 
         thread_rows = connection.execute(
             '''
@@ -5247,6 +5408,7 @@ def root(
         actor_meta = notebook.get('actor', {}) if isinstance(notebook, dict) else {}
         status = str(actor_meta.get('notebook_status') or 'idle')
         source_count = int(notebook.get('counts', {}).get('sources', 0)) if isinstance(notebook, dict) else 0
+        status_message = str(actor_meta.get('notebook_message') or '').strip()
         refresh_duration_ms_raw = actor_meta.get('last_refresh_duration_ms')
         refresh_sources_raw = actor_meta.get('last_refresh_sources_processed')
         try:
@@ -5260,7 +5422,7 @@ def root(
         notebook_health['last_refresh_duration'] = _format_duration_ms(refresh_duration_ms)
         notebook_health['last_refresh_sources'] = str(refresh_sources) if refresh_sources is not None else 'n/a'
         if status == 'running':
-            notebook_health = {'state': 'running', 'message': 'Refreshing notebook...'}
+            notebook_health = {'state': 'running', 'message': status_message or 'Refreshing notebook...'}
         elif status == 'error':
             notebook_health = {'state': 'error', 'message': 'Refresh failed.'}
         elif source_count == 0:

@@ -669,3 +669,134 @@ def test_build_notebook_kpis_ignores_unknown_technique_ids(monkeypatch):
     )
 
     assert kpis['new_techniques_30d'] == '0'
+
+
+def test_recent_activity_highlights_prioritize_corroborated_signals():
+    timeline_items = [
+        {
+            'occurred_at': '2026-02-20T12:00:00+00:00',
+            'summary': 'APT-Flow targeted VPN edge appliances to gain initial access.',
+            'category': 'initial_access',
+            'target_text': 'Retail',
+            'ttp_ids': ['T1566'],
+            'source_id': 'src-1',
+        },
+        {
+            'occurred_at': '2026-02-19T12:00:00+00:00',
+            'summary': 'APT-Flow targeted VPN edge appliances to gain initial access.',
+            'category': 'initial_access',
+            'target_text': 'Retail',
+            'ttp_ids': ['T1566'],
+            'source_id': 'src-2',
+        },
+        {
+            'occurred_at': '2026-02-20T13:00:00+00:00',
+            'summary': 'APT-Flow used phishing lures in a broad campaign.',
+            'category': 'initial_access',
+            'target_text': 'Retail',
+            'ttp_ids': ['T1566'],
+            'source_id': 'src-3',
+        },
+    ]
+    sources = [
+        {
+            'id': 'src-1',
+            'source_name': 'CISA',
+            'url': 'https://www.cisa.gov/advisories/aaa',
+            'published_at': '2026-02-20T11:30:00+00:00',
+            'pasted_text': 'APT-Flow targeted VPN edge appliances.',
+            'title': 'CISA advisory',
+        },
+        {
+            'id': 'src-2',
+            'source_name': 'Mandiant',
+            'url': 'https://www.mandiant.com/resources/blog/bbb',
+            'published_at': '2026-02-19T11:30:00+00:00',
+            'pasted_text': 'APT-Flow targeted VPN edge appliances.',
+            'title': 'Mandiant blog',
+        },
+        {
+            'id': 'src-3',
+            'source_name': 'CISA',
+            'url': 'https://www.cisa.gov/advisories/ccc',
+            'published_at': '2026-02-20T12:30:00+00:00',
+            'pasted_text': 'APT-Flow used phishing lures.',
+            'title': 'CISA campaign note',
+        },
+    ]
+
+    highlights = app_module._build_recent_activity_highlights(  # noqa: SLF001
+        timeline_items=timeline_items,
+        sources=sources,
+        actor_terms=['APT-Flow'],
+    )
+
+    assert highlights
+    assert 'VPN edge appliances' in str(highlights[0]['text'])
+    assert highlights[0]['corroboration_sources'] == '2'
+
+
+def test_run_actor_generation_returns_early_when_actor_already_running(monkeypatch):
+    monkeypatch.setattr(app_module, '_mark_actor_generation_started', lambda _actor_id: False)  # noqa: SLF001
+
+    called = {'imported': 0, 'built': 0}
+
+    def _import_feeds(_actor_id):
+        called['imported'] += 1
+        return 0
+
+    def _build_notebook(_actor_id):
+        called['built'] += 1
+
+    monkeypatch.setattr(app_module, 'import_default_feeds_for_actor', _import_feeds)
+    monkeypatch.setattr(app_module, 'build_notebook', _build_notebook)
+
+    app_module.run_actor_generation('actor-1')
+
+    assert called['imported'] == 0
+    assert called['built'] == 0
+
+
+def test_text_contains_actor_term_uses_token_boundaries():
+    assert app_module._text_contains_actor_term('APT-Flow targeted VPN edge', ['apt-flow'])  # noqa: SLF001
+    assert not app_module._text_contains_actor_term('The apartment lease was updated.', ['apt'])  # noqa: SLF001
+    assert not app_module._text_contains_actor_term('Wizardly operations observed.', ['wizard'])  # noqa: SLF001
+
+
+def test_run_actor_generation_builds_timeline_then_full_notebook(monkeypatch):
+    monkeypatch.setattr(app_module, '_mark_actor_generation_started', lambda _actor_id: True)  # noqa: SLF001
+    monkeypatch.setattr(app_module, '_mark_actor_generation_finished', lambda _actor_id: None)  # noqa: SLF001
+    monkeypatch.setattr(app_module, 'import_default_feeds_for_actor', lambda _actor_id: 3)
+
+    status_messages: list[str] = []
+    build_calls: list[tuple[bool, bool]] = []
+
+    def _status(_actor_id, _status, message):
+        status_messages.append(message)
+
+    def _build(_actor_id, *, generate_questions=True, rebuild_timeline=True):
+        build_calls.append((generate_questions, rebuild_timeline))
+
+    monkeypatch.setattr(app_module, 'set_actor_notebook_status', _status)
+    monkeypatch.setattr(app_module, 'build_notebook', _build)
+
+    class _DummyConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, *_args, **_kwargs):
+            return None
+
+        def commit(self):
+            return None
+
+    monkeypatch.setattr(app_module.sqlite3, 'connect', lambda *_args, **_kwargs: _DummyConn())
+
+    app_module.run_actor_generation('actor-2')
+
+    assert build_calls == [(False, True), (True, False)]
+    assert any('Sources collected (3). Building timeline preview...' in message for message in status_messages)
+    assert any('Timeline ready. Generating question threads and guidance...' in message for message in status_messages)
