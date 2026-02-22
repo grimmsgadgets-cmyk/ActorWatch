@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 from actor_ingest import source_fingerprint as build_source_fingerprint
 from actor_ingest import upsert_source_for_actor
 from network_safety import safe_http_get, validate_outbound_url
+from notebook_builder import build_notebook_core
 from notebook_pipeline import build_environment_checks as pipeline_build_environment_checks
 from notebook_pipeline import build_recent_activity_highlights as pipeline_build_recent_activity_highlights
 from notebook_pipeline import latest_reporting_recency_label as pipeline_latest_reporting_recency_label
@@ -3913,231 +3914,26 @@ def build_notebook(
     generate_questions: bool = True,
     rebuild_timeline: bool = True,
 ) -> None:
-    now = utc_now_iso()
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-
-        actor_row = connection.execute(
-            'SELECT display_name, scope_statement FROM actor_profiles WHERE id = ?',
-            (actor_id,),
-        ).fetchone()
-        actor_name = actor_row[0] if actor_row else 'actor'
-        actor_scope = actor_row[1] if actor_row else None
-        mitre_profile = _build_actor_profile_from_mitre(actor_name)
-        actor_terms = _actor_terms(
-            actor_name,
-            str(mitre_profile.get('group_name') or ''),
-            str(mitre_profile.get('aliases_csv') or ''),
-        )
-
-        sources = connection.execute(
-            '''
-            SELECT id, source_name, url, published_at, retrieved_at, pasted_text
-            FROM sources
-            WHERE actor_id = ?
-            ORDER BY retrieved_at ASC
-            ''',
-            (actor_id,),
-        ).fetchall()
-
-        if rebuild_timeline:
-            connection.execute('DELETE FROM timeline_events WHERE actor_id = ?', (actor_id,))
-            timeline_candidates: list[dict[str, object]] = []
-            for source in sources:
-                occurred_at = source[3] or source[4]
-                text = source[5] or ''
-                moves = _extract_major_move_events(source[1], source[0], occurred_at, text, actor_terms)
-                if moves:
-                    timeline_candidates.extend(moves[:6])
-
-            deduped_timeline: list[dict[str, object]] = []
-            seen_summaries: list[str] = []
-            for event in sorted(timeline_candidates, key=lambda item: str(item['occurred_at'])):
-                norm = _normalize_text(str(event['summary']))
-                if any(_token_overlap(norm, existing) >= 0.75 for existing in seen_summaries):
-                    continue
-                deduped_timeline.append(event)
-                seen_summaries.append(norm)
-
-            for event in deduped_timeline:
-                connection.execute(
-                    '''
-                    INSERT INTO timeline_events (
-                        id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''',
-                    (
-                        str(event['id']),
-                        actor_id,
-                        str(event['occurred_at']),
-                        str(event['category']),
-                        str(event['title']),
-                        str(event['summary']),
-                        str(event['source_id']),
-                        str(event.get('target_text') or ''),
-                        json.dumps(event.get('ttp_ids') or []),
-                    ),
-                )
-
-        if not generate_questions:
-            connection.commit()
-            return
-
-        thread_rows = connection.execute(
-            '''
-            SELECT id, question_text, status, created_at, updated_at
-            FROM question_threads
-            WHERE actor_id = ?
-            ORDER BY created_at ASC
-            ''',
-            (actor_id,),
-        ).fetchall()
-        thread_cache: list[dict[str, str]] = [
-            {
-                'id': row[0],
-                'question_text': row[1],
-                'status': row[2],
-                'created_at': row[3],
-                'updated_at': row[4],
-            }
-            for row in thread_rows
-        ]
-
-        source_sentence_records: list[dict[str, str]] = []
-        for source in sources:
-            source_id = source[0]
-            text = source[5] or ''
-            for sentence in _extract_question_sentences(text):
-                if actor_terms and not _sentence_mentions_actor_terms(sentence, actor_terms):
-                    continue
-                source_sentence_records.append(
-                    {
-                        'source_id': source_id,
-                        'sentence': sentence,
-                        'question_text': _sanitize_question_text(_question_from_sentence(sentence)),
-                    }
-                )
-
-        llm_candidates = _ollama_generate_questions(
-            actor_name,
-            actor_scope,
-            [record['sentence'] for record in source_sentence_records],
-        )
-        for candidate in llm_candidates:
-            best_sentence = None
-            best_source = None
-            best_score = 0.0
-            for record in source_sentence_records:
-                score = _token_overlap(candidate, record['sentence'])
-                if score > best_score:
-                    best_score = score
-                    best_sentence = record['sentence']
-                    best_source = record['source_id']
-            if best_sentence and best_source and best_score >= 0.20:
-                source_sentence_records.append(
-                    {
-                        'source_id': best_source,
-                        'sentence': best_sentence,
-                        'question_text': candidate,
-                    }
-                )
-
-        for record in source_sentence_records:
-            source_id = record['source_id']
-            sentence = record['sentence']
-            question_text = record['question_text']
-            best_thread: dict[str, str] | None = None
-            best_score = 0.0
-            for candidate in thread_cache:
-                score = _token_overlap(question_text, candidate['question_text'])
-                if score > best_score:
-                    best_score = score
-                    best_thread = candidate
-
-            if best_thread is not None and best_score >= 0.45:
-                thread_id = best_thread['id']
-                connection.execute(
-                    'UPDATE question_threads SET updated_at = ? WHERE id = ?',
-                    (now, thread_id),
-                )
-            else:
-                thread_id = str(uuid.uuid4())
-                connection.execute(
-                    '''
-                    INSERT INTO question_threads (
-                        id, actor_id, question_text, status, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, 'open', ?, ?)
-                    ''',
-                    (thread_id, actor_id, question_text, now, now),
-                )
-                thread_cache.append(
-                    {
-                        'id': thread_id,
-                        'question_text': question_text,
-                        'status': 'open',
-                        'created_at': now,
-                        'updated_at': now,
-                    }
-                )
-
-            existing_update = connection.execute(
-                '''
-                SELECT id
-                FROM question_updates
-                WHERE thread_id = ? AND source_id = ? AND trigger_excerpt = ?
-                ''',
-                (thread_id, source_id, sentence),
-            ).fetchone()
-            if existing_update is None:
-                connection.execute(
-                    '''
-                    INSERT INTO question_updates (
-                        id, thread_id, source_id, trigger_excerpt, update_note, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ''',
-                    (str(uuid.uuid4()), thread_id, source_id, sentence, None, now),
-                )
-
-        connection.execute('DELETE FROM environment_guidance WHERE actor_id = ?', (actor_id,))
-        open_threads = connection.execute(
-            '''
-            SELECT id, question_text
-            FROM question_threads
-            WHERE actor_id = ? AND status = 'open'
-            ORDER BY created_at ASC
-            ''',
-            (actor_id,),
-        ).fetchall()
-        for thread in open_threads:
-            thread_id = thread[0]
-            question_text = thread[1]
-            for platform in _platforms_for_question(question_text):
-                guidance = _guidance_for_platform(platform, question_text)
-                connection.execute(
-                    '''
-                    INSERT INTO environment_guidance (
-                        id, actor_id, thread_id, platform,
-                        what_to_look_for, where_to_look, query_hint, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''',
-                    (
-                        str(uuid.uuid4()),
-                        actor_id,
-                        thread_id,
-                        guidance['platform'],
-                        guidance['what_to_look_for'],
-                        guidance['where_to_look'],
-                        guidance['query_hint'],
-                        now,
-                    ),
-                )
-
-        connection.commit()
+    build_notebook_core(
+        actor_id,
+        db_path=DB_PATH,
+        generate_questions=generate_questions,
+        rebuild_timeline=rebuild_timeline,
+        now_iso=utc_now_iso,
+        actor_exists=actor_exists,
+        build_actor_profile_from_mitre=_build_actor_profile_from_mitre,
+        actor_terms_fn=_actor_terms,
+        extract_major_move_events=_extract_major_move_events,
+        normalize_text=_normalize_text,
+        token_overlap=_token_overlap,
+        extract_question_sentences=_extract_question_sentences,
+        sentence_mentions_actor_terms=_sentence_mentions_actor_terms,
+        sanitize_question_text=_sanitize_question_text,
+        question_from_sentence=_question_from_sentence,
+        ollama_generate_questions=_ollama_generate_questions,
+        platforms_for_question=_platforms_for_question,
+        guidance_for_platform=_guidance_for_platform,
+    )
 
 
 def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
