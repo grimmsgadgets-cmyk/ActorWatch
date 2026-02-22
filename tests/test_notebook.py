@@ -194,6 +194,41 @@ def test_run_actor_generation_wrapper_delegates_to_pipeline_core(monkeypatch):
     assert deps['build_notebook'] is app_module.build_notebook
 
 
+def test_derive_source_from_url_wrapper_delegates_to_pipeline_core(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_derive_core(source_url, **kwargs):
+        captured['source_url'] = source_url
+        captured.update(kwargs)
+        return {'source_name': 'example.com', 'source_url': source_url, 'pasted_text': 'ok'}
+
+    monkeypatch.setattr(app_module, 'pipeline_derive_source_from_url_core', _fake_derive_core)
+
+    result = app_module.derive_source_from_url('https://example.com/post', fallback_source_name='Example')
+
+    assert result['source_name'] == 'example.com'
+    assert captured['source_url'] == 'https://example.com/post'
+    assert captured['fallback_source_name'] == 'Example'
+    deps = captured['deps']
+    assert isinstance(deps, dict)
+    assert deps['safe_http_get'] is app_module._safe_http_get  # noqa: SLF001
+    assert deps['extract_question_sentences'] is app_module._extract_question_sentences  # noqa: SLF001
+    assert deps['first_sentences'] is app_module._first_sentences  # noqa: SLF001
+
+
+def test_evidence_title_prefers_structured_title_over_pasted_text():
+    source = {
+        'title': 'Executive Threat Update',
+        'headline': 'Should not be used',
+        'pasted_text': 'First pasted sentence that would otherwise be chosen.',
+        'url': 'https://example.com/article',
+    }
+
+    title = app_module._evidence_title_from_source(source)  # noqa: SLF001
+
+    assert title == 'Executive Threat Update'
+
+
 def test_validate_outbound_url_blocks_localhost():
     with pytest.raises(app_module.HTTPException):
         app_module._validate_outbound_url('http://localhost/internal')  # noqa: SLF001

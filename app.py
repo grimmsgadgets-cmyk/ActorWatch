@@ -33,6 +33,13 @@ from notebook_pipeline import build_recent_activity_highlights as pipeline_build
 from notebook_pipeline import latest_reporting_recency_label as pipeline_latest_reporting_recency_label
 from notebook_pipeline import recent_change_summary as pipeline_recent_change_summary
 from requirements_pipeline import generate_actor_requirements_core as pipeline_generate_actor_requirements_core
+from source_derivation import canonical_group_domain as pipeline_canonical_group_domain
+from source_derivation import derive_source_from_url_core as pipeline_derive_source_from_url_core
+from source_derivation import evidence_source_label_from_source as pipeline_evidence_source_label_from_source
+from source_derivation import evidence_title_from_source as pipeline_evidence_title_from_source
+from source_derivation import extract_meta as pipeline_extract_meta
+from source_derivation import fallback_title_from_url as pipeline_fallback_title_from_url
+from source_derivation import strip_html as pipeline_strip_html
 
 
 @asynccontextmanager
@@ -2153,91 +2160,37 @@ def _platforms_for_question(question_text: str) -> list[str]:
 
 
 def _strip_html(value: str) -> str:
-    value = re.sub(r'<script[\s\S]*?</script>', ' ', value, flags=re.IGNORECASE)
-    value = re.sub(r'<style[\s\S]*?</style>', ' ', value, flags=re.IGNORECASE)
-    value = re.sub(r'<[^>]+>', ' ', value)
-    value = html.unescape(value)
-    value = re.sub(r'\s+', ' ', value).strip()
-    return value
+    return pipeline_strip_html(value)
 
 
 def _extract_meta(content: str, key_patterns: list[str]) -> str | None:
-    for pattern in key_patterns:
-        match = re.search(pattern, content, flags=re.IGNORECASE)
-        if match:
-            return html.unescape(match.group(1)).strip()
-    return None
+    return pipeline_extract_meta(content, key_patterns)
 
 
 def _fallback_title_from_url(source_url: str) -> str:
-    return 'Untitled article'
+    return pipeline_fallback_title_from_url(source_url)
 
 
 def _evidence_title_from_source(source: dict[str, object]) -> str:
-    for key in ('title', 'headline', 'og_title', 'html_title'):
-        value = str(source.get(key) or '').strip()
-        if value:
-            # Avoid showing raw URL/path-like strings as the visible title.
-            if value.startswith(('http://', 'https://')) or (value.count('/') >= 2 and ' ' not in value):
-                continue
-            return value
-    pasted_text = str(source.get('pasted_text') or '').strip()
-    if pasted_text:
-        first_sentence = _split_sentences(pasted_text)[0] if _split_sentences(pasted_text) else pasted_text
-        first_sentence = ' '.join(first_sentence.split()).strip()
-        if (
-            first_sentence
-            and not first_sentence.lower().startswith('actor-matched feed item from')
-            and not first_sentence.startswith(('http://', 'https://'))
-            and not (first_sentence.count('/') >= 2 and ' ' not in first_sentence)
-        ):
-            return first_sentence[:120]
-    return _fallback_title_from_url(str(source.get('url') or ''))
+    return pipeline_evidence_title_from_source(
+        source,
+        split_sentences=lambda text: _split_sentences(text),
+        fallback_title=lambda url: _fallback_title_from_url(url),
+    )
 
 
 def _evidence_source_label_from_source(source: dict[str, object]) -> str:
-    source_url = str(source.get('url') or '').strip()
-    parsed_source = urlparse(source_url)
-    source_host = (parsed_source.netloc or '').lower()
-    if source_host.endswith('news.google.com'):
-        title_hint = _evidence_title_from_source(source)
-        if ' - ' in title_hint:
-            publisher_hint = title_hint.rsplit(' - ', 1)[-1].strip()
-            if publisher_hint and publisher_hint.lower() not in {'google news', 'news'}:
-                return publisher_hint
-    for key in ('publisher', 'site_name'):
-        value = str(source.get(key) or '').strip()
-        if value:
-            return value
-    parsed = urlparse(source_url)
-    hostname = (parsed.netloc or '').strip()
-    if hostname:
-        return hostname
-    return str(source.get('source_name') or 'Unknown source').strip() or 'Unknown source'
+    return pipeline_evidence_source_label_from_source(
+        source,
+        evidence_title=lambda item: _evidence_title_from_source(item),
+    )
 
 
 def _canonical_group_domain(source: dict[str, object]) -> str:
-    source_url = str(source.get('url') or '').strip()
-    parsed = urlparse(source_url)
-    host = (parsed.netloc or '').lower()
-    if host.endswith('news.google.com'):
-        # Google News links can contain the original article URL in query params.
-        query_params = parse_qs(parsed.query)
-        for key in ('url', 'u', 'q'):
-            candidate = str((query_params.get(key) or [''])[0]).strip()
-            if not candidate.startswith(('http://', 'https://')):
-                continue
-            candidate_host = (urlparse(candidate).netloc or '').lower()
-            if candidate_host and not candidate_host.endswith('news.google.com'):
-                return candidate_host
-        source_label = _evidence_source_label_from_source(source)
-        source_label_lower = source_label.lower().strip()
-        if re.match(r'^[a-z0-9.-]+\.[a-z]{2,}$', source_label_lower):
-            return source_label_lower
-        normalized = re.sub(r'[^a-z0-9]+', '-', source_label_lower).strip('-')
-        if normalized:
-            return f'publisher:{normalized}'
-    return host or 'unknown-source'
+    return pipeline_canonical_group_domain(
+        source,
+        evidence_source_label=lambda item: _evidence_source_label_from_source(item),
+    )
 
 
 def _validate_outbound_url(source_url: str, allowed_domains: set[str] | None = None) -> str:
@@ -2270,108 +2223,16 @@ def _safe_http_get(
 
 
 def derive_source_from_url(source_url: str, fallback_source_name: str | None = None, published_hint: str | None = None) -> dict[str, str | None]:
-    try:
-        response = _safe_http_get(source_url, timeout=20.0)
-        response.raise_for_status()
-    except HTTPException:
-        raise
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=400, detail=f'failed to fetch source URL: {exc}') from exc
-
-    content = response.text
-    parsed = urlparse(str(response.url))
-    domain = parsed.netloc or 'unknown'
-
-    site_name = _extract_meta(
-        content,
-        [
-            r'<meta[^>]+property=["\']og:site_name["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+name=["\']application-name["\'][^>]+content=["\']([^"\']+)["\']',
-        ],
+    return pipeline_derive_source_from_url_core(
+        source_url,
+        fallback_source_name=fallback_source_name,
+        published_hint=published_hint,
+        deps={
+            'safe_http_get': _safe_http_get,
+            'extract_question_sentences': _extract_question_sentences,
+            'first_sentences': _first_sentences,
+        },
     )
-    publisher = _extract_meta(
-        content,
-        [
-            r'<meta[^>]+property=["\']article:publisher["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+name=["\']publisher["\'][^>]+content=["\']([^"\']+)["\']',
-        ],
-    )
-    source_name = site_name or fallback_source_name or domain
-
-    og_title = _extract_meta(
-        content,
-        [
-            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
-        ],
-    )
-    html_title = _extract_meta(
-        content,
-        [
-            r'<title[^>]*>([^<]+)</title>',
-        ],
-    )
-    headline = _extract_meta(
-        content,
-        [
-            r'<meta[^>]+name=["\']headline["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<h1[^>]*>([^<]+)</h1>',
-        ],
-    )
-    title = (
-        _extract_meta(
-            content,
-            [
-                r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']',
-            ],
-        )
-        or headline
-        or og_title
-        or html_title
-    )
-
-    published_at = _extract_meta(
-        content,
-        [
-            r'<meta[^>]+property=["\']article:published_time["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+name=["\']pubdate["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+name=["\']date["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<time[^>]+datetime=["\']([^"\']+)["\']',
-        ],
-    )
-    if not published_at:
-        published_at = published_hint
-
-    paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', content, flags=re.IGNORECASE | re.DOTALL)
-    cleaned_paragraphs = [_strip_html(paragraph) for paragraph in paragraphs]
-    cleaned_paragraphs = [paragraph for paragraph in cleaned_paragraphs if len(paragraph) > 40]
-
-    if cleaned_paragraphs:
-        pasted_text = ' '.join(cleaned_paragraphs[:10])
-    else:
-        pasted_text = _strip_html(content)[:5000]
-
-    if title and title not in pasted_text:
-        pasted_text = f'{title}. {pasted_text}'
-
-    if len(pasted_text) < 80:
-        raise HTTPException(status_code=400, detail='unable to derive sufficient text from source URL')
-
-    excerpts = _extract_question_sentences(pasted_text)
-    trigger_excerpt = excerpts[0] if excerpts else _first_sentences(pasted_text, count=1)
-
-    return {
-        'source_name': source_name,
-        'site_name': site_name,
-        'publisher': publisher,
-        'title': title,
-        'headline': headline,
-        'og_title': og_title,
-        'html_title': html_title,
-        'source_url': str(response.url),
-        'published_at': published_at,
-        'pasted_text': pasted_text,
-        'trigger_excerpt': trigger_excerpt,
-    }
 
 
 def _parse_feed_entries(xml_text: str) -> list[dict[str, str | None]]:
