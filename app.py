@@ -19,6 +19,7 @@ import actor_state_service
 import actor_profile_service
 import guidance_catalog
 import generation_service
+import feed_import_service
 import legacy_ui
 import mitre_store
 import priority_questions
@@ -1829,12 +1830,13 @@ def _source_fingerprint(
 
 
 def import_default_feeds_for_actor(actor_id: str) -> int:
-    return pipeline_import_default_feeds_for_actor_core(
-        actor_id,
-        db_path=DB_PATH,
-        default_cti_feeds=DEFAULT_CTI_FEEDS,
-        actor_feed_lookback_days=ACTOR_FEED_LOOKBACK_DAYS,
+    return feed_import_service.import_default_feeds_for_actor_core(
+        actor_id=actor_id,
         deps={
+            'pipeline_import_default_feeds_for_actor_core': pipeline_import_default_feeds_for_actor_core,
+            'db_path': lambda: DB_PATH,
+            'default_cti_feeds': DEFAULT_CTI_FEEDS,
+            'actor_feed_lookback_days': ACTOR_FEED_LOOKBACK_DAYS,
             'actor_exists': actor_exists,
             'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
             'actor_terms': _actor_terms,
