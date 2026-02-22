@@ -22,6 +22,8 @@ import mitre_store
 import priority_questions
 import routes_api
 import routes_actor_ops
+import routes_evolution
+import routes_notebook
 import routes_ui
 import timeline_extraction
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
@@ -2448,6 +2450,42 @@ app.include_router(
         }
     )
 )
+app.include_router(
+    routes_notebook.create_notebook_router(
+        deps={
+            'enforce_request_size': _enforce_request_size,
+            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+            'generate_actor_requirements': generate_actor_requirements,
+            'db_path': lambda: DB_PATH,
+            'utc_now_iso': utc_now_iso,
+            'safe_json_string_list': _safe_json_string_list,
+            'fetch_actor_notebook': _fetch_actor_notebook,
+            'templates': templates,
+        }
+    )
+)
+app.include_router(
+    routes_evolution.create_evolution_router(
+        deps={
+            'enforce_request_size': _enforce_request_size,
+            'observation_body_limit_bytes': OBSERVATION_BODY_LIMIT_BYTES,
+            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+            'db_path': lambda: DB_PATH,
+            'actor_exists': actor_exists,
+            'normalize_technique_id': _normalize_technique_id,
+            'normalize_string_list': normalize_string_list,
+            'utc_now_iso': utc_now_iso,
+            'capability_category_from_technique_id': _capability_category_from_technique_id,
+            'generate_validation_template': generate_validation_template,
+            'baseline_entry': baseline_entry,
+            'resolve_delta_action': lambda actor_id, delta_id, requested_action: resolve_delta_action(
+                actor_id,
+                delta_id,
+                requested_action,
+            ),
+        }
+    )
+)
 
 
 def actors_ui() -> str:
@@ -2574,171 +2612,6 @@ def root(
     )
 
 
-@app.post('/actors/{actor_id}/requirements/generate')
-async def generate_requirements(actor_id: str, request: Request) -> RedirectResponse:
-    await _enforce_request_size(request, DEFAULT_BODY_LIMIT_BYTES)
-    form_data = await request.form()
-    org_context = str(form_data.get('org_context', '')).strip()
-    priority_mode = str(form_data.get('priority_mode', 'Operational')).strip()
-    if priority_mode not in {'Strategic', 'Operational', 'Tactical'}:
-        priority_mode = 'Operational'
-    count = generate_actor_requirements(actor_id, org_context, priority_mode)
-    return RedirectResponse(
-        url=f'/?actor_id={actor_id}&notice=Generated+{count}+requirements',
-        status_code=303,
-    )
-
-
-@app.post('/requirements/{requirement_id}/resolve')
-async def resolve_requirement(requirement_id: str, request: Request) -> RedirectResponse:
-    await _enforce_request_size(request, DEFAULT_BODY_LIMIT_BYTES)
-    form_data = await request.form()
-    actor_id = str(form_data.get('actor_id', '')).strip()
-    with sqlite3.connect(DB_PATH) as connection:
-        row = connection.execute(
-            'SELECT actor_id FROM requirement_items WHERE id = ?',
-            (requirement_id,),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail='requirement not found')
-        resolved_actor_id = str(row[0])
-        connection.execute(
-            'UPDATE requirement_items SET status = ? WHERE id = ?',
-            ('resolved', requirement_id),
-        )
-        connection.commit()
-    return RedirectResponse(url=f'/?actor_id={actor_id or resolved_actor_id}', status_code=303)
-
-
-@app.post('/questions/{thread_id}/resolve')
-async def resolve_question_thread(thread_id: str, request: Request) -> RedirectResponse:
-    await _enforce_request_size(request, DEFAULT_BODY_LIMIT_BYTES)
-    form_data = await request.form()
-    actor_id = str(form_data.get('actor_id', '')).strip()
-
-    with sqlite3.connect(DB_PATH) as connection:
-        row = connection.execute(
-            'SELECT actor_id, status FROM question_threads WHERE id = ?',
-            (thread_id,),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail='question thread not found')
-        db_actor_id = row[0]
-        if row[1] != 'resolved':
-            connection.execute(
-                'UPDATE question_threads SET status = ?, updated_at = ? WHERE id = ?',
-                ('resolved', utc_now_iso(), thread_id),
-            )
-        connection.commit()
-
-    return RedirectResponse(url=f'/?actor_id={actor_id or db_actor_id}', status_code=303)
-
-
-@app.get('/actors/{actor_id}/timeline/details', response_class=HTMLResponse)
-def actor_timeline_details(actor_id: str) -> HTMLResponse:
-    with sqlite3.connect(DB_PATH) as connection:
-        actor_row = connection.execute(
-            'SELECT id, display_name FROM actor_profiles WHERE id = ?',
-            (actor_id,),
-        ).fetchone()
-        if actor_row is None:
-            raise HTTPException(status_code=404, detail='actor not found')
-
-        rows = connection.execute(
-            '''
-            SELECT
-                te.occurred_at, te.category, te.title, te.summary, te.target_text, te.ttp_ids_json,
-                s.source_name, s.url, s.published_at
-            FROM timeline_events te
-            LEFT JOIN sources s ON s.id = te.source_id
-            WHERE te.actor_id = ?
-            ORDER BY te.occurred_at DESC
-            ''',
-            (actor_id,),
-        ).fetchall()
-
-    detail_rows: list[dict[str, object]] = []
-    for row in rows:
-        detail_rows.append(
-            {
-                'occurred_at': row[0],
-                'category': str(row[1]).replace('_', ' '),
-                'title': row[2],
-                'summary': row[3],
-                'target_text': row[4] or '',
-                'ttp_ids': _safe_json_string_list(row[5]),
-                'source_name': row[6] or '',
-                'source_url': row[7] or '',
-                'source_published_at': row[8] or '',
-            }
-        )
-
-    content = ['<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">']
-    content.append('<title>Timeline Details</title>')
-    content.append(
-        '<style>'
-        'body{font-family:Arial,sans-serif;background:#f7f7f7;color:#111;margin:0;padding:16px;}'
-        '.wrap{max-width:980px;margin:0 auto;}'
-        '.top{margin-bottom:12px;}'
-        '.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:10px;margin-bottom:10px;}'
-        '.meta{font-size:12px;color:#334155;margin:4px 0 8px;}'
-        '.badge{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #888;font-size:12px;}'
-        '.muted{color:#4b5563;font-size:12px;}'
-        'a{color:#2255aa;text-decoration:none;}a:hover{text-decoration:underline;}'
-        '</style>'
-    )
-    content.append('</head><body><div class="wrap">')
-    content.append(
-        f'<div class="top"><a href="/?actor_id={actor_id}">← Back to dashboard</a>'
-        f'<h1>Timeline Details: {html.escape(str(actor_row[1]))}</h1>'
-        f'<div class="muted">Full activity evidence view for this actor.</div></div>'
-    )
-
-    if not detail_rows:
-        content.append('<div class="card">No timeline entries yet.</div>')
-    else:
-        for item in detail_rows:
-            ttp_text = ', '.join(item['ttp_ids']) if item['ttp_ids'] else ''
-            source_block = ''
-            if item['source_url']:
-                source_name = html.escape(str(item['source_name']) or str(item['source_url']))
-                source_url = html.escape(str(item['source_url']))
-                source_pub = html.escape(str(item['source_published_at'] or 'unknown'))
-                source_block = (
-                    f'<div class="meta">Source: <a href="{source_url}" target="_blank" rel="noreferrer">{source_name}</a> '
-                    f'| Published: {source_pub}</div>'
-                )
-            content.append('<div class="card">')
-            content.append(
-                f'<div><span class="badge">{html.escape(str(item["category"]))}</span> '
-                f'<span class="muted">{html.escape(str(item["occurred_at"]))}</span></div>'
-            )
-            content.append(f'<h3>{html.escape(str(item["title"]))}</h3>')
-            content.append(f'<div>{html.escape(str(item["summary"]))}</div>')
-            if item['target_text']:
-                content.append(f'<div class="meta"><strong>Target:</strong> {html.escape(str(item["target_text"]))}</div>')
-            if ttp_text:
-                content.append(f'<div class="meta"><strong>Techniques:</strong> {html.escape(ttp_text)}</div>')
-            content.append(source_block)
-            content.append('</div>')
-
-    content.append('</div></body></html>')
-    return HTMLResponse(''.join(content))
-
-
-@app.get('/actors/{actor_id}/questions', response_class=HTMLResponse)
-def actor_questions_workspace(request: Request, actor_id: str) -> HTMLResponse:
-    notebook = _fetch_actor_notebook(actor_id)
-    return templates.TemplateResponse(
-        request,
-        'questions.html',
-        {
-            'actor_id': actor_id,
-            'notebook': notebook,
-        },
-    )
-
-
 @app.post('/actors/{actor_id}/initialize')
 def initialize_actor_state(actor_id: str) -> dict[str, str]:
     created_at = utc_now_iso()
@@ -2768,202 +2641,6 @@ def initialize_actor_state(actor_id: str) -> dict[str, str]:
         connection.commit()
 
     return {'actor_id': actor_id, 'status': 'initialized'}
-
-
-@app.get('/actors/{actor_id}/state')
-def get_actor_state(actor_id: str) -> dict[str, object]:
-    with sqlite3.connect(DB_PATH) as connection:
-        row = connection.execute(
-            '''
-            SELECT actor_id, capability_grid_json, behavioral_model_json, created_at
-            FROM actor_state
-            WHERE actor_id = ?
-            ''',
-            (actor_id,),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail='actor state not found')
-    return {
-        'actor_id': row[0],
-        'capability_grid': json.loads(row[1]),
-        'behavioral_model': json.loads(row[2]),
-        'created_at': row[3],
-    }
-
-
-@app.post('/actors/{actor_id}/observations')
-async def create_observation(actor_id: str, request: Request) -> dict[str, object]:
-    await _enforce_request_size(request, OBSERVATION_BODY_LIMIT_BYTES)
-    payload = await request.json()
-
-    source_type_raw = payload.get('source_type')
-    source_type = str(source_type_raw).strip() if source_type_raw is not None else ''
-    if not source_type:
-        raise HTTPException(status_code=400, detail='source_type is required')
-
-    source_ref_raw = payload.get('source_ref')
-    source_date_raw = payload.get('source_date')
-    source_ref = str(source_ref_raw) if source_ref_raw is not None else None
-    source_date = str(source_date_raw) if source_date_raw is not None else None
-
-    ttp_list = [_normalize_technique_id(item) for item in normalize_string_list(payload.get('ttp_list'))]
-    tools_list = normalize_string_list(payload.get('tools_list'))
-    infra_list = normalize_string_list(payload.get('infra_list'))
-    target_list = normalize_string_list(payload.get('target_list'))
-
-    observation = {
-        'id': str(uuid.uuid4()),
-        'actor_id': actor_id,
-        'source_type': source_type,
-        'source_ref': source_ref,
-        'source_date': source_date,
-        'ttp_list': ttp_list,
-        'tools_list': tools_list,
-        'infra_list': infra_list,
-        'target_list': target_list,
-        'created_at': utc_now_iso(),
-    }
-
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-        connection.execute(
-            '''
-            INSERT INTO observation_records (
-                id, actor_id, source_type, source_ref, source_date,
-                ttp_json, tools_json, infra_json, targets_json, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''',
-            (
-                observation['id'],
-                observation['actor_id'],
-                observation['source_type'],
-                observation['source_ref'],
-                observation['source_date'],
-                json.dumps(observation['ttp_list']),
-                json.dumps(observation['tools_list']),
-                json.dumps(observation['infra_list']),
-                json.dumps(observation['target_list']),
-                observation['created_at'],
-            ),
-        )
-        state_row = connection.execute(
-            '''
-            SELECT capability_grid_json
-            FROM actor_state
-            WHERE actor_id = ?
-            ''',
-            (actor_id,),
-        ).fetchone()
-        if state_row is not None:
-            capability_grid = json.loads(state_row[0])
-            for ttp in observation['ttp_list']:
-                category = _capability_category_from_technique_id(ttp)
-                if category is None:
-                    continue
-                category_entry = capability_grid.get(category)
-                if not isinstance(category_entry, dict):
-                    continue
-                observed_value = category_entry.get('observed')
-                evidence_refs = category_entry.get('evidence_refs')
-                if observed_value != '' or evidence_refs != []:
-                    continue
-                existing_pending = connection.execute(
-                    '''
-                    SELECT id
-                    FROM delta_proposals
-                    WHERE actor_id = ? AND affected_category = ? AND status = 'pending'
-                    ''',
-                    (actor_id, category),
-                ).fetchone()
-                if existing_pending is not None:
-                    continue
-                connection.execute(
-                    '''
-                    INSERT INTO delta_proposals (
-                        id, actor_id, observation_id, delta_type,
-                        affected_category, status, created_at, validation_template_json
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''',
-                    (
-                        str(uuid.uuid4()),
-                        actor_id,
-                        observation['id'],
-                        'expansion',
-                        category,
-                        'pending',
-                        utc_now_iso(),
-                        json.dumps(generate_validation_template('expansion', category)),
-                    ),
-                )
-        connection.commit()
-
-    return observation
-
-
-@app.get('/actors/{actor_id}/observations')
-def list_observations(actor_id: str) -> list[dict[str, object]]:
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-        rows = connection.execute(
-            '''
-            SELECT
-                id, actor_id, source_type, source_ref, source_date,
-                ttp_json, tools_json, infra_json, targets_json, created_at
-            FROM observation_records
-            WHERE actor_id = ?
-            ORDER BY created_at DESC
-            ''',
-            (actor_id,),
-        ).fetchall()
-    return [
-        {
-            'id': row[0],
-            'actor_id': row[1],
-            'source_type': row[2],
-            'source_ref': row[3],
-            'source_date': row[4],
-            'ttp_list': json.loads(row[5]),
-            'tools_list': json.loads(row[6]),
-            'infra_list': json.loads(row[7]),
-            'target_list': json.loads(row[8]),
-            'created_at': row[9],
-        }
-        for row in rows
-    ]
-
-
-@app.get('/actors/{actor_id}/deltas')
-def list_deltas(actor_id: str) -> list[dict[str, str]]:
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-        rows = connection.execute(
-            '''
-            SELECT
-                id, actor_id, observation_id, delta_type,
-                affected_category, status, created_at
-            FROM delta_proposals
-            WHERE actor_id = ?
-            ORDER BY created_at DESC
-            ''',
-            (actor_id,),
-        ).fetchall()
-    return [
-        {
-            'id': row[0],
-            'actor_id': row[1],
-            'observation_id': row[2],
-            'delta_type': row[3],
-            'affected_category': row[4],
-            'status': row[5],
-            'created_at': row[6],
-        }
-        for row in rows
-    ]
 
 
 def resolve_delta_action(actor_id: str, delta_id: str, requested_action: str) -> dict[str, str]:
@@ -3101,232 +2778,3 @@ def resolve_delta_action(actor_id: str, delta_id: str, requested_action: str) ->
         'affected_category': affected_category,
     }
 
-
-@app.post('/actors/{actor_id}/deltas/{delta_id}/resolve')
-async def resolve_delta(actor_id: str, delta_id: str, request: Request) -> dict[str, str]:
-    await _enforce_request_size(request, DEFAULT_BODY_LIMIT_BYTES)
-    payload = await request.json()
-    requested_action = str(payload.get('action', ''))
-    return resolve_delta_action(actor_id, delta_id, requested_action)
-
-
-@app.get('/actors/{actor_id}/transitions')
-def list_transitions(actor_id: str) -> list[dict[str, str]]:
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-        rows = connection.execute(
-            '''
-            SELECT
-                id, actor_id, delta_id, previous_state_json,
-                new_state_json, action, created_at
-            FROM state_transition_log
-            WHERE actor_id = ?
-            ORDER BY created_at ASC
-            ''',
-            (actor_id,),
-        ).fetchall()
-    return [
-        {
-            'id': row[0],
-            'actor_id': row[1],
-            'delta_id': row[2],
-            'previous_state_json': row[3],
-            'new_state_json': row[4],
-            'action': row[5],
-            'created_at': row[6],
-        }
-        for row in rows
-    ]
-
-
-@app.get('/actors/{actor_id}/deltas/ui', response_class=HTMLResponse)
-def deltas_ui(actor_id: str) -> str:
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-        rows = connection.execute(
-            '''
-            SELECT id, affected_category, created_at
-            FROM delta_proposals
-            WHERE actor_id = ? AND status = 'pending'
-            ORDER BY created_at DESC
-            ''',
-            (actor_id,),
-        ).fetchall()
-
-    actor_path = quote(actor_id, safe='')
-    actor_text = html.escape(actor_id, quote=True)
-    items = ''.join(
-        (
-            f'<li><a href="/actors/{actor_path}/deltas/{quote(str(row[0]), safe="")}/review">'
-            f'{html.escape(str(row[0]), quote=True)}</a> - '
-            f'{html.escape(str(row[1]), quote=True)} - '
-            f'{html.escape(str(row[2]), quote=True)}</li>'
-        )
-        for row in rows
-    )
-    return (
-        '<!doctype html><html><body>'
-        '<h1>Pending Deltas</h1>'
-        f'<p>Actor: {actor_text}</p>'
-        '<ul>'
-        f'{items}'
-        '</ul>'
-        '</body></html>'
-    )
-
-
-@app.get('/actors/{actor_id}/deltas/{delta_id}')
-def get_delta(actor_id: str, delta_id: str) -> dict[str, object]:
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-        row = connection.execute(
-            '''
-            SELECT
-                id, actor_id, observation_id, delta_type,
-                affected_category, status, created_at, validation_template_json
-            FROM delta_proposals
-            WHERE actor_id = ? AND id = ?
-            ''',
-            (actor_id, delta_id),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail='delta not found')
-    return {
-        'id': row[0],
-        'actor_id': row[1],
-        'observation_id': row[2],
-        'delta_type': row[3],
-        'affected_category': row[4],
-        'status': row[5],
-        'created_at': row[6],
-        'validation_template': json.loads(row[7]),
-    }
-
-
-@app.get('/actors/{actor_id}/deltas/{delta_id}/review', response_class=HTMLResponse)
-def delta_review_ui(actor_id: str, delta_id: str) -> str:
-    with sqlite3.connect(DB_PATH) as connection:
-        if not actor_exists(connection, actor_id):
-            raise HTTPException(status_code=404, detail='actor not found')
-        delta_row = connection.execute(
-            '''
-            SELECT
-                id, actor_id, observation_id, delta_type,
-                affected_category, status, created_at, validation_template_json
-            FROM delta_proposals
-            WHERE actor_id = ? AND id = ?
-            ''',
-            (actor_id, delta_id),
-        ).fetchone()
-        if delta_row is None:
-            raise HTTPException(status_code=404, detail='delta not found')
-
-        observation_row = connection.execute(
-            '''
-            SELECT source_type, source_ref, source_date, ttp_json, tools_json,
-                   infra_json, targets_json, created_at
-            FROM observation_records
-            WHERE id = ?
-            ''',
-            (delta_row[2],),
-        ).fetchone()
-        if observation_row is None:
-            raise HTTPException(status_code=404, detail='observation not found')
-
-        state_row = connection.execute(
-            '''
-            SELECT capability_grid_json
-            FROM actor_state
-            WHERE actor_id = ?
-            ''',
-            (actor_id,),
-        ).fetchone()
-        if state_row is None:
-            raise HTTPException(status_code=404, detail='actor state not found')
-
-    capability_grid = json.loads(state_row[0])
-    affected_category = delta_row[4]
-    category_entry = capability_grid.get(affected_category)
-    if not isinstance(category_entry, dict):
-        category_entry = baseline_entry()
-
-    validation_template = json.loads(delta_row[7])
-    tier1 = validation_template.get('tier1_basic', [])
-    tier2 = validation_template.get('tier2_analytic', [])
-    tier3 = validation_template.get('tier3_strategic', [])
-
-    ttp_list = json.loads(observation_row[3])
-    tools_list = json.loads(observation_row[4])
-    infra_list = json.loads(observation_row[5])
-    target_list = json.loads(observation_row[6])
-
-    actor_path = quote(actor_id, safe='')
-    delta_path = quote(delta_id, safe='')
-
-    def render_list(items: list[object]) -> str:
-        return ''.join(f'<li>{html.escape(str(item), quote=True)}</li>' for item in items)
-
-    return (
-        '<!doctype html><html><body>'
-        '<h1>Delta Review</h1>'
-        f'<p>Actor id: {html.escape(actor_id, quote=True)}</p>'
-        f'<p>Delta id: {html.escape(delta_id, quote=True)}</p>'
-        f'<p>Status: {html.escape(str(delta_row[5]), quote=True)}</p>'
-        '<h2>Proposed Change</h2>'
-        f'<p>delta_type: {html.escape(str(delta_row[3]), quote=True)}</p>'
-        f'<p>affected_category: {html.escape(str(affected_category), quote=True)}</p>'
-        '<h2>Observation Summary</h2>'
-        f'<p>source_type: {html.escape(str(observation_row[0]), quote=True)}</p>'
-        f'<p>source_ref: {html.escape(str(observation_row[1]), quote=True)}</p>'
-        f'<p>source_date: {html.escape(str(observation_row[2]), quote=True)}</p>'
-        f'<p>created_at: {html.escape(str(observation_row[7]), quote=True)}</p>'
-        '<p>ttp_list:</p><ul>'
-        f'{render_list(ttp_list)}'
-        '</ul>'
-        '<p>tools_list:</p><ul>'
-        f'{render_list(tools_list)}'
-        '</ul>'
-        '<p>infra_list:</p><ul>'
-        f'{render_list(infra_list)}'
-        '</ul>'
-        '<p>target_list:</p><ul>'
-        f'{render_list(target_list)}'
-        '</ul>'
-        '<h2>Current Baseline</h2>'
-        f'<p>observed: {html.escape(str(category_entry.get("observed", "")), quote=True)}</p>'
-        f'<p>assessed: {html.escape(str(category_entry.get("assessed", "")), quote=True)}</p>'
-        f'<p>confidence: {html.escape(str(category_entry.get("confidence", 0.0)), quote=True)}</p>'
-        f'<p>evidence_refs: {html.escape(str(category_entry.get("evidence_refs", [])), quote=True)}</p>'
-        '<h2>Validation Ladder</h2>'
-        '<h3>Tier 1 Basic</h3><ul>'
-        f'{render_list(tier1)}'
-        '</ul>'
-        '<h3>Tier 2 Analytic</h3><ul>'
-        f'{render_list(tier2)}'
-        '</ul>'
-        '<h3>Tier 3 Strategic</h3><ul>'
-        f'{render_list(tier3)}'
-        '</ul>'
-        f'<form method="post" action="/actors/{actor_path}/deltas/{delta_path}/accept">'
-        '<button type="submit">Accept</button>'
-        '</form>'
-        f'<form method="post" action="/actors/{actor_path}/deltas/{delta_path}/reject">'
-        '<button type="submit">Reject</button>'
-        '</form>'
-        '</body></html>'
-    )
-
-
-@app.post('/actors/{actor_id}/deltas/{delta_id}/accept')
-def accept_delta_ui(actor_id: str, delta_id: str) -> RedirectResponse:
-    resolve_delta_action(actor_id, delta_id, 'accept')
-    return RedirectResponse(url=f'/actors/{actor_id}/deltas/{delta_id}/review', status_code=303)
-
-
-@app.post('/actors/{actor_id}/deltas/{delta_id}/reject')
-def reject_delta_ui(actor_id: str, delta_id: str) -> RedirectResponse:
-    resolve_delta_action(actor_id, delta_id, 'reject')
-    return RedirectResponse(url=f'/actors/{actor_id}/deltas/{delta_id}/review', status_code=303)
