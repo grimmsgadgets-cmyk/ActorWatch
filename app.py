@@ -29,6 +29,7 @@ import routes_evolution
 import routes_notebook
 import routes_ui
 import source_ingest_service
+import status_service
 import timeline_extraction
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -1640,54 +1641,21 @@ def _import_ransomware_live_actor_activity(
 
 
 def _ollama_available() -> bool:
-    base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
-    try:
-        response = httpx.get(f'{base_url}/api/tags', timeout=2.5)
-        return response.status_code == 200
-    except Exception:
-        return False
+    return status_service.ollama_available_core(
+        deps={
+            'get_env': os.environ.get,
+            'http_get': httpx.get,
+        }
+    )
 
 
 def get_ollama_status() -> dict[str, str | bool]:
-    base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
-    model = os.environ.get('OLLAMA_MODEL', 'llama3.1:8b')
-    try:
-        response = httpx.get(f'{base_url}/api/tags', timeout=2.5)
-        if response.status_code != 200:
-            return {
-                'available': False,
-                'base_url': base_url,
-                'model': model,
-                'message': f'Ollama check failed (HTTP {response.status_code}).',
-            }
-        data = response.json()
-        models = data.get('models', []) if isinstance(data, dict) else []
-        model_names = {
-            str(item.get('name'))
-            for item in models
-            if isinstance(item, dict) and item.get('name')
+    return status_service.get_ollama_status_core(
+        deps={
+            'get_env': os.environ.get,
+            'http_get': httpx.get,
         }
-        has_model = model in model_names or model.split(':')[0] in {m.split(':')[0] for m in model_names}
-        if has_model:
-            return {
-                'available': True,
-                'base_url': base_url,
-                'model': model,
-                'message': 'Local LLM is reachable and model is available.',
-            }
-        return {
-            'available': True,
-            'base_url': base_url,
-            'model': model,
-            'message': 'Ollama is reachable, but configured model was not found in tags.',
-        }
-    except Exception as exc:
-        return {
-            'available': False,
-            'base_url': base_url,
-            'model': model,
-            'message': f'Ollama is not reachable: {exc}',
-        }
+    )
 
 
 def _ollama_generate_questions(actor_name: str, scope_statement: str | None, excerpts: list[str]) -> list[str]:
@@ -1746,16 +1714,7 @@ def set_actor_notebook_status(actor_id: str, status: str, message: str) -> None:
 
 
 def _format_duration_ms(milliseconds: int | None) -> str:
-    if milliseconds is None or milliseconds <= 0:
-        return 'n/a'
-    if milliseconds < 1000:
-        return f'{milliseconds}ms'
-    seconds = milliseconds / 1000.0
-    if seconds < 60:
-        return f'{seconds:.1f}s'
-    minutes = int(seconds // 60)
-    remaining = int(round(seconds % 60))
-    return f'{minutes}m {remaining}s'
+    return status_service.format_duration_ms_core(milliseconds)
 
 
 def _mark_actor_generation_started(actor_id: str) -> bool:
