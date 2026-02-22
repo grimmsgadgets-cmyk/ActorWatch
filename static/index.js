@@ -3,7 +3,6 @@
         if (!actorId) return;
 
         const liveIndicator = document.getElementById("live-indicator");
-        const liveRefresh = document.getElementById("live-refresh");
         const liveRefreshTop = document.getElementById("live-refresh-top");
         const reportNode = document.getElementById("recent-reports");
         const targetsNode = document.getElementById("recent-targets");
@@ -36,7 +35,6 @@
           }
         }
 
-        if (liveRefresh) liveRefresh.addEventListener("click", runLiveRefresh);
         if (liveRefreshTop) liveRefreshTop.addEventListener("click", runLiveRefresh);
         setInterval(runLiveRefresh, 20000);
         runLiveRefresh();
@@ -72,7 +70,7 @@
         const markReviewed = document.getElementById("mark-reviewed");
         const clearReviewed = document.getElementById("clear-reviewed");
         const reviewMeta = document.getElementById("review-meta");
-        const sourceDateNodes = Array.from(document.querySelectorAll(".recent-source-list li[data-source-date]"));
+        const sourceListRows = Array.from(document.querySelectorAll(".recent-source-list li[data-source-date]"));
         const reviewStorageKey = "tracker:lastReview:" + actorId;
 
         function applyTimelineFilter() {
@@ -340,7 +338,7 @@
         }
 
         function sourceDateCandidates() {
-          return sourceDateNodes
+          return sourceListRows
             .map((node) => {
               const attr = String(node.getAttribute("data-source-date") || "").trim();
               const badge = node.querySelector(".badge");
@@ -375,6 +373,7 @@
           if (sinceReviewReports && reportNode) sinceReviewReports.textContent = String(reportNode.textContent || "0");
           if (reviewMeta) reviewMeta.textContent = "Baseline stored locally for this actor on this browser.";
         }
+
 
         if (markReviewed) {
           markReviewed.addEventListener("click", () => {

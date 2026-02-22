@@ -59,7 +59,7 @@
       }
       .main { padding: 16px; overflow: hidden; display: flex; flex-direction: column; gap: 12px; }
       .top-status-row { position: sticky; top: 0; z-index: 15; background: #f7f7f7; padding-bottom: 6px; }
-      .dashboard { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; flex: 1; min-height: 0; }
+      .dashboard { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; flex: 1; min-height: 0; }
       .workspace-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; gap: 10px; min-height: 0; }
       .workspace-grid .pane { min-height: 0; overflow: auto; }
       .workspace-grid .pane .section-title { position: sticky; top: 0; z-index: 4; background: #fff; }
@@ -81,15 +81,11 @@
       .event { border-left: 3px solid #3f5f9a; margin: 6px 0; padding: 6px 8px; background: #f8fbff; }
       .event.notable-primary { border-left-color: #c44f4f; background: #fff1f1; }
       .event.notable-primary strong { color: #7f1d1d; }
-      .action-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-      .action-row a, .action-row button { border: 1px solid #b8c7e2; background: #fff; border-radius: 8px; padding: 6px 10px; font-size: 12px; text-decoration: none; color: #1f2937; cursor: pointer; }
-      .action-row .primary { background: #4a7bd0; color: #fff; border-color: #4a7bd0; }
       .change-list { display: grid; gap: 8px; margin-top: 8px; }
       .change-row { border: 1px solid #dfe6f3; border-radius: 8px; padding: 8px; background: #fbfdff; }
       .change-row-main { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; font-size: 12px; }
-      .change-row-title { font-weight: 600; color: #1f2937; }
-      .change-row-why { margin-top: 4px; font-size: 12px; color: #334155; }
-      .change-row-source { margin-top: 4px; font-size: 11px; color: #475569; }
+      .change-row-title { font-weight: 600; font-size: 13px; color: #1f2937; }
+      .change-row-source { margin-top: 4px; font-size: 12px; color: #334155; }
       .timeline-graphic { position: relative; margin: 10px 0 0 6px; padding-left: 28px; }
       .timeline-graphic::before { content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 3px; background: #c7d7ef; }
       .timeline-node { position: relative; margin: 0 0 14px; padding: 10px; border: 1px solid #d8e1ef; border-radius: 8px; background: #f9fbff; }
@@ -130,7 +126,23 @@
       .dq-detail { padding: 0 10px 10px; border-top: 1px solid #ecf1fa; }
       .deemphasized { opacity: 0.75; }
       .summary-list { margin: 8px 0 0; padding-left: 18px; }
-      .summary-list li { margin: 4px 0; font-size: 12px; line-height: 1.3; }
+      .summary-list li { margin: 4px 0; font-size: 13px; line-height: 1.4; color: #1f2937; }
+      .who-meta { margin: 6px 0 0; font-size: 12px; color: #334155; line-height: 1.4; }
+      .who-meta a { color: #1f4a8a; }
+      .who-summary { border: 1px solid #dce7f8; border-radius: 8px; background: #f8fbff; padding: 8px; margin-bottom: 8px; }
+      .who-summary p { margin: 0; font-size: 14px; line-height: 1.45; color: #0f172a; }
+      .who-why { margin: 8px 0; border: 1px solid #dce7f8; border-radius: 8px; background: #f8fbff; padding: 8px; font-size: 15px; line-height: 1.45; color: #0f172a; font-weight: 500; }
+      .who-heading { margin: 8px 0 6px; font-size: 13px; letter-spacing: .01em; color: #1f2937; }
+      .technique-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+      .technique-item { border: 1px solid #dfe6f3; border-radius: 8px; background: #fbfdff; padding: 8px; }
+      .technique-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+      .technique-pill { display: inline-block; border-radius: 999px; border: 1px solid #9bb6dc; background: #eef4ff; color: #1f4a8a; padding: 2px 8px; font-size: 11px; text-decoration: none; font-weight: 600; }
+      .technique-name { font-size: 13px; color: #0f172a; line-height: 1.35; }
+      .technique-phase { font-size: 12px; color: #334155; line-height: 1.35; }
+      .who-kpis { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: 8px; margin: 10px 0; }
+      .who-kpi { border: 1px solid #dfe6f3; border-radius: 8px; background: #fbfdff; padding: 8px; }
+      .who-kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: .02em; color: #475569; }
+      .who-kpi-value { margin-top: 2px; font-size: 15px; font-weight: 700; color: #0f172a; line-height: 1.3; }
       .snapshot-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 8px; margin: 10px 0; }
       .snapshot-card { border: 1px solid #dfe6f3; border-radius: 10px; padding: 10px; background: #fbfdff; border-top: 3px solid #7ea4df; min-height: 118px; display: flex; flex-direction: column; gap: 6px; }
       .snapshot-card.primary { border-top-color: #c44f4f; background: #fff7f7; }
@@ -354,6 +366,8 @@
         .timeline-ataglance { grid-template-columns: 1fr; }
         .kpi-strip { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
         .snapshot-grid { grid-template-columns: 1fr; }
+        .who-kpis { grid-template-columns: 1fr; }
+        .technique-grid { grid-template-columns: 1fr; }
       }
       @media (max-width: 960px) {
         .layout { grid-template-columns: 1fr; min-height: auto; }
@@ -603,24 +617,6 @@
             <div class="ataglance-value"><span id="recent-impact">{{ recent_change.damage }}</span></div>
           </div>
         </section>
-        {% set reports_count = (recent_change.new_reports|string)|int %}
-        {% if reports_count > 3 %}
-        {% set now_status = 'activity is up' %}
-        {% elif reports_count > 0 %}
-        {% set now_status = 'activity changed' %}
-        {% else %}
-        {% set now_status = 'activity looks steady' %}
-        {% endif %}
-        <section class="card span-2">
-          <strong>Right now:</strong> {{ now_status }}. Check top changes first.
-          <div class="action-row">
-            <button type="button" class="primary" id="live-refresh">Refresh now</button>
-            <a href="#section-recent">Review top source</a>
-            <a href="#section-history-left">Open notes and history</a>
-            <a href="/actors/{{ notebook.actor.id }}/timeline/details">Open full timeline</a>
-          </div>
-        </section>
-
         {% if notebook.priority_questions %}
         <section class="card span-2 decision-queue" data-step="action" id="section-nextchecks">
           <div class="decision-header">
@@ -649,38 +645,50 @@
         <section class="card pane" data-step="who" id="section-who">
           <h2 class="section-title">1) Who are they?<span class="role-chip">Understand</span></h2>
           <div class="section-body">
-          <p>{{ notebook.actor_profile_summary }}</p>
-          <p><small>Framework Group Match: {{ notebook.actor_profile_group_name }}</small></p>
-          <p><small>Source: <a href="{{ notebook.actor_profile_source_url }}" target="_blank" rel="noreferrer">{{ notebook.actor_profile_source_label }}</a></small></p>
-          <p><strong>Common moves they use (top 3)</strong></p>
+          <div class="who-summary">
+            <p>{{ notebook.actor_profile_summary }}</p>
+            <div class="who-meta">Framework Group Match: {{ notebook.actor_profile_group_name }} | Source: <a href="{{ notebook.actor_profile_source_url }}" target="_blank" rel="noreferrer">{{ notebook.actor_profile_source_label }}</a> | Created: {{ notebook.actor_created_date }}</div>
+          </div>
+          <div class="who-why"><strong>Why this matters now:</strong> Recent reporting indicates likely focus on {{ recent_change.targets }} with observed impact reported as {{ recent_change.damage }}.</div>
+          <p class="who-heading"><strong>Common moves they use (top 3)</strong></p>
           {% if notebook.top_techniques %}
-          <ul>
+          <div class="technique-grid">
             {% for technique in notebook.top_techniques[:3] %}
-            <li>
-              {% if technique.technique_url %}
-              <a href="{{ technique.technique_url }}" target="_blank" rel="noreferrer">
-                {{ technique.technique_id or 'Technique' }}
-              </a>
-              {% else %}
-              {{ technique.technique_id or 'Technique' }}
-              {% endif %}
-              - {{ technique.technique_name }}
+            <div class="technique-item">
+              <div class="technique-head">
+                {% if technique.technique_url %}
+                <a class="technique-pill" href="{{ technique.technique_url }}" target="_blank" rel="noreferrer">{{ technique.technique_id or 'Technique' }}</a>
+                {% else %}
+                <span class="technique-pill">{{ technique.technique_id or 'Technique' }}</span>
+                {% endif %}
+              </div>
+              <div class="technique-name">{{ technique.technique_name }}</div>
               {% if technique.phase %}
-              <small>({{ technique.phase.replace('_', ' ') }})</small>
+              <div class="technique-phase">{{ technique.phase.replace('_', ' ') }}</div>
               {% endif %}
-            </li>
+            </div>
             {% endfor %}
-          </ul>
+          </div>
           <p><small>New to ATT&CK IDs? Treat these as behavior tags to guide detections and hunts.</small></p>
           {% else %}
           <p><small>No mapped technique profile available yet.</small></p>
           {% endif %}
-          <ul class="summary-list">
-            <li><strong>Recent activity count:</strong> {{ notebook.kpis.activity_30d }}</li>
-            <li><strong>New techniques count:</strong> {{ notebook.kpis.new_techniques_30d }}</li>
-            <li><strong>Last checked:</strong> {{ notebook.kpis.last_verified_update }}</li>
-          </ul>
-          <p><strong>Emerging techniques observed</strong></p>
+          <div class="who-kpis">
+            <div class="who-kpi">
+              <div class="who-kpi-label">30d activity</div>
+              <div class="who-kpi-value">{{ notebook.kpis.activity_30d }}</div>
+            </div>
+            <div class="who-kpi">
+              <div class="who-kpi-label">New techniques</div>
+              <div class="who-kpi-value">{{ notebook.kpis.new_techniques_30d }}</div>
+            </div>
+            <div class="who-kpi">
+              <div class="who-kpi-label">Last checked</div>
+              <div class="who-kpi-value">{{ notebook.kpis.last_verified_update }}</div>
+            </div>
+          </div>
+          <details class="compact">
+            <summary>Emerging techniques observed ({{ notebook.emerging_techniques|length if notebook.emerging_techniques else 0 }})</summary>
           {% if notebook.emerging_techniques %}
           <ul class="summary-list">
             {% for technique in notebook.emerging_techniques[:3] %}
@@ -698,7 +706,7 @@
           {% else %}
           <p><small>No new technique IDs observed yet in actor-specific recent reporting.</small></p>
           {% endif %}
-          <p><small>Created: {{ notebook.actor_created_date }}</small></p>
+          </details>
           </div>
           {% if not notebook.actor.is_tracked %}
           <form method="post" action="/actors/{{ notebook.actor.id }}/track">
@@ -757,14 +765,13 @@
                 <div class="change-row-title">{{ display_title }}</div>
                 <div><span class="badge">{{ item.date }}</span> <span class="badge {{ item.freshness_class }}">{{ item.freshness_label }}</span></div>
               </div>
-              <div class="change-row-why">{{ item.text or 'Recent reporting update available.' }}</div>
               <div class="change-row-source">
                 {% if item.source_url %}
                 <a class="source-title-link" href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ item.evidence_source_label or item.source_name or 'Source' }}</a>
                 {% else %}
                 {{ item.evidence_source_label or item.source_name or 'Source' }}
                 {% endif %}
-                | corroboration: {{ item.corroboration_sources or '1' }} source(s)
+                | corroborated by {{ item.corroboration_sources or '1' }} source(s)
               </div>
             </div>
             {% endfor %}
