@@ -147,6 +147,30 @@ def test_generate_actor_requirements_wrapper_delegates_to_pipeline_core(monkeypa
     assert 'new_id' in deps
 
 
+def test_import_default_feeds_wrapper_delegates_to_pipeline_core(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_import_core(actor_id, **kwargs):
+        captured['actor_id'] = actor_id
+        captured.update(kwargs)
+        return 5
+
+    monkeypatch.setattr(app_module, 'pipeline_import_default_feeds_for_actor_core', _fake_import_core)
+
+    imported = app_module.import_default_feeds_for_actor('actor-feed-wrapper')
+
+    assert imported == 5
+    assert captured['actor_id'] == 'actor-feed-wrapper'
+    assert captured['db_path'] == app_module.DB_PATH
+    assert captured['default_cti_feeds'] == app_module.DEFAULT_CTI_FEEDS
+    assert captured['actor_feed_lookback_days'] == app_module.ACTOR_FEED_LOOKBACK_DAYS
+    deps = captured['deps']
+    assert isinstance(deps, dict)
+    assert 'derive_source_from_url' in deps
+    assert 'upsert_source_for_actor' in deps
+    assert 'duckduckgo_actor_search_urls' in deps
+
+
 def test_validate_outbound_url_blocks_localhost():
     with pytest.raises(app_module.HTTPException):
         app_module._validate_outbound_url('http://localhost/internal')  # noqa: SLF001
