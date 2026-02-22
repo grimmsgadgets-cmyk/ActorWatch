@@ -22,6 +22,8 @@ import feed_import_service
 import legacy_ui
 import mitre_store
 import db_schema_service
+import activity_highlight_service
+import analyst_text_service
 import priority_questions
 import priority_service
 import rate_limit_service
@@ -1076,59 +1078,30 @@ def _duckduckgo_actor_search_urls(actor_terms: list[str], limit: int = 20) -> li
 
 
 def _sentence_mentions_actor(sentence: str, actor_name: str) -> bool:
-    lowered = sentence.lower()
-    actor_tokens = [token for token in re.findall(r'[a-z0-9]+', actor_name.lower()) if len(token) > 2]
-    return bool(actor_tokens and any(token in lowered for token in actor_tokens))
+    return analyst_text_service.sentence_mentions_actor_core(
+        sentence,
+        actor_name,
+        deps={
+            're_findall': re.findall,
+        },
+    )
 
 
 def _looks_like_navigation_noise(sentence: str) -> bool:
-    lowered = sentence.lower()
-    noise_markers = (
-        'contact sales',
-        'get started for free',
-        'solutions & technology',
-        'inside google cloud',
-        'developers & practitioners',
-        'training & certifications',
-        'ecosystem it leaders',
-    )
-    if any(marker in lowered for marker in noise_markers):
-        return True
-    if lowered.count('&') >= 4:
-        return True
-    if len(sentence.split()) > 70:
-        return True
-    return False
+    return analyst_text_service.looks_like_navigation_noise_core(sentence)
 
 
 def _build_actor_profile_summary(actor_name: str, source_texts: list[str]) -> str:
-    candidate_sentences: list[str] = []
-    for text in source_texts:
-        for sentence in _split_sentences(text):
-            if _looks_like_navigation_noise(sentence):
-                continue
-            if _sentence_mentions_actor(sentence, actor_name):
-                candidate_sentences.append(' '.join(sentence.split()))
-            if len(candidate_sentences) >= 24:
-                break
-        if len(candidate_sentences) >= 24:
-            break
-
-    selected: list[str] = []
-    for sentence in candidate_sentences:
-        normalized = _normalize_text(sentence)
-        if any(_token_overlap(normalized, _normalize_text(existing)) >= 0.7 for existing in selected):
-            continue
-        selected.append(sentence)
-        if len(selected) >= 3:
-            break
-
-    if selected:
-        return ' '.join(selected)
-    return (
-        f'No actor-specific executive summary is available for {actor_name} yet. '
-        'Current sources do not provide clear, attributable details about this actor. '
-        'Add a source that explicitly profiles this actor and refresh the notebook.'
+    return analyst_text_service.build_actor_profile_summary_core(
+        actor_name,
+        source_texts,
+        deps={
+            'split_sentences': _split_sentences,
+            'looks_like_navigation_noise': _looks_like_navigation_noise,
+            'sentence_mentions_actor': _sentence_mentions_actor,
+            'normalize_text': _normalize_text,
+            'token_overlap': _token_overlap,
+        },
     )
 
 
@@ -1143,33 +1116,30 @@ def _build_recent_activity_highlights(
         except Exception:
             return ''
 
-    pipeline_items = pipeline_build_recent_activity_highlights(
+    return activity_highlight_service.build_recent_activity_highlights_core(
         timeline_items,
         sources,
         actor_terms,
-        trusted_activity_domains=TRUSTED_ACTIVITY_DOMAINS,
-        source_domain=_source_domain,
-        canonical_group_domain=_canonical_group_domain,
-        looks_like_activity_sentence=_looks_like_activity_sentence,
-        sentence_mentions_actor_terms=_sentence_mentions_actor_terms,
-        text_contains_actor_term=_text_contains_actor_term,
-        normalize_text=_normalize_text,
-        parse_published_datetime=lambda value: _parse_published_datetime(value),
-        freshness_badge=lambda value: _freshness_badge(value),
-        evidence_title_from_source=_evidence_title_from_source,
-        fallback_title_from_url=_fallback_title_from_url,
-        evidence_source_label_from_source=_evidence_source_label_from_source,
-        extract_ttp_ids=_extract_ttp_ids,
-        split_sentences=lambda text: _split_sentences(text),
-        looks_like_navigation_noise=_looks_like_navigation_noise,
+        deps={
+            'pipeline_build_recent_activity_highlights': pipeline_build_recent_activity_highlights,
+            'trusted_activity_domains': TRUSTED_ACTIVITY_DOMAINS,
+            'source_domain': _source_domain,
+            'canonical_group_domain': _canonical_group_domain,
+            'looks_like_activity_sentence': _looks_like_activity_sentence,
+            'sentence_mentions_actor_terms': _sentence_mentions_actor_terms,
+            'text_contains_actor_term': _text_contains_actor_term,
+            'normalize_text': _normalize_text,
+            'parse_published_datetime': _parse_published_datetime,
+            'freshness_badge': _freshness_badge,
+            'evidence_title_from_source': _evidence_title_from_source,
+            'fallback_title_from_url': _fallback_title_from_url,
+            'evidence_source_label_from_source': _evidence_source_label_from_source,
+            'extract_ttp_ids': _extract_ttp_ids,
+            'split_sentences': _split_sentences,
+            'looks_like_navigation_noise': _looks_like_navigation_noise,
+            'format_date_or_unknown': _format_date_or_unknown,
+        },
     )
-
-    highlights: list[dict[str, str | None]] = []
-    for item in pipeline_items:
-        copy_item = dict(item)
-        copy_item['date'] = _format_date_or_unknown(str(item.get('date') or ''))
-        highlights.append(copy_item)
-    return highlights
 
 
 def _extract_target_from_activity_text(text: str) -> str:
@@ -1350,42 +1320,17 @@ def get_ollama_status() -> dict[str, str | bool]:
 
 
 def _ollama_generate_questions(actor_name: str, scope_statement: str | None, excerpts: list[str]) -> list[str]:
-    if not excerpts or not _ollama_available():
-        return []
-
-    model = os.environ.get('OLLAMA_MODEL', 'llama3.1:8b')
-    base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
-    prompt = (
-        'You are helping a cybersecurity analyst write practical intelligence questions. '
-        'Return ONLY valid JSON with key "questions" as an array of short plain-language strings. '
-        'Avoid military and intelligence-jargon phrasing. '
-        'Use plain English a junior analyst can follow. '
-        'Focus on what to verify next for defensive operations. '
-        f'Actor: {actor_name}. Scope: {scope_statement or "n/a"}. '
-        f'Evidence excerpts: {json.dumps(excerpts[:8])}'
+    return analyst_text_service.ollama_generate_questions_core(
+        actor_name,
+        scope_statement,
+        excerpts,
+        deps={
+            'ollama_available': _ollama_available,
+            'get_env': os.environ.get,
+            'http_post': httpx.post,
+            'sanitize_question_text': _sanitize_question_text,
+        },
     )
-
-    payload = {
-        'model': model,
-        'prompt': prompt,
-        'stream': False,
-        'format': 'json',
-    }
-    try:
-        response = httpx.post(f'{base_url}/api/generate', json=payload, timeout=20.0)
-        response.raise_for_status()
-        content = response.json().get('response', '{}')
-        parsed = json.loads(content)
-        questions = parsed.get('questions', []) if isinstance(parsed, dict) else []
-        clean = [
-            _sanitize_question_text(str(item))
-            for item in questions
-            if isinstance(item, str) and str(item).strip()
-        ]
-        clean = [item for item in clean if item]
-        return clean[:6]
-    except Exception:
-        return []
 
 
 def actor_exists(connection: sqlite3.Connection, actor_id: str) -> bool:
