@@ -18,6 +18,7 @@ import httpx
 import actor_state_service
 import actor_profile_service
 import guidance_catalog
+import generation_service
 import legacy_ui
 import mitre_store
 import priority_questions
@@ -194,7 +195,6 @@ _RATE_LIMIT_STATE: dict[str, deque[float]] = defaultdict(deque)
 _RATE_LIMIT_LOCK = Lock()
 _RATE_LIMIT_REQUEST_COUNTER = 0
 _RATE_LIMIT_CLEANUP_EVERY = 512
-_ACTOR_GENERATION_RUNNING: set[str] = set()
 
 
 def _sync_mitre_cache_to_store() -> None:
@@ -215,7 +215,6 @@ def _sync_mitre_cache_from_store() -> None:
     MITRE_SOFTWARE_CACHE = mitre_store.MITRE_SOFTWARE_CACHE
     MITRE_CAMPAIGN_LINK_CACHE = mitre_store.MITRE_CAMPAIGN_LINK_CACHE
     MITRE_TECHNIQUE_INDEX_CACHE = mitre_store.MITRE_TECHNIQUE_INDEX_CACHE
-_ACTOR_GENERATION_LOCK = Lock()
 
 
 def _request_body_limit_bytes(method: str, path: str) -> int:
@@ -1760,33 +1759,26 @@ def _format_duration_ms(milliseconds: int | None) -> str:
 
 
 def _mark_actor_generation_started(actor_id: str) -> bool:
-    with _ACTOR_GENERATION_LOCK:
-        if actor_id in _ACTOR_GENERATION_RUNNING:
-            return False
-        _ACTOR_GENERATION_RUNNING.add(actor_id)
-        return True
+    return generation_service.mark_actor_generation_started_core(actor_id)
 
 
 def _mark_actor_generation_finished(actor_id: str) -> None:
-    with _ACTOR_GENERATION_LOCK:
-        _ACTOR_GENERATION_RUNNING.discard(actor_id)
+    generation_service.mark_actor_generation_finished_core(actor_id)
 
 
 def run_actor_generation(actor_id: str) -> None:
-    if not _mark_actor_generation_started(actor_id):
-        return
-    try:
-        pipeline_run_actor_generation_core(
-            actor_id,
-            db_path=DB_PATH,
-            deps={
-                'set_actor_notebook_status': set_actor_notebook_status,
-                'import_default_feeds_for_actor': import_default_feeds_for_actor,
-                'build_notebook': build_notebook,
-            },
-        )
-    finally:
-        _mark_actor_generation_finished(actor_id)
+    generation_service.run_actor_generation_core(
+        actor_id=actor_id,
+        deps={
+            'mark_started': _mark_actor_generation_started,
+            'mark_finished': _mark_actor_generation_finished,
+            'pipeline_run_actor_generation_core': pipeline_run_actor_generation_core,
+            'db_path': lambda: DB_PATH,
+            'set_actor_notebook_status': set_actor_notebook_status,
+            'import_default_feeds_for_actor': import_default_feeds_for_actor,
+            'build_notebook': build_notebook,
+        },
+    )
 
 
 def list_actor_profiles() -> list[dict[str, object]]:
