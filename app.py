@@ -1,16 +1,15 @@
 import json
 import os
 import re
-import socket
 import sqlite3
 import string
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import urlparse
 
 import httpx
 import actor_state_service
@@ -46,7 +45,7 @@ import timeline_extraction
 import timeline_analytics_service
 import timeline_view_service
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from feed_ingest import import_default_feeds_for_actor_core as pipeline_import_default_feeds_for_actor_core
