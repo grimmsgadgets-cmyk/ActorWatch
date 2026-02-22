@@ -117,6 +117,11 @@
       .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid #888; }
       .badge.open { background: #fff7d8; }
       .badge.resolved { background: #e1f5e6; }
+      .badge.freshness-new { background: #eaf9ef; border-color: #9fd2ac; }
+      .badge.freshness-recent { background: #eef6ff; border-color: #a7c2ea; }
+      .badge.freshness-stale { background: #fff6e8; border-color: #e8c885; }
+      .badge.freshness-old { background: #f4f5f7; border-color: #c8ced8; }
+      .badge.freshness-unknown { background: #f4f5f7; border-color: #c8ced8; }
       .source-item { border-bottom: 1px solid #e3e3e3; padding: 8px 0; }
       .recent-source-list { margin: 6px 0 0; padding-left: 18px; }
       .recent-source-list li { margin: 4px 0; font-size: 13px; }
@@ -135,6 +140,7 @@
       .top-status-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
       .status-chip { margin-bottom: 0; padding: 4px 8px; font-size: 11px; line-height: 1.25; width: fit-content; max-width: 340px; border-radius: 999px; }
       .status-chip strong { font-weight: 600; }
+      .status-meta { margin-top: 3px; font-size: 10px; color: #334155; }
       .status-running { background: #eef6ff; border-color: #a7c2ea; }
       .status-ready { background: #eaf9ef; border-color: #9fd2ac; }
       .status-error { background: #ffeceb; border-color: #e4a8a3; }
@@ -285,6 +291,7 @@
         <div class="top-status-row">
           <div class="notice status-chip status-{{ notebook_health.state }}">
             <strong>Notebook health:</strong> {{ notebook_health.message }}
+            <div class="status-meta">Last refresh: {{ notebook_health.last_refresh_duration }} | Sources processed: {{ notebook_health.last_refresh_sources }}</div>
             {% if notebook and notebook.actor.notebook_status == 'running' %}
             <div class="progress-wrap"><div class="progress-bar"></div></div>
             {% endif %}
@@ -436,6 +443,7 @@
             {% endif %}
             <li>
               <span class="badge">{{ item.date }}</span>
+              <span class="badge {{ item.freshness_class }}">{{ item.freshness_label }}</span>
               {% if item.source_url %}
               <a class="source-title-link" href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ display_title }}</a>
               {% else %}
@@ -459,6 +467,7 @@
                 {% endif %}
                 <li>
                   <span class="badge">{{ item.date }}</span>
+                  <span class="badge {{ item.freshness_class }}">{{ item.freshness_label }}</span>
                   {% if item.source_url %}
                   <a href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ display_title }}</a>
                   {% else %}

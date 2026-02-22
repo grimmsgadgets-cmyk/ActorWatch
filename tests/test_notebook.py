@@ -453,6 +453,25 @@ def test_root_handles_notebook_load_failure(tmp_path, monkeypatch):
     assert response.status_code == 200
 
 
+def test_root_renders_analyst_flow_headings(tmp_path, monkeypatch):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Flow', 'Flow scope')
+    monkeypatch.setattr(app_module, 'run_actor_generation', lambda actor_id: None)
+    monkeypatch.setattr(
+        app_module,
+        'get_ollama_status',
+        lambda: {'available': False, 'base_url': 'http://offline', 'model': 'none'},
+    )
+
+    with TestClient(app_module.app) as client:
+        response = client.get(f'/?actor_id={actor["id"]}')
+
+    assert response.status_code == 200
+    assert '1) Who are they?' in response.text
+    assert '2) What have they been up to recently?' in response.text
+    assert '3) What do I do about it?' in response.text
+
+
 def test_known_technique_ids_for_entity_collects_all_uses(monkeypatch):
     monkeypatch.setattr(
         app_module,

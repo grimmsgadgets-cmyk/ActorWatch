@@ -1350,6 +1350,20 @@ def _format_date_or_unknown(value: str) -> str:
     return dt.date().isoformat()
 
 
+def _freshness_badge(value: str | None) -> tuple[str, str]:
+    dt = _parse_published_datetime(value)
+    if dt is None:
+        return ('unknown', 'freshness-unknown')
+    days_old = max(0, (datetime.now(timezone.utc) - dt).days)
+    if days_old <= 1:
+        return ('<=24h', 'freshness-new')
+    if days_old <= 7:
+        return (f'{days_old}d', 'freshness-recent')
+    if days_old <= 30:
+        return (f'{days_old}d stale', 'freshness-stale')
+    return (f'{days_old}d old', 'freshness-old')
+
+
 def _bucket_label(value: str) -> str:
     dt = _parse_iso_for_sort(value)
     if dt == datetime.min.replace(tzinfo=timezone.utc):
@@ -2564,6 +2578,8 @@ def _build_recent_activity_highlights(
         # Strict gating: require trusted domains unless summary is explicitly actor-tagged.
         if source_url and not _is_trusted_domain(source_url) and not _actor_specific_text(summary, terms):
             continue
+        freshness_value = str(source['published_at']) if source and source.get('published_at') else str(item.get('occurred_at') or '')
+        freshness_label, freshness_class = _freshness_badge(freshness_value)
         highlights.append(
             {
                 'date': _format_date_or_unknown(str(item['occurred_at'])),
@@ -2577,6 +2593,8 @@ def _build_recent_activity_highlights(
                 'evidence_source_label': _evidence_source_label_from_source(source) if source else (_source_domain(source_url) or 'Unknown source'),
                 'evidence_group_domain': _canonical_group_domain(source) if source else (_source_domain(source_url) or 'unknown-source'),
                 'source_published_at': str(source['published_at']) if source and source.get('published_at') else None,
+                'freshness_label': freshness_label,
+                'freshness_class': freshness_class,
             }
         )
         if len(highlights) >= 8:
@@ -2625,6 +2643,7 @@ def _build_recent_activity_highlights(
         synthesized = _activity_synthesis_sentence(text, actor_terms)
         if not synthesized:
             continue
+        freshness_label, freshness_class = _freshness_badge(str(source.get('published_at') or source.get('retrieved_at') or ''))
         highlights.append(
             {
                 'date': _format_date_or_unknown(str(source.get('published_at') or source.get('retrieved_at') or '')),
@@ -2638,6 +2657,8 @@ def _build_recent_activity_highlights(
                 'evidence_source_label': _evidence_source_label_from_source(source) if source else (_source_domain(str(source.get('url') or '')) or 'Unknown source'),
                 'evidence_group_domain': _canonical_group_domain(source) if source else (_source_domain(str(source.get('url') or '')) or 'unknown-source'),
                 'source_published_at': str(source['published_at']) if source and source.get('published_at') else None,
+                'freshness_label': freshness_label,
+                'freshness_class': freshness_class,
             }
         )
         if len(highlights) >= 6:
@@ -3708,16 +3729,55 @@ def set_actor_notebook_status(actor_id: str, status: str, message: str) -> None:
         connection.commit()
 
 
+def _format_duration_ms(milliseconds: int | None) -> str:
+    if milliseconds is None or milliseconds <= 0:
+        return 'n/a'
+    if milliseconds < 1000:
+        return f'{milliseconds}ms'
+    seconds = milliseconds / 1000.0
+    if seconds < 60:
+        return f'{seconds:.1f}s'
+    minutes = int(seconds // 60)
+    remaining = int(round(seconds % 60))
+    return f'{minutes}m {remaining}s'
+
+
 def run_actor_generation(actor_id: str) -> None:
+    started_at = time.perf_counter()
     try:
         imported = import_default_feeds_for_actor(actor_id)
         build_notebook(actor_id)
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        with sqlite3.connect(DB_PATH) as connection:
+            connection.execute(
+                '''
+                UPDATE actor_profiles
+                SET last_refresh_duration_ms = ?, last_refresh_sources_processed = ?
+                WHERE id = ?
+                ''',
+                (elapsed_ms, imported, actor_id),
+            )
+            connection.commit()
         set_actor_notebook_status(
             actor_id,
             'ready',
             f'Notebook ready. Imported {imported} feed source(s).',
         )
     except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        try:
+            with sqlite3.connect(DB_PATH) as connection:
+                connection.execute(
+                    '''
+                    UPDATE actor_profiles
+                    SET last_refresh_duration_ms = ?, last_refresh_sources_processed = ?
+                    WHERE id = ?
+                    ''',
+                    (elapsed_ms, 0, actor_id),
+                )
+                connection.commit()
+        except Exception:
+            pass
         set_actor_notebook_status(actor_id, 'error', f'Notebook generation failed: {exc}')
 
 
@@ -3727,7 +3787,8 @@ def list_actor_profiles() -> list[dict[str, object]]:
             '''
             SELECT
                 id, display_name, scope_statement, created_at, is_tracked,
-                notebook_status, notebook_message, notebook_updated_at
+                notebook_status, notebook_message, notebook_updated_at,
+                last_refresh_duration_ms, last_refresh_sources_processed
             FROM actor_profiles
             ORDER BY created_at DESC
             '''
@@ -3742,6 +3803,8 @@ def list_actor_profiles() -> list[dict[str, object]]:
             'notebook_status': row[5],
             'notebook_message': row[6],
             'notebook_updated_at': row[7],
+            'last_refresh_duration_ms': row[8],
+            'last_refresh_sources_processed': row[9],
         }
         for row in rows
     ]
@@ -4410,7 +4473,8 @@ def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
             '''
             SELECT
                 id, display_name, scope_statement, created_at, is_tracked,
-                notebook_status, notebook_message, notebook_updated_at
+                notebook_status, notebook_message, notebook_updated_at,
+                last_refresh_duration_ms, last_refresh_sources_processed
             FROM actor_profiles
             WHERE id = ?
             ''',
@@ -4545,6 +4609,8 @@ def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
         'notebook_status': actor_row[5],
         'notebook_message': actor_row[6],
         'notebook_updated_at': actor_row[7],
+        'last_refresh_duration_ms': actor_row[8],
+        'last_refresh_sources_processed': actor_row[9],
     }
     timeline_items: list[dict[str, object]] = [
         {
@@ -4917,6 +4983,14 @@ def initialize_sqlite() -> None:
             connection.execute(
                 "ALTER TABLE actor_profiles ADD COLUMN notebook_updated_at TEXT"
             )
+        if not any(col[1] == 'last_refresh_duration_ms' for col in actor_cols):
+            connection.execute(
+                "ALTER TABLE actor_profiles ADD COLUMN last_refresh_duration_ms INTEGER"
+            )
+        if not any(col[1] == 'last_refresh_sources_processed' for col in actor_cols):
+            connection.execute(
+                "ALTER TABLE actor_profiles ADD COLUMN last_refresh_sources_processed INTEGER"
+            )
 
         connection.execute(
             '''
@@ -5163,11 +5237,28 @@ def root(
         ollama_status = get_ollama_status()
     except Exception:
         ollama_status = {'available': False, 'base_url': '', 'model': ''}
-    notebook_health = {'state': 'ready', 'message': 'Notebook is ready.'}
+    notebook_health = {
+        'state': 'ready',
+        'message': 'Notebook is ready.',
+        'last_refresh_duration': 'n/a',
+        'last_refresh_sources': 'n/a',
+    }
     if notebook is not None:
         actor_meta = notebook.get('actor', {}) if isinstance(notebook, dict) else {}
         status = str(actor_meta.get('notebook_status') or 'idle')
         source_count = int(notebook.get('counts', {}).get('sources', 0)) if isinstance(notebook, dict) else 0
+        refresh_duration_ms_raw = actor_meta.get('last_refresh_duration_ms')
+        refresh_sources_raw = actor_meta.get('last_refresh_sources_processed')
+        try:
+            refresh_duration_ms = int(refresh_duration_ms_raw) if refresh_duration_ms_raw is not None else None
+        except Exception:
+            refresh_duration_ms = None
+        try:
+            refresh_sources = int(refresh_sources_raw) if refresh_sources_raw is not None else None
+        except Exception:
+            refresh_sources = None
+        notebook_health['last_refresh_duration'] = _format_duration_ms(refresh_duration_ms)
+        notebook_health['last_refresh_sources'] = str(refresh_sources) if refresh_sources is not None else 'n/a'
         if status == 'running':
             notebook_health = {'state': 'running', 'message': 'Refreshing notebook...'}
         elif status == 'error':
@@ -5178,6 +5269,8 @@ def root(
             notebook_health = {'state': 'warning', 'message': 'LLM offline.'}
         else:
             notebook_health = {'state': 'ready', 'message': 'Notebook is ready.'}
+        notebook_health['last_refresh_duration'] = _format_duration_ms(refresh_duration_ms)
+        notebook_health['last_refresh_sources'] = str(refresh_sources) if refresh_sources is not None else 'n/a'
 
     return templates.TemplateResponse(
         request,
