@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from typing import Callable
 
 from fastapi import HTTPException
@@ -10,6 +11,11 @@ def import_default_feeds_for_actor_core(
     db_path: str,
     default_cti_feeds: list[tuple[str, str]],
     actor_feed_lookback_days: int,
+    feed_import_max_seconds: int = 90,
+    feed_fetch_timeout_seconds: float = 10.0,
+    feed_entry_scan_limit: int = 12,
+    feed_imported_limit: int = 30,
+    actor_search_link_limit: int = 6,
     deps: dict[str, object],
 ) -> int:
     _actor_exists = deps['actor_exists']
@@ -26,6 +32,8 @@ def import_default_feeds_for_actor_core(
     _duckduckgo_actor_search_urls = deps['duckduckgo_actor_search_urls']
 
     imported = 0
+    started_at = time.perf_counter()
+    deadline = started_at + float(max(20, int(feed_import_max_seconds)))
     with sqlite3.connect(db_path) as connection:
         if not _actor_exists(connection, actor_id):
             raise HTTPException(status_code=404, detail='actor not found')
@@ -45,13 +53,14 @@ def import_default_feeds_for_actor_core(
         feed_list: list[tuple[str, str]] = list(default_cti_feeds)
         feed_list.extend(_actor_query_feeds(actor_terms))
         seen_links: set[str] = set()
-        imported_limit = 60
 
         imported += _import_ransomware_live_actor_activity(connection, actor_id, actor_terms)
 
         for feed_name, feed_url in feed_list:
+            if time.perf_counter() >= deadline:
+                break
             try:
-                feed_resp = _safe_http_get(feed_url, timeout=20.0)
+                feed_resp = _safe_http_get(feed_url, timeout=feed_fetch_timeout_seconds)
                 feed_resp.raise_for_status()
                 entries = _parse_feed_entries(feed_resp.text)
             except Exception:
@@ -65,7 +74,9 @@ def import_default_feeds_for_actor_core(
                 ) else 1,
             )
 
-            for entry in prioritized[:40]:
+            for entry in prioritized[: max(5, int(feed_entry_scan_limit))]:
+                if time.perf_counter() >= deadline:
+                    break
                 link = entry.get('link')
                 if not link:
                     continue
@@ -112,7 +123,7 @@ def import_default_feeds_for_actor_core(
                         str(derived.get('site_name') or '') or None,
                     )
                     imported += 1
-                    if imported >= imported_limit:
+                    if imported >= max(10, int(feed_imported_limit)):
                         connection.commit()
                         return imported
                 except Exception:
@@ -134,14 +145,23 @@ def import_default_feeds_for_actor_core(
                                 feed_name,
                             )
                             imported += 1
-                            if imported >= imported_limit:
+                            if imported >= max(10, int(feed_imported_limit)):
                                 connection.commit()
                                 return imported
                         except Exception:
                             pass
                     continue
 
-        for link in _duckduckgo_actor_search_urls(actor_terms):
+        if time.perf_counter() < deadline:
+            actor_search_urls = _duckduckgo_actor_search_urls(
+                actor_terms,
+                limit=max(1, int(actor_search_link_limit)),
+            )
+        else:
+            actor_search_urls = []
+        for link in actor_search_urls:
+            if time.perf_counter() >= deadline:
+                break
             if link in seen_links:
                 continue
             seen_links.add(link)
@@ -170,7 +190,7 @@ def import_default_feeds_for_actor_core(
                     str(derived.get('site_name') or '') or None,
                 )
                 imported += 1
-                if imported >= imported_limit:
+                if imported >= max(10, int(feed_imported_limit)):
                     connection.commit()
                     return imported
             except Exception:

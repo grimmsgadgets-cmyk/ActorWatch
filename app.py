@@ -88,6 +88,11 @@ MITRE_CAMPAIGN_LINK_CACHE: dict[str, dict[str, set[str]]] | None = None
 MITRE_TECHNIQUE_INDEX_CACHE: dict[str, dict[str, str]] | None = None
 MITRE_SOFTWARE_CACHE: list[dict[str, object]] | None = None
 ACTOR_FEED_LOOKBACK_DAYS = int(os.environ.get('ACTOR_FEED_LOOKBACK_DAYS', '540'))
+FEED_IMPORT_MAX_SECONDS = max(20, int(os.environ.get('FEED_IMPORT_MAX_SECONDS', '90')))
+FEED_FETCH_TIMEOUT_SECONDS = max(3.0, float(os.environ.get('FEED_FETCH_TIMEOUT_SECONDS', '10')))
+FEED_ENTRY_SCAN_LIMIT = max(5, int(os.environ.get('FEED_ENTRY_SCAN_LIMIT', '12')))
+FEED_IMPORTED_LIMIT = max(10, int(os.environ.get('FEED_IMPORTED_LIMIT', '30')))
+ACTOR_SEARCH_LINK_LIMIT = max(1, int(os.environ.get('ACTOR_SEARCH_LINK_LIMIT', '6')))
 
 CAPABILITY_GRID_KEYS = [
     'initial_access',
@@ -1473,6 +1478,11 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
             'db_path': lambda: DB_PATH,
             'default_cti_feeds': DEFAULT_CTI_FEEDS,
             'actor_feed_lookback_days': ACTOR_FEED_LOOKBACK_DAYS,
+            'feed_import_max_seconds': FEED_IMPORT_MAX_SECONDS,
+            'feed_fetch_timeout_seconds': FEED_FETCH_TIMEOUT_SECONDS,
+            'feed_entry_scan_limit': FEED_ENTRY_SCAN_LIMIT,
+            'feed_imported_limit': FEED_IMPORTED_LIMIT,
+            'actor_search_link_limit': ACTOR_SEARCH_LINK_LIMIT,
             'actor_exists': actor_exists,
             'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
             'actor_terms': _actor_terms,
