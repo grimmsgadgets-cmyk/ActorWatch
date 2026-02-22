@@ -101,25 +101,45 @@ def import_ransomware_live_actor_activity_core(
 
         lines: list[str] = []
         country_counts: dict[str, int] = {}
+        sector_counts: dict[str, int] = {}
         recent_90 = 0
         latest_attack_dt: datetime | None = None
         latest_attack_label = ''
         cutoff_90 = datetime.now(timezone.utc) - timedelta(days=90)
+        recent_victim_examples: list[str] = []
         for victim in data[:20]:
             if not isinstance(victim, dict):
                 continue
             victim_name = str(victim.get('victim') or victim.get('name') or '').strip()
             attack_date = str(victim.get('attackdate') or victim.get('discovery_date') or '').strip()
             country = str(victim.get('country') or '').strip()
+            sector = str(
+                victim.get('activity')
+                or victim.get('sector')
+                or victim.get('industry')
+                or victim.get('target')
+                or ''
+            ).strip()
             if not victim_name:
                 continue
             entry = f'{attack_date or "unknown-date"} - {victim_name}'
             if country:
                 entry += f' ({country})'
                 country_counts[country] = country_counts.get(country, 0) + 1
+            if sector:
+                sector_counts[sector] = sector_counts.get(sector, 0) + 1
             parsed_date = parse_published_datetime_core(attack_date)
             if parsed_date and parsed_date >= cutoff_90:
                 recent_90 += 1
+                sample = victim_name
+                if country and sector:
+                    sample += f' ({country}, {sector})'
+                elif country:
+                    sample += f' ({country})'
+                elif sector:
+                    sample += f' ({sector})'
+                if sample not in recent_victim_examples:
+                    recent_victim_examples.append(sample)
             if parsed_date and (latest_attack_dt is None or parsed_date > latest_attack_dt):
                 latest_attack_dt = parsed_date
                 latest_attack_label = parsed_date.date().isoformat()
@@ -131,15 +151,32 @@ def import_ransomware_live_actor_activity_core(
             continue
 
         top_countries = sorted(country_counts.items(), key=lambda item: item[1], reverse=True)[:3]
+        top_sectors = sorted(sector_counts.items(), key=lambda item: item[1], reverse=True)[:3]
         countries_text = ', '.join([f'{country} ({count})' for country, count in top_countries]) if top_countries else 'not specified'
+        sectors_text = ', '.join([f'{sector} ({count})' for sector, count in top_sectors]) if top_sectors else 'not specified'
         examples = '; '.join(lines[:3])
-        tempo_text = f'Latest listed activity: {latest_attack_label}. ' if latest_attack_label else ''
+        recent_examples = ', '.join(recent_victim_examples[:3]) if recent_victim_examples else ''
+        tempo_text = f'Latest disclosed victim date: {latest_attack_label}. ' if latest_attack_label else ''
+        title = (
+            f'{group} ransomware: {recent_90} victim disclosures in the last 90 days'
+            if recent_90 > 0
+            else f'{group} ransomware: public victim disclosures'
+        )
+        trigger_excerpt = (
+            f'{group} recent victims include {recent_examples}.'
+            if recent_examples
+            else f'{group} latest known disclosure date is {latest_attack_label}.'
+            if latest_attack_label
+            else f'{group} ransomware victim disclosure activity observed in ransomware.live.'
+        )
         summary = (
-            f'Ransomware.live trend for {group}: {len(data)} total public victim disclosures, '
-            f'{recent_90} in the last 90 days. '
+            f'{group} ransomware has {recent_90} victim disclosures in the last 90 days '
+            f'out of {len(data)} total public disclosures in this ransomware.live sample. '
             f'{tempo_text}'
             f'Most frequent victim geographies in the current sample: {countries_text}. '
-            f'Recently observed targets include: {examples}.'
+            f'Most frequent exposed sectors in the current sample: {sectors_text}. '
+            f'Recent disclosures include: {examples}.'
+            f' Prioritize validation for organizations similar to these recent victims.'
         )
         _upsert_source_for_actor(
             connection,
@@ -148,7 +185,13 @@ def import_ransomware_live_actor_activity_core(
             endpoint,
             _now_iso(),
             summary,
-            trigger_excerpt=f'{group} ransomware activity synthesis (tempo, geography, and target examples) from ransomware.live.',
+            trigger_excerpt=trigger_excerpt,
+            title=title,
+            headline=title,
+            og_title=title,
+            html_title=title,
+            publisher='ransomware.live',
+            site_name='ransomware.live',
         )
         imported += 1
 
