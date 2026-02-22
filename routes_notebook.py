@@ -457,6 +457,29 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     updated_at,
                 ),
             )
+            connection.execute(
+                '''
+                INSERT INTO analyst_observation_history (
+                    id, actor_id, item_type, item_key, note, source_ref,
+                    confidence, source_reliability, information_credibility,
+                    updated_by, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    str(uuid.uuid4()),
+                    actor_id,
+                    safe_item_type,
+                    safe_item_key,
+                    note,
+                    source_ref,
+                    confidence,
+                    source_reliability,
+                    information_credibility,
+                    updated_by,
+                    updated_at,
+                ),
+            )
             connection.commit()
 
         return {
@@ -471,6 +494,61 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             'updated_by': updated_by,
             'updated_at': updated_at,
             'quality_guidance': quality_guidance,
+        }
+
+    @router.get(route_paths.ACTOR_OBSERVATION_HISTORY, response_class=JSONResponse)
+    def observation_history(actor_id: str, item_type: str, item_key: str, limit: int = 25) -> dict[str, object]:
+        safe_item_type = item_type.strip().lower()[:40]
+        safe_item_key = item_key.strip()[:200]
+        if not safe_item_type or not safe_item_key:
+            raise HTTPException(status_code=400, detail='invalid observation key')
+        safe_limit = max(1, min(100, int(limit)))
+
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            rows = connection.execute(
+                '''
+                SELECT note, source_ref, confidence, source_reliability,
+                       information_credibility, updated_by, updated_at
+                FROM analyst_observation_history
+                WHERE actor_id = ? AND item_type = ? AND item_key = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                ''',
+                (actor_id, safe_item_type, safe_item_key, safe_limit),
+            ).fetchall()
+            if not rows:
+                latest_row = connection.execute(
+                    '''
+                    SELECT note, source_ref, confidence, source_reliability,
+                           information_credibility, updated_by, updated_at
+                    FROM analyst_observations
+                    WHERE actor_id = ? AND item_type = ? AND item_key = ?
+                    ''',
+                    (actor_id, safe_item_type, safe_item_key),
+                ).fetchone()
+                if latest_row is not None:
+                    rows = [latest_row]
+
+        items = [
+            {
+                'note': str(row[0] or ''),
+                'source_ref': str(row[1] or ''),
+                'confidence': str(row[2] or 'moderate'),
+                'source_reliability': str(row[3] or ''),
+                'information_credibility': str(row[4] or ''),
+                'updated_by': str(row[5] or ''),
+                'updated_at': str(row[6] or ''),
+            }
+            for row in rows
+        ]
+        return {
+            'actor_id': actor_id,
+            'item_type': safe_item_type,
+            'item_key': safe_item_key,
+            'count': len(items),
+            'items': items,
         }
 
     return router

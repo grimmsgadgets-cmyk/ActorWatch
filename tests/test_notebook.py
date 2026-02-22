@@ -906,6 +906,52 @@ def test_observation_upsert_returns_non_blocking_quality_guidance(tmp_path, monk
         assert any('source reference' in item for item in payload['quality_guidance'])
 
 
+def test_observation_history_endpoint_tracks_versions(tmp_path, monkeypatch):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Obs-History', 'Observation history scope')
+    monkeypatch.setattr(app_module, 'run_actor_generation', lambda actor_id: None)
+    monkeypatch.setattr(
+        app_module,
+        'get_ollama_status',
+        lambda: {'available': False, 'base_url': 'http://offline', 'model': 'none'},
+    )
+
+    with TestClient(app_module.app) as client:
+        first = client.post(
+            f"/actors/{actor['id']}/observations/source/src-history",
+            json={
+                'updated_by': 'alice',
+                'confidence': 'moderate',
+                'note': 'Initial baseline observation.',
+                'source_ref': 'case-1',
+            },
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            f"/actors/{actor['id']}/observations/source/src-history",
+            json={
+                'updated_by': 'alice',
+                'confidence': 'high',
+                'note': 'Second observation with stronger corroboration.',
+                'source_ref': 'case-2',
+                'source_reliability': 'A',
+                'information_credibility': '1',
+            },
+        )
+        assert second.status_code == 200
+
+        history = client.get(f"/actors/{actor['id']}/observations/source/src-history/history?limit=10")
+        assert history.status_code == 200
+        payload = history.json()
+        assert payload['actor_id'] == actor['id']
+        assert payload['item_type'] == 'source'
+        assert payload['item_key'] == 'src-history'
+        assert payload['count'] >= 2
+        assert payload['items'][0]['note'] == 'Second observation with stronger corroboration.'
+        assert payload['items'][1]['note'] == 'Initial baseline observation.'
+
+
 def test_root_sidebar_shows_actor_last_updated_label(tmp_path, monkeypatch):
     _setup_db(tmp_path)
     actor = app_module.create_actor_profile('APT-Sidebar', 'Sidebar label scope')

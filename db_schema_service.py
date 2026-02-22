@@ -255,6 +255,29 @@ def ensure_schema(connection) -> None:
         ON analyst_observations(actor_id, item_type, item_key)
         '''
     )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS analyst_observation_history (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            item_key TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            source_ref TEXT NOT NULL DEFAULT '',
+            confidence TEXT NOT NULL DEFAULT 'moderate',
+            source_reliability TEXT NOT NULL DEFAULT '',
+            information_credibility TEXT NOT NULL DEFAULT '',
+            updated_by TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_observation_history_actor_item_updated
+        ON analyst_observation_history(actor_id, item_type, item_key, updated_at DESC)
+        '''
+    )
     connection.commit()
 
 

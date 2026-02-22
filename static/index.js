@@ -132,6 +132,7 @@
         }
 
         const observationStore = new Map();
+        const observationHistoryStore = new Map();
         function observationMapKey(itemType, itemKey) {
           return String(itemType || "") + "::" + String(itemKey || "");
         }
@@ -206,6 +207,54 @@
           if (guidanceNode) {
             const guidanceItems = Array.isArray(data.quality_guidance) ? data.quality_guidance : [];
             guidanceNode.textContent = guidanceItems.length ? "Guidance: " + guidanceItems.join(" ") : "";
+          }
+        }
+
+        function applyObservationHistoryCard(card) {
+          const itemType = card.dataset.observationItemType || "";
+          const itemKey = card.dataset.observationItemKey || "";
+          const historyNode = card.querySelector("[data-observation-history]");
+          const toggleButton = card.querySelector(".observation-history-toggle");
+          if (!historyNode || !toggleButton) return;
+          const isOpen = card.dataset.historyOpen === "true";
+          toggleButton.textContent = isOpen ? "Hide history" : "View history";
+          historyNode.style.display = isOpen ? "" : "none";
+          if (!isOpen) return;
+          const rows = observationHistoryStore.get(observationMapKey(itemType, itemKey)) || [];
+          if (!rows.length) {
+            historyNode.textContent = "No history entries yet.";
+            return;
+          }
+          historyNode.innerHTML = "";
+          rows.forEach((entry) => {
+            const row = document.createElement("div");
+            row.className = "observation-history-item";
+            const head = document.createElement("div");
+            head.className = "observation-history-head";
+            head.textContent = String(entry.updated_at || "") + " | " + String(entry.updated_by || "analyst") + " | " + String(entry.confidence || "moderate");
+            const body = document.createElement("div");
+            body.textContent = String(entry.note || "(no note text)");
+            row.append(head, body);
+            historyNode.appendChild(row);
+          });
+        }
+
+        async function loadObservationHistory(itemType, itemKey) {
+          const key = observationMapKey(itemType, itemKey);
+          try {
+            const response = await fetch(
+              "/actors/" + encodeURIComponent(actorId) + "/observations/" + encodeURIComponent(itemType) + "/" + encodeURIComponent(itemKey) + "/history?limit=25",
+              { headers: { "Accept": "application/json" } }
+            );
+            if (!response.ok) return;
+            const payload = await response.json();
+            const items = Array.isArray(payload.items) ? payload.items : [];
+            observationHistoryStore.set(key, items);
+            observationCards
+              .filter((candidate) => (candidate.dataset.observationItemType || "") === itemType && (candidate.dataset.observationItemKey || "") === itemKey)
+              .forEach(applyObservationHistoryCard);
+          } catch (error) {
+            // Keep page usable even if history endpoint is unavailable.
           }
         }
 
@@ -448,7 +497,24 @@
 
         observationCards.forEach((card) => {
           const saveButton = card.querySelector(".observation-save");
+          const historyToggle = card.querySelector(".observation-history-toggle");
           if (!saveButton) return;
+          if (historyToggle) {
+            historyToggle.addEventListener("click", async () => {
+              const itemType = card.dataset.observationItemType || "";
+              const itemKey = card.dataset.observationItemKey || "";
+              const currentlyOpen = card.dataset.historyOpen === "true";
+              card.dataset.historyOpen = currentlyOpen ? "false" : "true";
+              if (!currentlyOpen) {
+                const historyNode = card.querySelector("[data-observation-history]");
+                if (historyNode) historyNode.textContent = "Loading history...";
+                await loadObservationHistory(itemType, itemKey);
+              }
+              observationCards
+                .filter((candidate) => (candidate.dataset.observationItemType || "") === itemType && (candidate.dataset.observationItemKey || "") === itemKey)
+                .forEach(applyObservationHistoryCard);
+            });
+          }
           saveButton.addEventListener("click", async () => {
             const itemType = card.dataset.observationItemType || "";
             const itemKey = card.dataset.observationItemKey || "";
@@ -480,9 +546,17 @@
               }
               const data = await response.json();
               observationStore.set(observationMapKey(itemType, itemKey), data);
+              const currentHistory = observationHistoryStore.get(observationMapKey(itemType, itemKey)) || [];
+              observationHistoryStore.set(
+                observationMapKey(itemType, itemKey),
+                [data, ...currentHistory].slice(0, 25)
+              );
               observationCards
                 .filter((candidate) => (candidate.dataset.observationItemType || "") === itemType && (candidate.dataset.observationItemKey || "") === itemKey)
-                .forEach(applyObservationCard);
+                .forEach((candidate) => {
+                  applyObservationCard(candidate);
+                  applyObservationHistoryCard(candidate);
+                });
               renderObservationLedger();
             } catch (error) {
               const metaNode = card.querySelector("[data-observation-meta]");
