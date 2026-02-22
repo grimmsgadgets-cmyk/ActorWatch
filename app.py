@@ -33,6 +33,7 @@ import network_service
 import source_ingest_service
 import source_derivation_service
 import source_store_service
+import requirements_service
 import status_service
 import timeline_extraction
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
@@ -1854,12 +1855,13 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
 
 
 def generate_actor_requirements(actor_id: str, org_context: str, priority_mode: str) -> int:
-    return pipeline_generate_actor_requirements_core(
-        actor_id,
-        org_context,
-        priority_mode,
-        db_path=DB_PATH,
+    return requirements_service.generate_actor_requirements_core(
+        actor_id=actor_id,
+        org_context=org_context,
+        priority_mode=priority_mode,
         deps={
+            'pipeline_generate_actor_requirements_core': pipeline_generate_actor_requirements_core,
+            'db_path': lambda: DB_PATH,
             'now_iso': utc_now_iso,
             'actor_exists': actor_exists,
             'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
