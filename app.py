@@ -30,6 +30,7 @@ import routes_evolution
 import routes_notebook
 import routes_ui
 import network_service
+import notebook_service
 import source_ingest_service
 import source_derivation_service
 import source_store_service
@@ -1885,25 +1886,28 @@ def build_notebook(
     generate_questions: bool = True,
     rebuild_timeline: bool = True,
 ) -> None:
-    build_notebook_core(
-        actor_id,
-        db_path=DB_PATH,
+    notebook_service.build_notebook_wrapper_core(
+        actor_id=actor_id,
         generate_questions=generate_questions,
         rebuild_timeline=rebuild_timeline,
-        now_iso=utc_now_iso,
-        actor_exists=actor_exists,
-        build_actor_profile_from_mitre=_build_actor_profile_from_mitre,
-        actor_terms_fn=_actor_terms,
-        extract_major_move_events=_extract_major_move_events,
-        normalize_text=_normalize_text,
-        token_overlap=_token_overlap,
-        extract_question_sentences=_extract_question_sentences,
-        sentence_mentions_actor_terms=_sentence_mentions_actor_terms,
-        sanitize_question_text=_sanitize_question_text,
-        question_from_sentence=_question_from_sentence,
-        ollama_generate_questions=_ollama_generate_questions,
-        platforms_for_question=_platforms_for_question,
-        guidance_for_platform=_guidance_for_platform,
+        deps={
+            'build_notebook_core': build_notebook_core,
+            'db_path': lambda: DB_PATH,
+            'now_iso': utc_now_iso,
+            'actor_exists': actor_exists,
+            'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
+            'actor_terms_fn': _actor_terms,
+            'extract_major_move_events': _extract_major_move_events,
+            'normalize_text': _normalize_text,
+            'token_overlap': _token_overlap,
+            'extract_question_sentences': _extract_question_sentences,
+            'sentence_mentions_actor_terms': _sentence_mentions_actor_terms,
+            'sanitize_question_text': _sanitize_question_text,
+            'question_from_sentence': _question_from_sentence,
+            'ollama_generate_questions': _ollama_generate_questions,
+            'platforms_for_question': _platforms_for_question,
+            'guidance_for_platform': _guidance_for_platform,
+        },
     )
 
 
