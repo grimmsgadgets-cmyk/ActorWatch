@@ -1,4 +1,5 @@
 import html
+import hashlib
 import ipaddress
 import json
 import os
@@ -4020,6 +4021,7 @@ def _upsert_source_for_actor(
     publisher: str | None = None,
     site_name: str | None = None,
 ) -> str:
+    fingerprint = _source_fingerprint(title, headline, og_title, html_title, pasted_text)
     existing = connection.execute(
         'SELECT id FROM sources WHERE actor_id = ? AND url = ?',
         (actor_id, source_url),
@@ -4048,7 +4050,29 @@ def _upsert_source_for_actor(
                     existing[0],
                 ),
             )
+        if fingerprint:
+            connection.execute(
+                '''
+                UPDATE sources
+                SET source_fingerprint = COALESCE(NULLIF(source_fingerprint, ''), ?)
+                WHERE id = ?
+                ''',
+                (fingerprint, existing[0]),
+            )
         return existing[0]
+
+    if fingerprint:
+        fingerprint_existing = connection.execute(
+            '''
+            SELECT id
+            FROM sources
+            WHERE actor_id = ? AND source_fingerprint = ?
+            LIMIT 1
+            ''',
+            (actor_id, fingerprint),
+        ).fetchone()
+        if fingerprint_existing is not None:
+            return str(fingerprint_existing[0])
 
     final_text = pasted_text
     if trigger_excerpt and trigger_excerpt not in final_text:
@@ -4059,9 +4083,9 @@ def _upsert_source_for_actor(
         '''
         INSERT INTO sources (
             id, actor_id, source_name, url, published_at, retrieved_at, pasted_text,
-            title, headline, og_title, html_title, publisher, site_name
+            source_fingerprint, title, headline, og_title, html_title, publisher, site_name
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             source_id,
@@ -4071,6 +4095,7 @@ def _upsert_source_for_actor(
             published_at,
             utc_now_iso(),
             final_text,
+            fingerprint or None,
             str(title or '').strip() or None,
             str(headline or '').strip() or None,
             str(og_title or '').strip() or None,
@@ -4092,6 +4117,28 @@ def _parse_ioc_values(raw: str) -> list[str]:
         if candidate not in values:
             values.append(candidate)
     return values
+
+
+def _source_fingerprint(
+    title: str | None,
+    headline: str | None,
+    og_title: str | None,
+    html_title: str | None,
+    pasted_text: str,
+) -> str:
+    title_candidate = (
+        str(title or '').strip()
+        or str(headline or '').strip()
+        or str(og_title or '').strip()
+        or str(html_title or '').strip()
+    )
+    normalized_title = _normalize_text(title_candidate)[:220]
+    excerpt = _first_sentences(pasted_text or '', count=2)
+    normalized_excerpt = _normalize_text(excerpt)[:420]
+    if not normalized_title and not normalized_excerpt:
+        return ''
+    raw = f'{normalized_title}|{normalized_excerpt}'
+    return hashlib.sha1(raw.encode('utf-8')).hexdigest()
 
 
 def import_default_feeds_for_actor(actor_id: str) -> int:
@@ -5221,11 +5268,14 @@ def initialize_sqlite() -> None:
                 url TEXT NOT NULL,
                 published_at TEXT,
                 retrieved_at TEXT NOT NULL,
-                pasted_text TEXT NOT NULL
+                pasted_text TEXT NOT NULL,
+                source_fingerprint TEXT
             )
             '''
         )
         source_cols = connection.execute('PRAGMA table_info(sources)').fetchall()
+        if not any(col[1] == 'source_fingerprint' for col in source_cols):
+            connection.execute("ALTER TABLE sources ADD COLUMN source_fingerprint TEXT")
         if not any(col[1] == 'title' for col in source_cols):
             connection.execute("ALTER TABLE sources ADD COLUMN title TEXT")
         if not any(col[1] == 'headline' for col in source_cols):
@@ -5238,6 +5288,12 @@ def initialize_sqlite() -> None:
             connection.execute("ALTER TABLE sources ADD COLUMN publisher TEXT")
         if not any(col[1] == 'site_name' for col in source_cols):
             connection.execute("ALTER TABLE sources ADD COLUMN site_name TEXT")
+        connection.execute(
+            '''
+            CREATE INDEX IF NOT EXISTS idx_sources_actor_fingerprint
+            ON sources(actor_id, source_fingerprint)
+            '''
+        )
         connection.execute(
             '''
             CREATE TABLE IF NOT EXISTS timeline_events (

@@ -160,6 +160,41 @@ def test_add_source_uses_manual_text_without_remote_fetch(tmp_path, monkeypatch)
     assert 'Manual analyst text' in row[2]
 
 
+def test_upsert_source_skips_near_duplicate_content_by_fingerprint(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Dedupe', 'Dedupe source scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        first_id = app_module._upsert_source_for_actor(  # noqa: SLF001
+            connection=connection,
+            actor_id=str(actor['id']),
+            source_name='CISA',
+            source_url='https://example.com/advisory-a',
+            published_at='2026-02-20',
+            pasted_text='APT-Dedupe targeted edge devices and used phishing for access.',
+            trigger_excerpt='APT-Dedupe targeted edge devices.',
+            title='APT-Dedupe campaign update',
+        )
+        second_id = app_module._upsert_source_for_actor(  # noqa: SLF001
+            connection=connection,
+            actor_id=str(actor['id']),
+            source_name='Mandiant',
+            source_url='https://another.example.org/report-b',
+            published_at='2026-02-21',
+            pasted_text='APT-Dedupe targeted edge devices and used phishing for access.',
+            trigger_excerpt='APT-Dedupe targeted edge devices.',
+            title='APT-Dedupe campaign update',
+        )
+        connection.commit()
+        count = connection.execute(
+            'SELECT COUNT(*) FROM sources WHERE actor_id = ?',
+            (actor['id'],),
+        ).fetchone()[0]
+
+    assert first_id == second_id
+    assert count == 1
+
+
 def test_capability_category_from_technique_id_uses_mitre_dataset(monkeypatch):
     monkeypatch.setattr(
         app_module,
