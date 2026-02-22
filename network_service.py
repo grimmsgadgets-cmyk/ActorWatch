@@ -12,13 +12,15 @@ def validate_outbound_url_core(
     deps: dict[str, object],
 ) -> str:
     _outbound_allowed_domains = deps['outbound_allowed_domains']
+    _resolve_host = deps.get('resolve_host', socket.getaddrinfo)
+    _ipproto_tcp = int(deps.get('ipproto_tcp', socket.IPPROTO_TCP))
 
     effective_allowlist = _outbound_allowed_domains if allowed_domains is None else allowed_domains
     return validate_outbound_url(
         source_url,
         allowed_domains=effective_allowlist,
-        resolve_host=socket.getaddrinfo,
-        ipproto_tcp=socket.IPPROTO_TCP,
+        resolve_host=_resolve_host,
+        ipproto_tcp=_ipproto_tcp,
     )
 
 

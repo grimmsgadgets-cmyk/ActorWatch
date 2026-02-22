@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import socket
 import sqlite3
 import string
 import uuid
@@ -1171,6 +1172,8 @@ def _validate_outbound_url(source_url: str, allowed_domains: set[str] | None = N
         allowed_domains=allowed_domains,
         deps={
             'outbound_allowed_domains': OUTBOUND_ALLOWED_DOMAINS,
+            'resolve_host': socket.getaddrinfo,
+            'ipproto_tcp': socket.IPPROTO_TCP,
         },
     )
 

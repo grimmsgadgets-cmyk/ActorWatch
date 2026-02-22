@@ -23,6 +23,76 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
     _templates = deps['templates']
     _actor_exists = deps['actor_exists']
 
+    def _upsert_observation_with_history(
+        connection: sqlite3.Connection,
+        *,
+        actor_id: str,
+        item_type: str,
+        item_key: str,
+        note: str,
+        source_ref: str,
+        confidence: str,
+        source_reliability: str,
+        information_credibility: str,
+        updated_by: str,
+        updated_at: str,
+    ) -> None:
+        connection.execute(
+            '''
+            INSERT INTO analyst_observations (
+                id, actor_id, item_type, item_key, note, source_ref,
+                confidence, source_reliability, information_credibility,
+                updated_by, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(actor_id, item_type, item_key)
+            DO UPDATE SET
+                note = excluded.note,
+                source_ref = excluded.source_ref,
+                confidence = excluded.confidence,
+                source_reliability = excluded.source_reliability,
+                information_credibility = excluded.information_credibility,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+            ''',
+            (
+                str(uuid.uuid4()),
+                actor_id,
+                item_type,
+                item_key,
+                note,
+                source_ref,
+                confidence,
+                source_reliability,
+                information_credibility,
+                updated_by,
+                updated_at,
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO analyst_observation_history (
+                id, actor_id, item_type, item_key, note, source_ref,
+                confidence, source_reliability, information_credibility,
+                updated_by, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                str(uuid.uuid4()),
+                actor_id,
+                item_type,
+                item_key,
+                note,
+                source_ref,
+                confidence,
+                source_reliability,
+                information_credibility,
+                updated_by,
+                updated_at,
+            ),
+        )
+
     def _fetch_analyst_observations(
         actor_id: str,
         *,
@@ -327,6 +397,48 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             'items': items,
         }
 
+    @router.get(route_paths.ACTOR_EXPORT_ANALYST_PACK, response_class=JSONResponse)
+    def export_analyst_pack(actor_id: str) -> dict[str, object]:
+        notebook = _fetch_actor_notebook(actor_id)
+        observations = _fetch_analyst_observations(actor_id, limit=None, offset=0)
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            history_rows = connection.execute(
+                '''
+                SELECT item_type, item_key, note, source_ref, confidence,
+                       source_reliability, information_credibility, updated_by, updated_at
+                FROM analyst_observation_history
+                WHERE actor_id = ?
+                ORDER BY updated_at DESC
+                LIMIT 1000
+                ''',
+                (actor_id,),
+            ).fetchall()
+        history_items = [
+            {
+                'item_type': str(row[0] or ''),
+                'item_key': str(row[1] or ''),
+                'note': str(row[2] or ''),
+                'source_ref': str(row[3] or ''),
+                'confidence': str(row[4] or 'moderate'),
+                'source_reliability': str(row[5] or ''),
+                'information_credibility': str(row[6] or ''),
+                'updated_by': str(row[7] or ''),
+                'updated_at': str(row[8] or ''),
+            }
+            for row in history_rows
+        ]
+        return {
+            'actor_id': actor_id,
+            'exported_at': _utc_now_iso(),
+            'actor': notebook.get('actor', {}),
+            'recent_change_summary': notebook.get('recent_change_summary', {}),
+            'priority_questions': notebook.get('priority_questions', [])[:3],
+            'observations': observations,
+            'observation_history': history_items,
+        }
+
     @router.get(route_paths.ACTOR_OBSERVATIONS_EXPORT_CSV)
     def export_observations_csv(
         actor_id: str,
@@ -425,60 +537,18 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         with sqlite3.connect(_db_path()) as connection:
             if not _actor_exists(connection, actor_id):
                 raise HTTPException(status_code=404, detail='actor not found')
-            connection.execute(
-                '''
-                INSERT INTO analyst_observations (
-                    id, actor_id, item_type, item_key, note, source_ref,
-                    confidence, source_reliability, information_credibility,
-                    updated_by, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(actor_id, item_type, item_key)
-                DO UPDATE SET
-                    note = excluded.note,
-                    source_ref = excluded.source_ref,
-                    confidence = excluded.confidence,
-                    source_reliability = excluded.source_reliability,
-                    information_credibility = excluded.information_credibility,
-                    updated_by = excluded.updated_by,
-                    updated_at = excluded.updated_at
-                ''',
-                (
-                    str(uuid.uuid4()),
-                    actor_id,
-                    safe_item_type,
-                    safe_item_key,
-                    note,
-                    source_ref,
-                    confidence,
-                    source_reliability,
-                    information_credibility,
-                    updated_by,
-                    updated_at,
-                ),
-            )
-            connection.execute(
-                '''
-                INSERT INTO analyst_observation_history (
-                    id, actor_id, item_type, item_key, note, source_ref,
-                    confidence, source_reliability, information_credibility,
-                    updated_by, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''',
-                (
-                    str(uuid.uuid4()),
-                    actor_id,
-                    safe_item_type,
-                    safe_item_key,
-                    note,
-                    source_ref,
-                    confidence,
-                    source_reliability,
-                    information_credibility,
-                    updated_by,
-                    updated_at,
-                ),
+            _upsert_observation_with_history(
+                connection,
+                actor_id=actor_id,
+                item_type=safe_item_type,
+                item_key=safe_item_key,
+                note=note,
+                source_ref=source_ref,
+                confidence=confidence,
+                source_reliability=source_reliability,
+                information_credibility=information_credibility,
+                updated_by=updated_by,
+                updated_at=updated_at,
             )
             connection.commit()
 
@@ -495,6 +565,80 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             'updated_at': updated_at,
             'quality_guidance': quality_guidance,
         }
+
+    @router.post(route_paths.ACTOR_OBSERVATIONS_AUTO_SNAPSHOT)
+    async def auto_snapshot_observations(actor_id: str, request: Request) -> RedirectResponse:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        notebook = _fetch_actor_notebook(actor_id)
+        highlights = notebook.get('recent_activity_highlights', [])
+        entries = highlights if isinstance(highlights, list) else []
+        saved = 0
+        updated_at = _utc_now_iso()
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            for item in entries[:5]:
+                if not isinstance(item, dict):
+                    continue
+                item_key = str(item.get('source_id') or item.get('timeline_event_id') or '').strip()[:200]
+                if not item_key:
+                    continue
+                title = str(item.get('evidence_title') or item.get('source_name') or 'source').strip()
+                date = str(item.get('date') or '').strip()
+                summary = str(item.get('text') or '').strip()
+                note_parts = [part for part in [f'{date} {title}'.strip(), summary] if part]
+                note = 'Auto: ' + ' | '.join(note_parts)
+                _upsert_observation_with_history(
+                    connection,
+                    actor_id=actor_id,
+                    item_type='source',
+                    item_key=item_key,
+                    note=note[:4000],
+                    source_ref=f'auto-snapshot:{updated_at[:10]}',
+                    confidence='moderate',
+                    source_reliability='',
+                    information_credibility='',
+                    updated_by='auto',
+                    updated_at=updated_at,
+                )
+                saved += 1
+            if saved == 0:
+                source_rows = connection.execute(
+                    '''
+                    SELECT id, title, source_name, published_at
+                    FROM sources
+                    WHERE actor_id = ?
+                    ORDER BY COALESCE(published_at, retrieved_at) DESC
+                    LIMIT 5
+                    ''',
+                    (actor_id,),
+                ).fetchall()
+                for row in source_rows:
+                    source_id = str(row[0] or '').strip()[:200]
+                    if not source_id:
+                        continue
+                    title = str(row[1] or row[2] or 'source').strip()
+                    published_at = str(row[3] or '').strip()
+                    note = f'Auto: {published_at} {title}'.strip()
+                    _upsert_observation_with_history(
+                        connection,
+                        actor_id=actor_id,
+                        item_type='source',
+                        item_key=source_id,
+                        note=note[:4000],
+                        source_ref=f'auto-snapshot:{updated_at[:10]}',
+                        confidence='moderate',
+                        source_reliability='',
+                        information_credibility='',
+                        updated_by='auto',
+                        updated_at=updated_at,
+                    )
+                    saved += 1
+            connection.commit()
+        return RedirectResponse(
+            url=f'/?actor_id={actor_id}&notice=Auto-noted+{saved}+recent+changes',
+            status_code=303,
+        )
 
     @router.get(route_paths.ACTOR_OBSERVATION_HISTORY, response_class=JSONResponse)
     def observation_history(actor_id: str, item_type: str, item_key: str, limit: int = 25) -> dict[str, object]:

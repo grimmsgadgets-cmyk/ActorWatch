@@ -11,8 +11,7 @@ services:
       - "8000:8000"
     volumes:
       - actortracker_db:/data
-      - ./app.py:/app/app.py:rw
-      - ./templates:/app/templates:rw
+      - ./:/app:rw
     networks:
       - default
     depends_on:

@@ -761,7 +761,7 @@ def test_root_renders_analyst_flow_headings(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert '1) Who are they?' in response.text
     assert '2) What have they been up to recently?' in response.text
-    assert '3) Record & Compare Assessment' in response.text
+    assert '3) What changed?' in response.text
 
 
 def test_route_table_has_no_duplicate_method_path_pairs():
@@ -950,6 +950,57 @@ def test_observation_history_endpoint_tracks_versions(tmp_path, monkeypatch):
         assert payload['count'] >= 2
         assert payload['items'][0]['note'] == 'Second observation with stronger corroboration.'
         assert payload['items'][1]['note'] == 'Initial baseline observation.'
+
+
+def test_auto_snapshot_and_export_analyst_pack(tmp_path, monkeypatch):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Auto', 'Auto snapshot scope')
+    monkeypatch.setattr(app_module, 'run_actor_generation', lambda actor_id: None)
+    monkeypatch.setattr(
+        app_module,
+        'get_ollama_status',
+        lambda: {'available': False, 'base_url': 'http://offline', 'model': 'none'},
+    )
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, retrieved_at, title, pasted_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-auto-1',
+                actor['id'],
+                'CISA',
+                'https://example.test/a1',
+                '2026-02-22',
+                '2026-02-22T00:00:00+00:00',
+                'Auto source',
+                'Automated snapshot content for actor.',
+            ),
+        )
+        connection.commit()
+    app_module.build_notebook(actor['id'])
+
+    with TestClient(app_module.app) as client:
+        response = client.post(
+            f"/actors/{actor['id']}/observations/auto-snapshot",
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        observations = client.get(f"/actors/{actor['id']}/observations")
+        assert observations.status_code == 200
+        items = observations.json().get('items', [])
+        assert items
+        assert any(str(item.get('updated_by') or '') == 'auto' for item in items)
+
+        pack = client.get(f"/actors/{actor['id']}/export/analyst-pack.json")
+        assert pack.status_code == 200
+        payload = pack.json()
+        assert payload['actor_id'] == actor['id']
+        assert 'observations' in payload
+        assert 'observation_history' in payload
 
 
 def test_root_sidebar_shows_actor_last_updated_label(tmp_path, monkeypatch):
