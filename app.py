@@ -24,6 +24,7 @@ import db_schema_service
 import activity_highlight_service
 import analyst_text_service
 import actor_search_service
+import app_wiring_service
 import priority_questions
 import priority_service
 import rate_limit_service
@@ -1556,98 +1557,47 @@ def initialize_sqlite() -> None:
 
 
 def _register_routers() -> None:
-    app.include_router(
-        routes_dashboard.create_dashboard_router(
-            deps={
-                'list_actor_profiles': list_actor_profiles,
-                'fetch_actor_notebook': _fetch_actor_notebook,
-                'set_actor_notebook_status': set_actor_notebook_status,
-                'run_actor_generation': run_actor_generation,
-                'get_ollama_status': get_ollama_status,
-                'format_duration_ms': _format_duration_ms,
-                'templates': templates,
-            }
-        )
-    )
-    app.include_router(
-        routes_api.create_api_router(
-            deps={
-                'list_actor_profiles': list_actor_profiles,
-                'enforce_request_size': _enforce_request_size,
-                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-                'create_actor_profile': create_actor_profile,
-                'db_path': _db_path,
-                'actor_exists': actor_exists,
-                'set_actor_notebook_status': set_actor_notebook_status,
-                'run_actor_generation': run_actor_generation,
-            }
-        )
-    )
-    app.include_router(
-        routes_ui.create_ui_router(
-            deps={
-                'enforce_request_size': _enforce_request_size,
-                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-                'create_actor_profile': create_actor_profile,
-                'set_actor_notebook_status': set_actor_notebook_status,
-                'run_actor_generation': run_actor_generation,
-                'list_actor_profiles': list_actor_profiles,
-            }
-        )
-    )
-    app.include_router(
-        routes_actor_ops.create_actor_ops_router(
-            deps={
-                'enforce_request_size': _enforce_request_size,
-                'source_upload_body_limit_bytes': SOURCE_UPLOAD_BODY_LIMIT_BYTES,
-                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-                'db_path': _db_path,
-                'actor_exists': actor_exists,
-                'derive_source_from_url': derive_source_from_url,
-                'upsert_source_for_actor': _upsert_source_for_actor,
-                'import_default_feeds_for_actor': import_default_feeds_for_actor,
-                'parse_ioc_values': _parse_ioc_values,
-                'utc_now_iso': utc_now_iso,
-                'set_actor_notebook_status': set_actor_notebook_status,
-                'run_actor_generation': run_actor_generation,
-            }
-        )
-    )
-    app.include_router(
-        routes_notebook.create_notebook_router(
-            deps={
-                'enforce_request_size': _enforce_request_size,
-                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-                'generate_actor_requirements': generate_actor_requirements,
-                'db_path': _db_path,
-                'utc_now_iso': utc_now_iso,
-                'safe_json_string_list': _safe_json_string_list,
-                'fetch_actor_notebook': _fetch_actor_notebook,
-                'templates': templates,
-            }
-        )
-    )
-    app.include_router(
-        routes_evolution.create_evolution_router(
-            deps={
-                'enforce_request_size': _enforce_request_size,
-                'observation_body_limit_bytes': OBSERVATION_BODY_LIMIT_BYTES,
-                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-                'db_path': _db_path,
-                'actor_exists': actor_exists,
-                'normalize_technique_id': _normalize_technique_id,
-                'normalize_string_list': normalize_string_list,
-                'utc_now_iso': utc_now_iso,
-                'capability_category_from_technique_id': _capability_category_from_technique_id,
-                'generate_validation_template': generate_validation_template,
-                'baseline_entry': baseline_entry,
-                'resolve_delta_action': lambda actor_id, delta_id, requested_action: resolve_delta_action(
-                    actor_id,
-                    delta_id,
-                    requested_action,
-                ),
-            }
-        )
+    app_wiring_service.register_routers(
+        app,
+        deps={
+            'routes_dashboard': routes_dashboard,
+            'routes_api': routes_api,
+            'routes_ui': routes_ui,
+            'routes_actor_ops': routes_actor_ops,
+            'routes_notebook': routes_notebook,
+            'routes_evolution': routes_evolution,
+            'list_actor_profiles': list_actor_profiles,
+            'fetch_actor_notebook': _fetch_actor_notebook,
+            'set_actor_notebook_status': set_actor_notebook_status,
+            'run_actor_generation': run_actor_generation,
+            'get_ollama_status': get_ollama_status,
+            'format_duration_ms': _format_duration_ms,
+            'templates': templates,
+            'enforce_request_size': _enforce_request_size,
+            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+            'create_actor_profile': create_actor_profile,
+            'db_path': _db_path,
+            'actor_exists': actor_exists,
+            'source_upload_body_limit_bytes': SOURCE_UPLOAD_BODY_LIMIT_BYTES,
+            'derive_source_from_url': derive_source_from_url,
+            'upsert_source_for_actor': _upsert_source_for_actor,
+            'import_default_feeds_for_actor': import_default_feeds_for_actor,
+            'parse_ioc_values': _parse_ioc_values,
+            'utc_now_iso': utc_now_iso,
+            'generate_actor_requirements': generate_actor_requirements,
+            'safe_json_string_list': _safe_json_string_list,
+            'observation_body_limit_bytes': OBSERVATION_BODY_LIMIT_BYTES,
+            'normalize_technique_id': _normalize_technique_id,
+            'normalize_string_list': normalize_string_list,
+            'capability_category_from_technique_id': _capability_category_from_technique_id,
+            'generate_validation_template': generate_validation_template,
+            'baseline_entry': baseline_entry,
+            'resolve_delta_action': lambda actor_id, delta_id, requested_action: resolve_delta_action(
+                actor_id,
+                delta_id,
+                requested_action,
+            ),
+        },
     )
 
 
