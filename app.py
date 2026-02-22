@@ -390,6 +390,10 @@ def _resolve_startup_db_path() -> str:
         return _prepare_db_path(fallback)
 
 
+def _db_path() -> str:
+    return DB_PATH
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -1545,157 +1549,169 @@ def build_notebook(
 def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
     return notebook_service.fetch_actor_notebook_wrapper_core(
         actor_id=actor_id,
-        deps={
-            'pipeline_fetch_actor_notebook_core': pipeline_fetch_actor_notebook_core,
-            'db_path': lambda: DB_PATH,
-            'parse_published_datetime': _parse_published_datetime,
-            'safe_json_string_list': _safe_json_string_list,
-            'actor_signal_categories': _actor_signal_categories,
-            'question_actor_relevance': _question_actor_relevance,
-            'priority_update_evidence_dt': _priority_update_evidence_dt,
-            'question_org_alignment': _question_org_alignment,
-            'priority_rank_score': _priority_rank_score,
-            'phase_label_for_question': _phase_label_for_question,
-            'priority_where_to_check': _priority_where_to_check,
-            'priority_confidence_label': _priority_confidence_label,
-            'quick_check_title': _quick_check_title,
-            'short_decision_trigger': _short_decision_trigger,
-            'telemetry_anchor_line': _telemetry_anchor_line,
-            'priority_next_best_action': _priority_next_best_action,
-            'guidance_line': _guidance_line,
-            'guidance_query_hint': _guidance_query_hint,
-            'priority_disconfirming_signal': _priority_disconfirming_signal,
-            'escalation_threshold_line': _escalation_threshold_line,
-            'priority_update_recency_label': _priority_update_recency_label,
-            'org_alignment_label': _org_alignment_label,
-            'fallback_priority_questions': _fallback_priority_questions,
-            'token_overlap': _token_overlap,
-            'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
-            'group_top_techniques': _group_top_techniques,
-            'favorite_attack_vectors': _favorite_attack_vectors,
-            'known_technique_ids_for_entity': _known_technique_ids_for_entity,
-            'emerging_techniques_from_timeline': _emerging_techniques_from_timeline,
-            'build_timeline_graph': _build_timeline_graph,
-            'compact_timeline_rows': _compact_timeline_rows,
-            'actor_terms': _actor_terms,
-            'build_recent_activity_highlights': _build_recent_activity_highlights,
-            'build_recent_activity_synthesis': _build_recent_activity_synthesis,
-            'recent_change_summary': _recent_change_summary,
-            'build_environment_checks': _build_environment_checks,
-            'build_notebook_kpis': _build_notebook_kpis,
-            'format_date_or_unknown': _format_date_or_unknown,
-        },
+        deps=_fetch_actor_notebook_deps(),
     )
+
+
+def _fetch_actor_notebook_deps() -> dict[str, object]:
+    return {
+        'pipeline_fetch_actor_notebook_core': pipeline_fetch_actor_notebook_core,
+        'db_path': _db_path,
+        'parse_published_datetime': _parse_published_datetime,
+        'safe_json_string_list': _safe_json_string_list,
+        'actor_signal_categories': _actor_signal_categories,
+        'question_actor_relevance': _question_actor_relevance,
+        'priority_update_evidence_dt': _priority_update_evidence_dt,
+        'question_org_alignment': _question_org_alignment,
+        'priority_rank_score': _priority_rank_score,
+        'phase_label_for_question': _phase_label_for_question,
+        'priority_where_to_check': _priority_where_to_check,
+        'priority_confidence_label': _priority_confidence_label,
+        'quick_check_title': _quick_check_title,
+        'short_decision_trigger': _short_decision_trigger,
+        'telemetry_anchor_line': _telemetry_anchor_line,
+        'priority_next_best_action': _priority_next_best_action,
+        'guidance_line': _guidance_line,
+        'guidance_query_hint': _guidance_query_hint,
+        'priority_disconfirming_signal': _priority_disconfirming_signal,
+        'escalation_threshold_line': _escalation_threshold_line,
+        'priority_update_recency_label': _priority_update_recency_label,
+        'org_alignment_label': _org_alignment_label,
+        'fallback_priority_questions': _fallback_priority_questions,
+        'token_overlap': _token_overlap,
+        'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
+        'group_top_techniques': _group_top_techniques,
+        'favorite_attack_vectors': _favorite_attack_vectors,
+        'known_technique_ids_for_entity': _known_technique_ids_for_entity,
+        'emerging_techniques_from_timeline': _emerging_techniques_from_timeline,
+        'build_timeline_graph': _build_timeline_graph,
+        'compact_timeline_rows': _compact_timeline_rows,
+        'actor_terms': _actor_terms,
+        'build_recent_activity_highlights': _build_recent_activity_highlights,
+        'build_recent_activity_synthesis': _build_recent_activity_synthesis,
+        'recent_change_summary': _recent_change_summary,
+        'build_environment_checks': _build_environment_checks,
+        'build_notebook_kpis': _build_notebook_kpis,
+        'format_date_or_unknown': _format_date_or_unknown,
+    }
+
+
+def _initialize_sqlite_deps() -> dict[str, object]:
+    return {
+        'resolve_startup_db_path': _resolve_startup_db_path,
+        'configure_mitre_store': lambda db_path: mitre_store.configure(
+            db_path=db_path,
+            attack_url=ATTACK_ENTERPRISE_STIX_URL,
+        ),
+        'clear_mitre_store_cache': mitre_store.clear_cache,
+        'reset_app_mitre_caches': _reset_mitre_caches,
+        'ensure_mitre_attack_dataset': _ensure_mitre_attack_dataset,
+        'sqlite_connect': sqlite3.connect,
+    }
 
 
 def initialize_sqlite() -> None:
     global DB_PATH
-    DB_PATH = db_schema_service.initialize_sqlite_core(
-        deps={
-            'resolve_startup_db_path': _resolve_startup_db_path,
-            'configure_mitre_store': lambda db_path: mitre_store.configure(
-                db_path=db_path,
-                attack_url=ATTACK_ENTERPRISE_STIX_URL,
-            ),
-            'clear_mitre_store_cache': mitre_store.clear_cache,
-            'reset_app_mitre_caches': _reset_mitre_caches,
-            'ensure_mitre_attack_dataset': _ensure_mitre_attack_dataset,
-            'sqlite_connect': sqlite3.connect,
-        },
+    DB_PATH = db_schema_service.initialize_sqlite_core(deps=_initialize_sqlite_deps())
+
+
+def _register_routers() -> None:
+    app.include_router(
+        routes_dashboard.create_dashboard_router(
+            deps={
+                'list_actor_profiles': list_actor_profiles,
+                'fetch_actor_notebook': _fetch_actor_notebook,
+                'set_actor_notebook_status': set_actor_notebook_status,
+                'run_actor_generation': run_actor_generation,
+                'get_ollama_status': get_ollama_status,
+                'format_duration_ms': _format_duration_ms,
+                'templates': templates,
+            }
+        )
     )
-app.include_router(
-    routes_dashboard.create_dashboard_router(
-        deps={
-            'list_actor_profiles': list_actor_profiles,
-            'fetch_actor_notebook': _fetch_actor_notebook,
-            'set_actor_notebook_status': set_actor_notebook_status,
-            'run_actor_generation': run_actor_generation,
-            'get_ollama_status': get_ollama_status,
-            'format_duration_ms': _format_duration_ms,
-            'templates': templates,
-        }
+    app.include_router(
+        routes_api.create_api_router(
+            deps={
+                'list_actor_profiles': list_actor_profiles,
+                'enforce_request_size': _enforce_request_size,
+                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+                'create_actor_profile': create_actor_profile,
+                'db_path': _db_path,
+                'actor_exists': actor_exists,
+                'set_actor_notebook_status': set_actor_notebook_status,
+                'run_actor_generation': run_actor_generation,
+            }
+        )
     )
-)
-app.include_router(
-    routes_api.create_api_router(
-        deps={
-            'list_actor_profiles': list_actor_profiles,
-            'enforce_request_size': _enforce_request_size,
-            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-            'create_actor_profile': create_actor_profile,
-            'db_path': lambda: DB_PATH,
-            'actor_exists': actor_exists,
-            'set_actor_notebook_status': set_actor_notebook_status,
-            'run_actor_generation': run_actor_generation,
-        }
+    app.include_router(
+        routes_ui.create_ui_router(
+            deps={
+                'enforce_request_size': _enforce_request_size,
+                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+                'create_actor_profile': create_actor_profile,
+                'set_actor_notebook_status': set_actor_notebook_status,
+                'run_actor_generation': run_actor_generation,
+                'list_actor_profiles': list_actor_profiles,
+            }
+        )
     )
-)
-app.include_router(
-    routes_ui.create_ui_router(
-        deps={
-            'enforce_request_size': _enforce_request_size,
-            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-            'create_actor_profile': create_actor_profile,
-            'set_actor_notebook_status': set_actor_notebook_status,
-            'run_actor_generation': run_actor_generation,
-            'list_actor_profiles': list_actor_profiles,
-        }
+    app.include_router(
+        routes_actor_ops.create_actor_ops_router(
+            deps={
+                'enforce_request_size': _enforce_request_size,
+                'source_upload_body_limit_bytes': SOURCE_UPLOAD_BODY_LIMIT_BYTES,
+                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+                'db_path': _db_path,
+                'actor_exists': actor_exists,
+                'derive_source_from_url': derive_source_from_url,
+                'upsert_source_for_actor': _upsert_source_for_actor,
+                'import_default_feeds_for_actor': import_default_feeds_for_actor,
+                'parse_ioc_values': _parse_ioc_values,
+                'utc_now_iso': utc_now_iso,
+                'set_actor_notebook_status': set_actor_notebook_status,
+                'run_actor_generation': run_actor_generation,
+            }
+        )
     )
-)
-app.include_router(
-    routes_actor_ops.create_actor_ops_router(
-        deps={
-            'enforce_request_size': _enforce_request_size,
-            'source_upload_body_limit_bytes': SOURCE_UPLOAD_BODY_LIMIT_BYTES,
-            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-            'db_path': lambda: DB_PATH,
-            'actor_exists': actor_exists,
-            'derive_source_from_url': derive_source_from_url,
-            'upsert_source_for_actor': _upsert_source_for_actor,
-            'import_default_feeds_for_actor': import_default_feeds_for_actor,
-            'parse_ioc_values': _parse_ioc_values,
-            'utc_now_iso': utc_now_iso,
-            'set_actor_notebook_status': set_actor_notebook_status,
-            'run_actor_generation': run_actor_generation,
-        }
+    app.include_router(
+        routes_notebook.create_notebook_router(
+            deps={
+                'enforce_request_size': _enforce_request_size,
+                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+                'generate_actor_requirements': generate_actor_requirements,
+                'db_path': _db_path,
+                'utc_now_iso': utc_now_iso,
+                'safe_json_string_list': _safe_json_string_list,
+                'fetch_actor_notebook': _fetch_actor_notebook,
+                'templates': templates,
+            }
+        )
     )
-)
-app.include_router(
-    routes_notebook.create_notebook_router(
-        deps={
-            'enforce_request_size': _enforce_request_size,
-            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-            'generate_actor_requirements': generate_actor_requirements,
-            'db_path': lambda: DB_PATH,
-            'utc_now_iso': utc_now_iso,
-            'safe_json_string_list': _safe_json_string_list,
-            'fetch_actor_notebook': _fetch_actor_notebook,
-            'templates': templates,
-        }
+    app.include_router(
+        routes_evolution.create_evolution_router(
+            deps={
+                'enforce_request_size': _enforce_request_size,
+                'observation_body_limit_bytes': OBSERVATION_BODY_LIMIT_BYTES,
+                'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+                'db_path': _db_path,
+                'actor_exists': actor_exists,
+                'normalize_technique_id': _normalize_technique_id,
+                'normalize_string_list': normalize_string_list,
+                'utc_now_iso': utc_now_iso,
+                'capability_category_from_technique_id': _capability_category_from_technique_id,
+                'generate_validation_template': generate_validation_template,
+                'baseline_entry': baseline_entry,
+                'resolve_delta_action': lambda actor_id, delta_id, requested_action: resolve_delta_action(
+                    actor_id,
+                    delta_id,
+                    requested_action,
+                ),
+            }
+        )
     )
-)
-app.include_router(
-    routes_evolution.create_evolution_router(
-        deps={
-            'enforce_request_size': _enforce_request_size,
-            'observation_body_limit_bytes': OBSERVATION_BODY_LIMIT_BYTES,
-            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
-            'db_path': lambda: DB_PATH,
-            'actor_exists': actor_exists,
-            'normalize_technique_id': _normalize_technique_id,
-            'normalize_string_list': normalize_string_list,
-            'utc_now_iso': utc_now_iso,
-            'capability_category_from_technique_id': _capability_category_from_technique_id,
-            'generate_validation_template': generate_validation_template,
-            'baseline_entry': baseline_entry,
-            'resolve_delta_action': lambda actor_id, delta_id, requested_action: resolve_delta_action(
-                actor_id,
-                delta_id,
-                requested_action,
-            ),
-        }
-    )
-)
+
+
+_register_routers()
 
 
 def actors_ui() -> str:
