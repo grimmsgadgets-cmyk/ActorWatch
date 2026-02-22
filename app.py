@@ -28,6 +28,7 @@ import routes_dashboard
 import routes_evolution
 import routes_notebook
 import routes_ui
+import network_service
 import source_ingest_service
 import source_store_service
 import status_service
@@ -37,7 +38,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from feed_ingest import import_default_feeds_for_actor_core as pipeline_import_default_feeds_for_actor_core
 from generation_runner import run_actor_generation_core as pipeline_run_actor_generation_core
-from network_safety import safe_http_get, validate_outbound_url
 from notebook_builder import build_notebook_core
 from notebook_pipeline import build_environment_checks as pipeline_build_environment_checks
 from notebook_pipeline import fetch_actor_notebook_core as pipeline_fetch_actor_notebook_core
@@ -1566,12 +1566,12 @@ def _canonical_group_domain(source: dict[str, object]) -> str:
 
 
 def _validate_outbound_url(source_url: str, allowed_domains: set[str] | None = None) -> str:
-    effective_allowlist = OUTBOUND_ALLOWED_DOMAINS if allowed_domains is None else allowed_domains
-    return validate_outbound_url(
+    return network_service.validate_outbound_url_core(
         source_url,
-        allowed_domains=effective_allowlist,
-        resolve_host=socket.getaddrinfo,
-        ipproto_tcp=socket.IPPROTO_TCP,
+        allowed_domains=allowed_domains,
+        deps={
+            'outbound_allowed_domains': OUTBOUND_ALLOWED_DOMAINS,
+        },
     )
 
 
@@ -1583,14 +1583,15 @@ def _safe_http_get(
     allowed_domains: set[str] | None = None,
     max_redirects: int = 3,
 ) -> httpx.Response:
-    return safe_http_get(
+    return network_service.safe_http_get_core(
         source_url,
         timeout=timeout,
         headers=headers,
         allowed_domains=allowed_domains,
         max_redirects=max_redirects,
-        validate_url=lambda url, domains: _validate_outbound_url(url, allowed_domains=domains),
-        http_get=httpx.get,
+        deps={
+            'validate_url': lambda url, domains: _validate_outbound_url(url, allowed_domains=domains),
+        },
     )
 
 
