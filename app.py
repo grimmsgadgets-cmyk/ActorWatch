@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from actor_ingest import source_fingerprint as build_source_fingerprint
 from actor_ingest import upsert_source_for_actor
 from feed_ingest import import_default_feeds_for_actor_core as pipeline_import_default_feeds_for_actor_core
+from generation_runner import run_actor_generation_core as pipeline_run_actor_generation_core
 from network_safety import safe_http_get, validate_outbound_url
 from notebook_builder import build_notebook_core
 from notebook_pipeline import build_environment_checks as pipeline_build_environment_checks
@@ -2652,58 +2653,16 @@ def _mark_actor_generation_finished(actor_id: str) -> None:
 def run_actor_generation(actor_id: str) -> None:
     if not _mark_actor_generation_started(actor_id):
         return
-    started_at = time.perf_counter()
     try:
-        set_actor_notebook_status(
+        pipeline_run_actor_generation_core(
             actor_id,
-            'running',
-            'Collecting sources...',
+            db_path=DB_PATH,
+            deps={
+                'set_actor_notebook_status': set_actor_notebook_status,
+                'import_default_feeds_for_actor': import_default_feeds_for_actor,
+                'build_notebook': build_notebook,
+            },
         )
-        imported = import_default_feeds_for_actor(actor_id)
-        set_actor_notebook_status(
-            actor_id,
-            'running',
-            f'Sources collected ({imported}). Building timeline preview...',
-        )
-        build_notebook(actor_id, generate_questions=False, rebuild_timeline=True)
-        set_actor_notebook_status(
-            actor_id,
-            'running',
-            'Timeline ready. Generating question threads and guidance...',
-        )
-        build_notebook(actor_id, generate_questions=True, rebuild_timeline=False)
-        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        with sqlite3.connect(DB_PATH) as connection:
-            connection.execute(
-                '''
-                UPDATE actor_profiles
-                SET last_refresh_duration_ms = ?, last_refresh_sources_processed = ?
-                WHERE id = ?
-                ''',
-                (elapsed_ms, imported, actor_id),
-            )
-            connection.commit()
-        set_actor_notebook_status(
-            actor_id,
-            'ready',
-            f'Notebook ready. Imported {imported} feed source(s).',
-        )
-    except Exception as exc:
-        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        try:
-            with sqlite3.connect(DB_PATH) as connection:
-                connection.execute(
-                    '''
-                    UPDATE actor_profiles
-                    SET last_refresh_duration_ms = ?, last_refresh_sources_processed = ?
-                    WHERE id = ?
-                    ''',
-                    (elapsed_ms, 0, actor_id),
-                )
-                connection.commit()
-        except Exception:
-            pass
-        set_actor_notebook_status(actor_id, 'error', f'Notebook generation failed: {exc}')
     finally:
         _mark_actor_generation_finished(actor_id)
 

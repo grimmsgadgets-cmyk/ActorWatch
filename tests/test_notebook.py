@@ -171,6 +171,29 @@ def test_import_default_feeds_wrapper_delegates_to_pipeline_core(monkeypatch):
     assert 'duckduckgo_actor_search_urls' in deps
 
 
+def test_run_actor_generation_wrapper_delegates_to_pipeline_core(monkeypatch):
+    monkeypatch.setattr(app_module, '_mark_actor_generation_started', lambda _actor_id: True)  # noqa: SLF001
+    monkeypatch.setattr(app_module, '_mark_actor_generation_finished', lambda _actor_id: None)  # noqa: SLF001
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_core(actor_id, **kwargs):
+        captured['actor_id'] = actor_id
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app_module, 'pipeline_run_actor_generation_core', _fake_run_core)
+
+    app_module.run_actor_generation('actor-runner-wrapper')
+
+    assert captured['actor_id'] == 'actor-runner-wrapper'
+    assert captured['db_path'] == app_module.DB_PATH
+    deps = captured['deps']
+    assert isinstance(deps, dict)
+    assert deps['set_actor_notebook_status'] is app_module.set_actor_notebook_status
+    assert deps['import_default_feeds_for_actor'] is app_module.import_default_feeds_for_actor
+    assert deps['build_notebook'] is app_module.build_notebook
+
+
 def test_validate_outbound_url_blocks_localhost():
     with pytest.raises(app_module.HTTPException):
         app_module._validate_outbound_url('http://localhost/internal')  # noqa: SLF001
