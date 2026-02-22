@@ -58,21 +58,25 @@
         text-align: center;
       }
       .main { padding: 16px; overflow: hidden; display: flex; flex-direction: column; gap: 12px; }
+      .top-status-row { position: sticky; top: 0; z-index: 15; background: #f7f7f7; padding-bottom: 6px; }
       .dashboard { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 12px; flex: 1; min-height: 0; }
       .workspace-grid { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(0, 1fr); gap: 12px; min-height: 0; }
       .workspace-grid .pane { min-height: 0; overflow: auto; }
+      .workspace-grid .pane .section-title { position: sticky; top: 0; z-index: 4; background: #fff; }
       .card { background: #fff; border: 1px solid #d9e2ef; border-radius: 10px; padding: 14px; margin-bottom: 0; box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03); }
       .card.span-2 { grid-column: 1 / -1; }
-      .ataglance-strip { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; padding: 10px 12px; }
+      .ataglance-strip { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; padding: 10px 12px; position: sticky; top: 54px; z-index: 10; }
       .ataglance-metric { border: 1px solid #dce7f8; border-radius: 8px; background: #f8fbff; padding: 8px; min-height: 54px; }
       .ataglance-label { font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: .03em; }
       .ataglance-value { font-size: 14px; font-weight: 700; color: #0f172a; margin-top: 3px; }
       .bottom-drawer { min-height: 0; }
       .section-title { margin-top: 0; margin-bottom: 10px; font-size: 18px; line-height: 1.25; padding-bottom: 6px; border-bottom: 1px solid #e8eef8; }
       .section-body { padding-right: 2px; }
-      .section-body p { margin: 0 0 10px; }
-      .section-body ul { margin-top: 6px; }
+      .section-body p { margin: 0 0 8px; }
+      .section-body ul { margin-top: 4px; }
       .event { border-left: 3px solid #3f5f9a; margin: 6px 0; padding: 6px 8px; background: #f8fbff; }
+      .event.notable-primary { border-left-color: #c44f4f; background: #fff1f1; }
+      .event.notable-primary strong { color: #7f1d1d; }
       .timeline-graphic { position: relative; margin: 10px 0 0 6px; padding-left: 28px; }
       .timeline-graphic::before { content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 3px; background: #c7d7ef; }
       .timeline-node { position: relative; margin: 0 0 14px; padding: 10px; border: 1px solid #d8e1ef; border-radius: 8px; background: #f9fbff; }
@@ -107,18 +111,19 @@
       .dq-line { font-size: 12px; line-height: 1.35; color: #1f2937; margin: 4px 0; }
       .dq-line strong { font-weight: 600; }
       .dq-list { display: grid; gap: 6px; }
-      .dq-row { border: 1px solid #e3e9f5; border-radius: 8px; background: #fbfdff; }
-      .dq-row > summary { cursor: pointer; padding: 7px 8px; font-size: 12px; list-style: none; }
+      .dq-row { border: 1px solid #e3e9f5; border-radius: 10px; background: #fbfdff; }
+      .dq-row > summary { cursor: pointer; padding: 8px 10px; font-size: 12px; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .dq-row > summary::-webkit-details-marker { display: none; }
-      .dq-detail { padding: 0 8px 8px; }
+      .dq-detail { padding: 0 10px 10px; border-top: 1px solid #ecf1fa; }
       .deemphasized { opacity: 0.75; }
       .summary-list { margin: 8px 0 0; padding-left: 18px; }
-      .summary-list li { margin: 6px 0; font-size: 13px; line-height: 1.35; }
+      .summary-list li { margin: 4px 0; font-size: 12px; line-height: 1.3; }
       .snapshot-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 8px; margin: 10px 0; }
-      .snapshot-card { border: 1px solid #dfe6f3; border-radius: 8px; padding: 8px; background: #fbfdff; }
-      .snapshot-title { font-size: 12px; text-transform: uppercase; letter-spacing: .02em; color: #475569; margin: 0 0 4px; }
-      .snapshot-text { font-size: 13px; line-height: 1.3; margin: 0 0 6px; }
-      .snapshot-meta { font-size: 11px; color: #475569; }
+      .snapshot-card { border: 1px solid #dfe6f3; border-radius: 10px; padding: 10px; background: #fbfdff; border-top: 3px solid #7ea4df; min-height: 118px; display: flex; flex-direction: column; gap: 6px; }
+      .snapshot-card.primary { border-top-color: #c44f4f; background: #fff7f7; }
+      .snapshot-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #475569; margin: 0; }
+      .snapshot-text { font-size: 13px; line-height: 1.35; margin: 0; color: #1f2937; }
+      .snapshot-meta { font-size: 11px; color: #475569; margin-top: auto; display: flex; gap: 8px; flex-wrap: wrap; }
       .helper-box { border: 1px solid #d9e3f7; border-radius: 8px; background: #f5f8ff; padding: 8px; margin: 8px 0; }
       .helper-box h4 { margin: 0 0 6px; font-size: 13px; }
       .helper-box p { margin: 0 0 6px; font-size: 12px; line-height: 1.35; color: #1f2937; }
@@ -252,7 +257,18 @@
       .obs-row input, .obs-row select, .obs-row textarea { width: 100%; box-sizing: border-box; padding: 6px; border-radius: 6px; border: 1px solid #cdd8ea; font-size: 12px; }
       .obs-row textarea { min-height: 70px; resize: vertical; grid-column: 1 / -1; }
       .obs-actions { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
-      .obs-actions button { border: 1px solid #b8c7e2; background: #f7fbff; border-radius: 6px; padding: 5px 8px; font-size: 12px; cursor: pointer; }
+      .obs-actions button,
+      .ledger-actions button,
+      .ledger-actions a,
+      .review-actions button {
+        border: 1px solid #b8c7e2;
+        background: #f7fbff;
+        border-radius: 6px;
+        padding: 5px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        min-height: 30px;
+      }
       .ledger-list { display: grid; gap: 8px; margin-top: 8px; }
       .ledger-item { border: 1px solid #dce7f8; border-radius: 8px; background: #fbfdff; padding: 8px; }
       .ledger-head { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 4px; font-size: 11px; color: #475569; }
@@ -262,7 +278,7 @@
       .ledger-controls label { display: block; font-size: 11px; color: #334155; margin-bottom: 3px; }
       .ledger-controls input, .ledger-controls select { width: 100%; box-sizing: border-box; padding: 6px; border: 1px solid #cdd8ea; border-radius: 6px; background: #fff; font-size: 12px; }
       .ledger-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
-      .ledger-actions button, .ledger-actions a { border: 1px solid #b8c7e2; background: #f7fbff; border-radius: 6px; padding: 5px 8px; font-size: 12px; cursor: pointer; text-decoration: none; color: #1f2937; }
+      .ledger-actions a { text-decoration: none; color: #1f2937; }
       .ledger-count { font-size: 11px; color: #475569; }
       .review-strip { border: 1px solid #d9e7fb; border-radius: 8px; background: #f7fbff; padding: 8px; margin-bottom: 8px; }
       .review-strip h4 { margin: 0 0 6px; font-size: 13px; }
@@ -271,7 +287,7 @@
       .review-metric .label { font-size: 10px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
       .review-metric .value { font-size: 14px; font-weight: 600; margin-top: 2px; color: #0f172a; }
       .review-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
-      .review-actions button { border: 1px solid #b8c7e2; background: #fff; border-radius: 6px; padding: 5px 8px; font-size: 12px; cursor: pointer; }
+      .review-actions button { background: #fff; }
       .review-meta { font-size: 11px; color: #475569; }
       .cmdk-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.35); display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; z-index: 60; }
       .cmdk-overlay.open { display: flex; }
@@ -294,6 +310,7 @@
       @media (max-width: 960px) {
         .layout { grid-template-columns: 1fr; min-height: auto; }
         .main { overflow: visible; }
+        .top-status-row, .ataglance-strip, .workspace-grid .pane .section-title { position: static; }
         .dashboard { height: auto; }
         .status-chip { max-width: 100%; width: 100%; }
         .obs-row { grid-template-columns: 1fr; }
@@ -523,7 +540,7 @@
           <p class="inline-note"><strong>How to read:</strong> left to right = change, affected area, and recommended first action.</p>
           <div class="snapshot-grid">
             {% for synthesis in notebook.recent_activity_synthesis %}
-            <div class="snapshot-card">
+            <div class="snapshot-card{% if loop.first %} primary{% endif %}">
               <h3 class="snapshot-title">{{ synthesis.label }}</h3>
               <p class="snapshot-text">{{ synthesis.text }}</p>
               <div class="snapshot-meta">
@@ -780,9 +797,9 @@
           </p>
           {% if notebook.recent_activity_synthesis %}
           <div class="interactive-panel">
-            <h4>Notable now</h4>
+            <h4>What stands out now</h4>
             {% for synthesis in notebook.recent_activity_synthesis[:3] %}
-            <div class="event"><strong>{{ synthesis.label }}:</strong> {{ synthesis.text }}</div>
+            <div class="event{% if loop.first %} notable-primary{% endif %}"><strong>{{ synthesis.label }}:</strong> {{ synthesis.text }}</div>
             {% endfor %}
           </div>
           {% endif %}
@@ -802,45 +819,48 @@
                 <span id="review-meta" class="review-meta"></span>
               </div>
             </div>
-            <div class="ledger-controls">
-              <div>
-                <label for="ledger-filter-analyst">Analyst</label>
-                <input id="ledger-filter-analyst" type="text" placeholder="name contains..." />
+            <details class="compact">
+              <summary>Filters and export</summary>
+              <div class="ledger-controls">
+                <div>
+                  <label for="ledger-filter-analyst">Analyst</label>
+                  <input id="ledger-filter-analyst" type="text" placeholder="name contains..." />
+                </div>
+                <div>
+                  <label for="ledger-filter-confidence">Confidence</label>
+                  <select id="ledger-filter-confidence">
+                    <option value="">All</option>
+                    <option value="high">High</option>
+                    <option value="moderate">Moderate</option>
+                    <option value="low">Low</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="ledger-filter-from">Updated from</label>
+                  <input id="ledger-filter-from" type="date" />
+                </div>
+                <div>
+                  <label for="ledger-filter-to">Updated to</label>
+                  <input id="ledger-filter-to" type="date" />
+                </div>
+                <div>
+                  <label for="ledger-limit">Show</label>
+                  <select id="ledger-limit">
+                    <option value="12">12</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label for="ledger-filter-confidence">Confidence</label>
-                <select id="ledger-filter-confidence">
-                  <option value="">All</option>
-                  <option value="high">High</option>
-                  <option value="moderate">Moderate</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
-              <div>
-                <label for="ledger-filter-from">Updated from</label>
-                <input id="ledger-filter-from" type="date" />
-              </div>
-              <div>
-                <label for="ledger-filter-to">Updated to</label>
-                <input id="ledger-filter-to" type="date" />
-              </div>
-              <div>
-                <label for="ledger-limit">Show</label>
-                <select id="ledger-limit">
-                  <option value="12">12</option>
-                  <option value="25">25</option>
-                  <option value="50">50</option>
-                </select>
-              </div>
-            </div>
-            <div id="ledger-filter-chips" class="filter-chips"></div>
-            <div class="ledger-actions">
-              <button type="button" id="ledger-apply">Apply filters</button>
-              <button type="button" id="ledger-clear">Clear</button>
-              <a id="ledger-export-json" href="#" target="_blank" rel="noreferrer">Export JSON</a>
-              <a id="ledger-export-csv" href="#" target="_blank" rel="noreferrer">Export CSV</a>
+              <div id="ledger-filter-chips" class="filter-chips"></div>
+              <div class="ledger-actions">
+                <button type="button" id="ledger-apply">Apply filters</button>
+                <button type="button" id="ledger-clear">Clear</button>
+                <a id="ledger-export-json" href="#" target="_blank" rel="noreferrer">Export JSON</a>
+                <a id="ledger-export-csv" href="#" target="_blank" rel="noreferrer">Export CSV</a>
                 <span id="observation-ledger-count" class="ledger-count"></span>
-            </div>
+              </div>
+            </details>
             <div id="observation-ledger-empty" class="timeline-empty">No observations saved yet.</div>
             <div id="observation-ledger-list" class="ledger-list"></div>
           </div>
@@ -854,15 +874,15 @@
           </div>
           <div class="dq-list">
             {% for question in notebook.priority_questions[:3] %}
-            <details class="dq-row" open>
+            <details class="dq-row">
               <summary>
                 <strong>{{ question.quick_check_title }}</strong>
                 <span class="pbadge {{ question.priority.lower() }}">{{ question.priority }}</span>
               </summary>
               <div class="dq-detail">
-                <div class="dq-line"><strong>Check here:</strong> {{ question.first_step or question.telemetry_anchor }}</div>
-                <div class="dq-line"><strong>Look for:</strong> {{ question.what_to_look_for or question.success_condition or question.decision_trigger }}</div>
-                <div class="dq-line"><strong>Write down:</strong> {{ question.expected_output }}</div>
+                <div class="dq-line"><strong>Where to start:</strong> {{ question.first_step or question.telemetry_anchor }}</div>
+                <div class="dq-line"><strong>What to watch:</strong> {{ question.what_to_look_for or question.success_condition or question.decision_trigger }}</div>
+                <div class="dq-line"><strong>What to note:</strong> {{ question.expected_output }}</div>
               </div>
             </details>
             {% endfor %}
