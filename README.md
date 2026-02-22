@@ -1,4 +1,4 @@
-# Actor Tracker
+# ThreatCompass
 
 A lightweight threat actor lookup tool that turns reporting into a clear
 starting point for defensive review.
@@ -9,7 +9,7 @@ starting point for defensive review.
 
 ## Overview
 
-Actor Tracker is a small web application that helps you:
+ThreatCompass is a small web application that helps you:
 
 -   Look up a known threat actor
 -   See a concise summary of who they are
@@ -61,8 +61,8 @@ If a version number appears, Docker is ready.
 
 Using Git:
 
-    git clone https://github.com/grimmsgadgets-cmyk/actortracker.git
-    cd actortracker
+    git clone https://github.com/grimmsgadgets-cmyk/Threat-Compass.git
+    cd Threat-Compass
 
 Or download the ZIP from GitHub and open a terminal inside the extracted
 folder.
