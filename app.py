@@ -1,4 +1,3 @@
-import html
 import json
 import os
 import re
@@ -11,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
-from urllib.parse import parse_qs, quote, quote_plus, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 import actor_state_service
@@ -24,6 +23,7 @@ import mitre_store
 import db_schema_service
 import activity_highlight_service
 import analyst_text_service
+import actor_search_service
 import priority_questions
 import priority_service
 import rate_limit_service
@@ -973,112 +973,52 @@ def _looks_like_activity_sentence(sentence: str) -> bool:
 
 
 def _actor_terms(actor_name: str, mitre_group_name: str, aliases_csv: str) -> list[str]:
-    raw_terms = [actor_name, mitre_group_name] + [part.strip() for part in aliases_csv.split(',') if part.strip()]
-    generic_terms = {
-        'apt',
-        'group',
-        'team',
-        'actor',
-        'threat actor',
-        'intrusion set',
-        'cluster',
-    }
-    terms: list[str] = []
-    for raw in raw_terms:
-        value = raw.strip().lower()
-        if len(value) < 3:
-            continue
-        if value in generic_terms:
-            continue
-        if value not in terms:
-            terms.append(value)
-    return terms
+    return actor_search_service.actor_terms_core(
+        actor_name,
+        mitre_group_name,
+        aliases_csv,
+        deps={
+            'dedupe_actor_terms': _dedupe_actor_terms,
+        },
+    )
 
 
 def _text_contains_actor_term(text: str, actor_terms: list[str]) -> bool:
-    return _sentence_mentions_actor_terms(text, actor_terms)
+    return actor_search_service.text_contains_actor_term_core(
+        text,
+        actor_terms,
+        deps={
+            'sentence_mentions_actor_terms': _sentence_mentions_actor_terms,
+        },
+    )
 
 
 def _actor_query_feeds(actor_terms: list[str]) -> list[tuple[str, str]]:
-    feeds: list[tuple[str, str]] = []
-    added: set[str] = set()
-    for term in actor_terms:
-        compact = term.strip()
-        if len(compact) < 3 or len(compact) > 40:
-            continue
-        if compact in added:
-            continue
-        added.add(compact)
-        q = quote_plus(f'"{compact}" cybersecurity OR ransomware OR threat actor')
-        feeds.append(('Google News Actor Query', f'https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en'))
-        if len(feeds) >= 3:
-            break
-    return feeds
+    return actor_search_service.actor_query_feeds_core(actor_terms)
 
 
 def _actor_search_queries(actor_terms: list[str]) -> list[str]:
-    queries: list[str] = []
-    for term in actor_terms:
-        compact = term.strip()
-        if len(compact) < 3 or len(compact) > 60:
-            continue
-        queries.extend(
-            [
-                f'"{compact}" ransomware activity',
-                f'"{compact}" threat actor report',
-                f'"{compact}" CISA advisory',
-            ]
-        )
-        if len(queries) >= 9:
-            break
-    return queries[:9]
+    return actor_search_service.actor_search_queries_core(actor_terms)
 
 
 def _domain_allowed_for_actor_search(url: str) -> bool:
-    try:
-        hostname = (urlparse(url).hostname or '').strip('.').lower()
-    except Exception:
-        return False
-    if not hostname:
-        return False
-    return any(
-        hostname == domain or hostname.endswith(f'.{domain}')
-        for domain in ACTOR_SEARCH_DOMAINS
+    return actor_search_service.domain_allowed_for_actor_search_core(
+        url,
+        domains=ACTOR_SEARCH_DOMAINS,
     )
 
 
 def _duckduckgo_actor_search_urls(actor_terms: list[str], limit: int = 20) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-    headers = {
-        'User-Agent': (
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
-            '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-        )
-    }
-    for query in _actor_search_queries(actor_terms):
-        search_url = f'https://html.duckduckgo.com/html/?q={quote_plus(query)}'
-        try:
-            response = httpx.get(search_url, timeout=20.0, follow_redirects=True, headers=headers)
-            if response.status_code != 200:
-                continue
-            body = response.text
-        except Exception:
-            continue
-
-        for match in re.finditer(r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"', body):
-            candidate = html.unescape(match.group(1)).strip()
-            if not candidate.startswith('http'):
-                continue
-            if candidate in seen:
-                continue
-            if not _domain_allowed_for_actor_search(candidate):
-                continue
-            seen.add(candidate)
-            urls.append(candidate)
-            if len(urls) >= limit:
-                return urls
-    return urls
+    return actor_search_service.duckduckgo_actor_search_urls_core(
+        actor_terms,
+        limit=limit,
+        deps={
+            'actor_search_queries': _actor_search_queries,
+            'http_get': httpx.get,
+            'domain_allowed_for_actor_search': _domain_allowed_for_actor_search,
+            're_finditer': re.finditer,
+        },
+    )
 
 
 def _sentence_mentions_actor(sentence: str, actor_name: str) -> bool:
