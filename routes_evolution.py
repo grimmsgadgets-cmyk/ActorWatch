@@ -44,7 +44,7 @@ def create_evolution_router(*, deps: dict[str, object]) -> APIRouter:
             'created_at': row[3],
         }
 
-    @router.post('/actors/{actor_id}/observations')
+    @router.post('/actors/{actor_id}/state/observations')
     async def create_observation(actor_id: str, request: Request) -> dict[str, object]:
         await _enforce_request_size(request, _observation_body_limit_bytes)
         payload = await request.json()
@@ -155,7 +155,7 @@ def create_evolution_router(*, deps: dict[str, object]) -> APIRouter:
 
         return observation
 
-    @router.get('/actors/{actor_id}/observations')
+    @router.get('/actors/{actor_id}/state/observations')
     def list_observations(actor_id: str) -> list[dict[str, object]]:
         with sqlite3.connect(_db_path()) as connection:
             if not _actor_exists(connection, actor_id):

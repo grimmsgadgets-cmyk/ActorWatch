@@ -500,7 +500,7 @@ def test_create_observation_generates_delta_from_mitre_tactic_mapping(tmp_path, 
         monkeypatch.setattr(app_module, 'MITRE_TECHNIQUE_PHASE_CACHE', None)
 
         obs_response = client.post(
-            f"/actors/{actor['id']}/observations",
+            f"/actors/{actor['id']}/state/observations",
             json={
                 'source_type': 'report',
                 'source_ref': 'unit-test',
@@ -761,6 +761,19 @@ def test_root_renders_analyst_flow_headings(tmp_path, monkeypatch):
     assert '1) Who are they?' in response.text
     assert '2) What have they been up to recently?' in response.text
     assert '3) Analyst Interpretation Over Time' in response.text
+
+
+def test_route_table_has_no_duplicate_method_path_pairs():
+    route_map: dict[tuple[tuple[str, ...], str], int] = {}
+    for route in app_module.app.routes:
+        methods = tuple(sorted(method for method in getattr(route, 'methods', set()) if method not in {'HEAD', 'OPTIONS'}))
+        path = str(getattr(route, 'path', '') or '')
+        if not methods or not path:
+            continue
+        key = (methods, path)
+        route_map[key] = route_map.get(key, 0) + 1
+    duplicates = [key for key, count in route_map.items() if count > 1]
+    assert not duplicates
 
 
 def test_observation_filters_and_exports(tmp_path, monkeypatch):
