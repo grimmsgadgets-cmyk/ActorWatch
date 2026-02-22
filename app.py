@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, quote, quote_plus, urlparse
 
 import httpx
 import actor_state_service
+import actor_profile_service
 import guidance_catalog
 import legacy_ui
 import mitre_store
@@ -1730,21 +1731,19 @@ def _ollama_generate_questions(actor_name: str, scope_statement: str | None, exc
 
 
 def actor_exists(connection: sqlite3.Connection, actor_id: str) -> bool:
-    row = connection.execute('SELECT id FROM actor_profiles WHERE id = ?', (actor_id,)).fetchone()
-    return row is not None
+    return actor_profile_service.actor_exists_core(connection, actor_id)
 
 
 def set_actor_notebook_status(actor_id: str, status: str, message: str) -> None:
-    with sqlite3.connect(DB_PATH) as connection:
-        connection.execute(
-            '''
-            UPDATE actor_profiles
-            SET notebook_status = ?, notebook_message = ?, notebook_updated_at = ?
-            WHERE id = ?
-            ''',
-            (status, message, utc_now_iso(), actor_id),
-        )
-        connection.commit()
+    actor_profile_service.set_actor_notebook_status_core(
+        actor_id=actor_id,
+        status=status,
+        message=message,
+        deps={
+            'db_path': lambda: DB_PATH,
+            'utc_now_iso': utc_now_iso,
+        },
+    )
 
 
 def _format_duration_ms(milliseconds: int | None) -> str:
@@ -1791,32 +1790,11 @@ def run_actor_generation(actor_id: str) -> None:
 
 
 def list_actor_profiles() -> list[dict[str, object]]:
-    with sqlite3.connect(DB_PATH) as connection:
-        rows = connection.execute(
-            '''
-            SELECT
-                id, display_name, scope_statement, created_at, is_tracked,
-                notebook_status, notebook_message, notebook_updated_at,
-                last_refresh_duration_ms, last_refresh_sources_processed
-            FROM actor_profiles
-            ORDER BY created_at DESC
-            '''
-        ).fetchall()
-    return [
-        {
-            'id': row[0],
-            'display_name': row[1],
-            'scope_statement': row[2],
-            'created_at': row[3],
-            'is_tracked': bool(row[4]),
-            'notebook_status': row[5],
-            'notebook_message': row[6],
-            'notebook_updated_at': row[7],
-            'last_refresh_duration_ms': row[8],
-            'last_refresh_sources_processed': row[9],
+    return actor_profile_service.list_actor_profiles_core(
+        deps={
+            'db_path': lambda: DB_PATH,
         }
-        for row in rows
-    ]
+    )
 
 
 def create_actor_profile(
@@ -1824,43 +1802,16 @@ def create_actor_profile(
     scope_statement: str | None,
     is_tracked: bool = True,
 ) -> dict[str, str | None]:
-    actor_profile = {
-        'id': str(uuid.uuid4()),
-        'display_name': display_name,
-        'scope_statement': scope_statement,
-        'created_at': utc_now_iso(),
-    }
-    with sqlite3.connect(DB_PATH) as connection:
-        connection.execute(
-            '''
-            INSERT INTO actor_profiles (id, display_name, scope_statement, created_at, is_tracked)
-            VALUES (?, ?, ?, ?, ?)
-            ''',
-            (
-                actor_profile['id'],
-                actor_profile['display_name'],
-                actor_profile['scope_statement'],
-                actor_profile['created_at'],
-                1 if is_tracked else 0,
-            ),
-        )
-        connection.execute(
-            '''
-            UPDATE actor_profiles
-            SET notebook_status = ?,
-                notebook_message = ?,
-                notebook_updated_at = ?
-            WHERE id = ?
-            ''',
-            (
-                'running' if is_tracked else 'idle',
-                'Preparing notebook generation...' if is_tracked else 'Waiting for tracking action.',
-                utc_now_iso(),
-                actor_profile['id'],
-            ),
-        )
-        connection.commit()
-    return actor_profile
+    return actor_profile_service.create_actor_profile_core(
+        display_name=display_name,
+        scope_statement=scope_statement,
+        is_tracked=is_tracked,
+        deps={
+            'db_path': lambda: DB_PATH,
+            'new_id': lambda: str(uuid.uuid4()),
+            'utc_now_iso': utc_now_iso,
+        },
+    )
 
 
 def _upsert_source_for_actor(
