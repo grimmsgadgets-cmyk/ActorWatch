@@ -5,7 +5,6 @@ import re
 import socket
 import sqlite3
 import string
-import time
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -24,6 +23,8 @@ import legacy_ui
 import mitre_store
 import priority_questions
 import priority_service
+import rate_limit_service
+import recent_activity_service
 import routes_api
 import routes_actor_ops
 import routes_dashboard
@@ -38,6 +39,7 @@ import source_store_service
 import requirements_service
 import status_service
 import timeline_extraction
+import timeline_analytics_service
 import timeline_view_service
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -224,14 +226,15 @@ def _sync_mitre_cache_from_store() -> None:
 
 
 def _request_body_limit_bytes(method: str, path: str) -> int:
-    method_upper = method.upper()
-    if method_upper not in {'POST', 'PUT', 'PATCH'}:
-        return 0
-    if path.startswith('/actors/') and path.endswith('/sources'):
-        return SOURCE_UPLOAD_BODY_LIMIT_BYTES
-    if path.startswith('/actors/') and path.endswith('/observations'):
-        return OBSERVATION_BODY_LIMIT_BYTES
-    return DEFAULT_BODY_LIMIT_BYTES
+    return rate_limit_service.request_body_limit_bytes_core(
+        method,
+        path,
+        deps={
+            'source_upload_body_limit_bytes': SOURCE_UPLOAD_BODY_LIMIT_BYTES,
+            'observation_body_limit_bytes': OBSERVATION_BODY_LIMIT_BYTES,
+            'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
+        },
+    )
 
 
 async def _enforce_request_size(request: Request, limit: int) -> None:
@@ -252,65 +255,47 @@ async def _enforce_request_size(request: Request, limit: int) -> None:
 
 
 def _rate_limit_bucket(method: str, path: str) -> tuple[str, int] | None:
-    method_upper = method.upper()
-    if method_upper not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
-        return None
-    heavy = (
-        path.startswith('/actors/') and (
-            path.endswith('/sources')
-            or path.endswith('/sources/import-feeds')
-            or path.endswith('/refresh')
-            or path.endswith('/observations')
-        )
+    return rate_limit_service.rate_limit_bucket_core(
+        method,
+        path,
+        deps={
+            'rate_limit_heavy_per_minute': RATE_LIMIT_HEAVY_PER_MINUTE,
+            'rate_limit_default_per_minute': RATE_LIMIT_DEFAULT_PER_MINUTE,
+        },
     )
-    if heavy:
-        return ('write_heavy', RATE_LIMIT_HEAVY_PER_MINUTE)
-    return ('write_default', RATE_LIMIT_DEFAULT_PER_MINUTE)
 
 
 def _request_client_id(request: Request) -> str:
-    forwarded_for = request.headers.get('x-forwarded-for', '').strip()
-    if forwarded_for:
-        first_hop = forwarded_for.split(',', 1)[0].strip()
-        if first_hop:
-            return first_hop
-    if request.client and request.client.host:
-        return request.client.host
-    return 'unknown'
+    return rate_limit_service.request_client_id_core(request)
 
 
 def _prune_rate_limit_state(now: float) -> None:
-    stale_keys: list[str] = []
-    for key, timestamps in _RATE_LIMIT_STATE.items():
-        while timestamps and now - timestamps[0] >= RATE_LIMIT_WINDOW_SECONDS:
-            timestamps.popleft()
-        if not timestamps:
-            stale_keys.append(key)
-    for key in stale_keys:
-        _RATE_LIMIT_STATE.pop(key, None)
+    rate_limit_service.prune_rate_limit_state_core(
+        now=now,
+        rate_limit_state=_RATE_LIMIT_STATE,
+        rate_limit_window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+    )
 
 
 def _check_rate_limit(request: Request) -> tuple[bool, int, int]:
-    bucket = _rate_limit_bucket(request.method, request.url.path)
-    if not RATE_LIMIT_ENABLED or bucket is None:
-        return (False, 0, 0)
-    bucket_name, limit = bucket
-    client_id = _request_client_id(request)
-    key = f'{bucket_name}:{client_id}'
-    now = time.monotonic()
-    with _RATE_LIMIT_LOCK:
-        global _RATE_LIMIT_REQUEST_COUNTER
-        _RATE_LIMIT_REQUEST_COUNTER += 1
-        if _RATE_LIMIT_REQUEST_COUNTER % _RATE_LIMIT_CLEANUP_EVERY == 0:
-            _prune_rate_limit_state(now)
-        timestamps = _RATE_LIMIT_STATE[key]
-        while timestamps and now - timestamps[0] >= RATE_LIMIT_WINDOW_SECONDS:
-            timestamps.popleft()
-        if len(timestamps) >= limit:
-            retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - timestamps[0])) + 1)
-            return (True, retry_after, limit)
-        timestamps.append(now)
-    return (False, 0, limit)
+    global _RATE_LIMIT_REQUEST_COUNTER
+    counter_ref = {'value': _RATE_LIMIT_REQUEST_COUNTER}
+    limited, retry_after, limit = rate_limit_service.check_rate_limit_core(
+        request,
+        deps={
+            'rate_limit_enabled': RATE_LIMIT_ENABLED,
+            'rate_limit_window_seconds': RATE_LIMIT_WINDOW_SECONDS,
+            'rate_limit_state': _RATE_LIMIT_STATE,
+            'rate_limit_lock': _RATE_LIMIT_LOCK,
+            'rate_limit_cleanup_every': _RATE_LIMIT_CLEANUP_EVERY,
+            'rate_limit_request_counter_ref': counter_ref,
+            'rate_limit_bucket': _rate_limit_bucket,
+            'request_client_id': _request_client_id,
+            'prune_rate_limit_state': _prune_rate_limit_state,
+        },
+    )
+    _RATE_LIMIT_REQUEST_COUNTER = int(counter_ref['value'])
+    return (limited, retry_after, limit)
 
 
 @app.middleware('http')
@@ -900,171 +885,64 @@ def _build_notebook_kpis(
     open_questions_count: int,
     sources: list[dict[str, object]],
 ) -> dict[str, str]:
-    now = datetime.now(timezone.utc)
-    cutoff_30 = now - timedelta(days=30)
-    valid_technique_ids = _mitre_valid_technique_ids()
-
-    activity_30d = 0
-    novel_techniques_30d: set[str] = set()
-    for item in timeline_items:
-        dt = _parse_published_datetime(str(item.get('occurred_at') or ''))
-        if dt is None or dt < cutoff_30:
-            continue
-        activity_30d += 1
-        for ttp in item.get('ttp_ids', []):
-            tid = str(ttp).upper()
-            if valid_technique_ids and tid not in valid_technique_ids:
-                continue
-            if tid and tid not in known_technique_ids:
-                novel_techniques_30d.add(tid)
-
-    latest_source_dt: datetime | None = None
-    latest_source_text = ''
-    for source in sources:
-        candidate_raw = str(source.get('published_at') or source.get('retrieved_at') or '')
-        dt = _parse_published_datetime(candidate_raw)
-        if dt is None:
-            continue
-        if latest_source_dt is None or dt > latest_source_dt:
-            latest_source_dt = dt
-            latest_source_text = dt.date().isoformat()
-
-    return {
-        'activity_30d': str(activity_30d),
-        'new_techniques_30d': str(len(novel_techniques_30d)),
-        'open_priority_questions': str(open_questions_count),
-        'last_verified_update': latest_source_text or 'Unknown',
-    }
+    return timeline_analytics_service.build_notebook_kpis_core(
+        timeline_items,
+        known_technique_ids,
+        open_questions_count,
+        sources,
+        deps={
+            'parse_published_datetime': _parse_published_datetime,
+            'mitre_valid_technique_ids': _mitre_valid_technique_ids,
+        },
+    )
 
 
 def _build_timeline_graph(timeline_items: list[dict[str, object]]) -> list[dict[str, object]]:
-    buckets: dict[str, dict[str, int]] = {}
-    for item in timeline_items:
-        label = _bucket_label(str(item.get('occurred_at') or ''))
-        category = str(item.get('category') or 'report')
-        bucket = buckets.setdefault(label, {})
-        bucket[category] = bucket.get(category, 0) + 1
-
-    labels = sorted(buckets.keys())
-    max_total = 1
-    for label in labels:
-        max_total = max(max_total, sum(buckets[label].values()))
-
-    graph: list[dict[str, object]] = []
-    for label in labels:
-        counts = buckets[label]
-        total = sum(counts.values())
-        segments = []
-        for category, count in sorted(counts.items(), key=lambda entry: entry[1], reverse=True):
-            segments.append(
-                {
-                    'category': category.replace('_', ' '),
-                    'count': count,
-                    'color': _timeline_category_color(category),
-                    'flex': count,
-                }
-            )
-        graph.append(
-            {
-                'label': label,
-                'total': total,
-                'height_pct': max(8, int((total / max_total) * 100)),
-                'segments': segments,
-            }
-        )
-    return graph
+    return timeline_analytics_service.build_timeline_graph_core(
+        timeline_items,
+        deps={
+            'bucket_label': _bucket_label,
+            'timeline_category_color': _timeline_category_color,
+        },
+    )
 
 
 def _first_seen_for_techniques(
     timeline_items: list[dict[str, object]],
     technique_ids: list[str],
 ) -> list[dict[str, str]]:
-    first_seen: dict[str, str] = {}
-    wanted = {tech.upper() for tech in technique_ids}
-    for item in sorted(
+    return timeline_analytics_service.first_seen_for_techniques_core(
         timeline_items,
-        key=lambda entry: (
-            _parse_published_datetime(str(entry.get('occurred_at') or ''))
-            or datetime.min.replace(tzinfo=timezone.utc)
-        ),
-    ):
-        occurred = str(item.get('occurred_at') or '')
-        for tech in item.get('ttp_ids', []):
-            tech_id = str(tech).upper()
-            if tech_id in wanted and tech_id not in first_seen:
-                first_seen[tech_id] = _short_date(occurred)
-    return [{'technique_id': tid, 'first_seen': first_seen.get(tid, '')} for tid in technique_ids]
+        technique_ids,
+        deps={
+            'parse_published_datetime': _parse_published_datetime,
+            'short_date': _short_date,
+        },
+    )
 
 
 def _severity_label(category: str, target_text: str, novelty: bool) -> str:
-    weights = {
-        'initial_access': 3,
-        'execution': 2,
-        'persistence': 2,
-        'lateral_movement': 2,
-        'command_and_control': 2,
-        'exfiltration': 3,
-        'impact': 3,
-        'defense_evasion': 2,
-        'report': 1,
-    }
-    score = weights.get(category, 1)
-    if novelty:
-        score += 2
-    if any(
-        token in target_text.lower()
-        for token in ('defense', 'government', 'energy', 'health', 'finance', 'critical', 'infrastructure')
-    ):
-        score += 1
-    if score >= 5:
-        return 'High'
-    if score >= 3:
-        return 'Medium'
-    return 'Low'
+    return timeline_analytics_service.severity_label_core(category, target_text, novelty)
 
 
 def _action_text(category: str) -> str:
-    mapping = {
-        'initial_access': 'Gained or attempted entry',
-        'execution': 'Executed attacker tooling',
-        'persistence': 'Established foothold',
-        'lateral_movement': 'Moved across environment',
-        'command_and_control': 'Maintained remote control',
-        'exfiltration': 'Collected or exfiltrated data',
-        'impact': 'Disrupted or encrypted systems',
-        'defense_evasion': 'Evaded detection/controls',
-        'report': 'Reported notable activity',
-    }
-    return mapping.get(category, 'Reported notable activity')
+    return timeline_analytics_service.action_text_core(category)
 
 
 def _compact_timeline_rows(
     timeline_items: list[dict[str, object]],
     known_technique_ids: set[str],
 ) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    sorted_items = sorted(
+    return timeline_analytics_service.compact_timeline_rows_core(
         timeline_items,
-        key=lambda entry: _parse_iso_for_sort(str(entry.get('occurred_at') or '')),
-        reverse=True,
+        known_technique_ids,
+        deps={
+            'parse_iso_for_sort': _parse_iso_for_sort,
+            'short_date': _short_date,
+            'action_text': _action_text,
+            'severity_label': _severity_label,
+        },
     )
-    for item in sorted_items[:14]:
-        ttp_ids = [str(t).upper() for t in item.get('ttp_ids', [])]
-        novelty = any(tech_id not in known_technique_ids for tech_id in ttp_ids) if ttp_ids else False
-        category = str(item.get('category') or 'report')
-        target = str(item.get('target_text') or '')
-        rows.append(
-            {
-                'date': _short_date(str(item.get('occurred_at') or '')),
-                'category': category.replace('_', ' '),
-                'action': _action_text(category),
-                'target': target,
-                'techniques': ', '.join(ttp_ids),
-                'severity': _severity_label(category, target, novelty),
-                'summary': str(item.get('summary') or ''),
-            }
-        )
-    return rows
 
 
 _question_priority_score = priority_questions.question_priority_score
@@ -1409,104 +1287,13 @@ def _extract_target_from_activity_text(text: str) -> str:
 def _build_recent_activity_synthesis(
     highlights: list[dict[str, str | None]],
 ) -> list[dict[str, str]]:
-    if not highlights:
-        return []
-
-    category_counts: dict[str, int] = {}
-    targets: list[str] = []
-    techniques: list[str] = []
-    parsed_dates: list[datetime] = []
-    recent_90 = 0
-    cutoff_90 = datetime.now(timezone.utc) - timedelta(days=90)
-
-    for item in highlights:
-        category = str(item.get('category') or '').strip().lower()
-        if category:
-            category_counts[category] = category_counts.get(category, 0) + 1
-
-        target = str(item.get('target_text') or '').strip() or _extract_target_from_activity_text(
-            str(item.get('text') or '')
-        )
-        if target and target not in targets:
-            targets.append(target)
-
-        ttp_csv = str(item.get('ttp_ids') or '').strip()
-        if ttp_csv:
-            for part in ttp_csv.split(','):
-                token = part.strip().upper()
-                if token and token not in techniques:
-                    techniques.append(token)
-
-        dt = _parse_published_datetime(str(item.get('date') or ''))
-        if dt is not None:
-            parsed_dates.append(dt)
-            if dt >= cutoff_90:
-                recent_90 += 1
-
-    unique_sources = {
-        str(item.get('source_url') or '').strip()
-        for item in highlights
-        if str(item.get('source_url') or '').strip()
-    }
-    lineage_count = len(unique_sources)
-    if lineage_count >= 4 and recent_90 >= 2:
-        confidence_label = 'High'
-    elif lineage_count >= 2:
-        confidence_label = 'Medium'
-    else:
-        confidence_label = 'Low'
-
-    if parsed_dates:
-        newest = max(parsed_dates).date().isoformat()
-        oldest = min(parsed_dates).date().isoformat()
-        what_changed = (
-            f'Observed {len(highlights)} actor-linked signals between {oldest} and {newest}, '
-            f'with {recent_90} in the last 90 days.'
-        )
-    else:
-        what_changed = f'Observed {len(highlights)} actor-linked activity signals in current source coverage.'
-
-    if category_counts:
-        top_categories = sorted(category_counts.items(), key=lambda item: item[1], reverse=True)[:2]
-        category_text = ', '.join(
-            f'{name.replace("_", " ")} ({count})' for name, count in top_categories
-        )
-        what_changed = f'{what_changed} Primary behavior clusters: {category_text}.'
-
-    who_affected = 'Affected organizations/entities are not clearly named in current reporting.'
-    if targets:
-        who_affected = f'Recently affected organizations/entities include: {", ".join(targets[:4])}.'
-
-    action_parts: list[str] = []
-    if techniques:
-        action_parts.append(f'Prioritize detections for {", ".join(techniques[:5])}')
-    if category_counts:
-        dominant = sorted(category_counts.items(), key=lambda item: item[1], reverse=True)[0][0]
-        action_parts.append(f'focus hunt workflows on {dominant.replace("_", " ")} behavior')
-    if not action_parts:
-        action_parts.append('continue actor-specific source collection and validate new events')
-    what_to_do_next = 'Next analyst action: ' + '; '.join(action_parts) + '.'
-
-    return [
-        {
-            'label': 'What changed',
-            'text': what_changed,
-            'confidence': confidence_label,
-            'lineage': f'{lineage_count} sources',
+    return recent_activity_service.build_recent_activity_synthesis_core(
+        highlights,
+        deps={
+            'extract_target_from_activity_text': _extract_target_from_activity_text,
+            'parse_published_datetime': _parse_published_datetime,
         },
-        {
-            'label': 'Who is affected',
-            'text': who_affected,
-            'confidence': confidence_label,
-            'lineage': f'{lineage_count} sources',
-        },
-        {
-            'label': 'What to do next',
-            'text': what_to_do_next,
-            'confidence': confidence_label,
-            'lineage': f'{lineage_count} sources',
-        },
-    ]
+    )
 
 
 def _timeline_category_from_sentence(sentence: str) -> str | None:
