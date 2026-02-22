@@ -233,3 +233,21 @@ def ensure_schema(connection) -> None:
     if not any(col[1] == 'validation_notes' for col in requirement_cols):
         connection.execute("ALTER TABLE requirement_items ADD COLUMN validation_notes TEXT NOT NULL DEFAULT ''")
     connection.commit()
+
+
+def initialize_sqlite_core(*, deps: dict[str, object]) -> str:
+    _resolve_startup_db_path = deps['resolve_startup_db_path']
+    _configure_mitre_store = deps['configure_mitre_store']
+    _clear_mitre_store_cache = deps['clear_mitre_store_cache']
+    _reset_app_mitre_caches = deps['reset_app_mitre_caches']
+    _ensure_mitre_attack_dataset = deps['ensure_mitre_attack_dataset']
+    _sqlite_connect = deps['sqlite_connect']
+
+    db_path = _resolve_startup_db_path()
+    _configure_mitre_store(db_path)
+    _clear_mitre_store_cache()
+    _reset_app_mitre_caches()
+    _ensure_mitre_attack_dataset()
+    with _sqlite_connect(db_path) as connection:
+        ensure_schema(connection)
+    return db_path

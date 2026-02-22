@@ -226,6 +226,30 @@ def _sync_mitre_cache_from_store() -> None:
     MITRE_TECHNIQUE_INDEX_CACHE = mitre_store.MITRE_TECHNIQUE_INDEX_CACHE
 
 
+def _reset_mitre_caches() -> None:
+    global MITRE_GROUP_CACHE, MITRE_DATASET_CACHE, MITRE_TECHNIQUE_PHASE_CACHE
+    global MITRE_SOFTWARE_CACHE, MITRE_CAMPAIGN_LINK_CACHE, MITRE_TECHNIQUE_INDEX_CACHE
+    MITRE_GROUP_CACHE = None
+    MITRE_DATASET_CACHE = None
+    MITRE_TECHNIQUE_PHASE_CACHE = None
+    MITRE_SOFTWARE_CACHE = None
+    MITRE_CAMPAIGN_LINK_CACHE = None
+    MITRE_TECHNIQUE_INDEX_CACHE = None
+
+
+def _configure_mitre_store() -> None:
+    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
+
+
+def _with_mitre_store_sync(callback):
+    _configure_mitre_store()
+    _sync_mitre_cache_to_store()
+    try:
+        return callback()
+    finally:
+        _sync_mitre_cache_from_store()
+
+
 def _request_body_limit_bytes(method: str, path: str) -> int:
     return rate_limit_service.request_body_limit_bytes_core(
         method,
@@ -548,7 +572,7 @@ def _candidate_overlap_score(actor_tokens: set[str], search_keys: set[str]) -> f
 
 
 def _mitre_dataset_path() -> Path:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
+    _configure_mitre_store()
     path = Path(os.environ.get('MITRE_ATTACK_PATH', '').strip()) if os.environ.get('MITRE_ATTACK_PATH', '').strip() else None
     if path is not None:
         return path
@@ -556,39 +580,19 @@ def _mitre_dataset_path() -> Path:
 
 
 def _ensure_mitre_attack_dataset() -> bool:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.ensure_mitre_attack_dataset()
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.ensure_mitre_attack_dataset())
 
 
 def _load_mitre_groups() -> list[dict[str, object]]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.load_mitre_groups()
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.load_mitre_groups())
 
 
 def _load_mitre_dataset() -> dict[str, object]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.load_mitre_dataset()
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.load_mitre_dataset())
 
 
 def _mitre_campaign_link_index() -> dict[str, dict[str, set[str]]]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.mitre_campaign_link_index()
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.mitre_campaign_link_index())
 
 
 def _normalize_technique_id(value: str) -> str:
@@ -596,103 +600,57 @@ def _normalize_technique_id(value: str) -> str:
 
 
 def _mitre_technique_index() -> dict[str, dict[str, str]]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.mitre_technique_index()
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.mitre_technique_index())
 
 
 def _mitre_valid_technique_ids() -> set[str]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.mitre_valid_technique_ids()
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.mitre_valid_technique_ids())
 
 
 def _mitre_technique_phase_index() -> dict[str, list[str]]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.mitre_technique_phase_index()
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.mitre_technique_phase_index())
 
 
 def _capability_category_from_technique_id(ttp_id: str) -> str | None:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.capability_category_from_technique_id(
+    return _with_mitre_store_sync(
+        lambda: mitre_store.capability_category_from_technique_id(
             ttp_id,
             attack_tactic_to_capability_map=ATTACK_TACTIC_TO_CAPABILITY_MAP,
             capability_grid_keys=CAPABILITY_GRID_KEYS,
         )
-    finally:
-        _sync_mitre_cache_from_store()
+    )
 
 
 def _match_mitre_group(actor_name: str) -> dict[str, object] | None:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.match_mitre_group(actor_name)
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.match_mitre_group(actor_name))
 
 
 def _load_mitre_software() -> list[dict[str, object]]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.load_mitre_software()
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.load_mitre_software())
 
 
 def _match_mitre_software(name: str) -> dict[str, object] | None:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.match_mitre_software(name)
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.match_mitre_software(name))
 
 def _build_actor_profile_from_mitre(actor_name: str) -> dict[str, str]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.build_actor_profile_from_mitre(
+    return _with_mitre_store_sync(
+        lambda: mitre_store.build_actor_profile_from_mitre(
             actor_name,
             first_sentences=lambda text, count: _first_sentences(text, count=count),
         )
-    finally:
-        _sync_mitre_cache_from_store()
+    )
 
 
 def _group_top_techniques(group_stix_id: str, limit: int = 6) -> list[dict[str, str]]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.group_top_techniques(group_stix_id, limit=limit)
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.group_top_techniques(group_stix_id, limit=limit))
 
 
 def _known_technique_ids_for_entity(entity_stix_id: str) -> set[str]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    _sync_mitre_cache_to_store()
-    try:
-        return mitre_store.known_technique_ids_for_entity(entity_stix_id)
-    finally:
-        _sync_mitre_cache_from_store()
+    return _with_mitre_store_sync(lambda: mitre_store.known_technique_ids_for_entity(entity_stix_id))
 
 
 def _favorite_attack_vectors(techniques: list[dict[str, str]], limit: int = 3) -> list[str]:
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
+    _configure_mitre_store()
     return mitre_store.favorite_attack_vectors(techniques, limit=limit)
 
 
@@ -1687,21 +1645,19 @@ def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
 
 def initialize_sqlite() -> None:
     global DB_PATH
-    DB_PATH = _resolve_startup_db_path()
-    mitre_store.configure(db_path=DB_PATH, attack_url=ATTACK_ENTERPRISE_STIX_URL)
-    mitre_store.clear_cache()
-    global MITRE_GROUP_CACHE, MITRE_DATASET_CACHE, MITRE_TECHNIQUE_PHASE_CACHE
-    global MITRE_SOFTWARE_CACHE, MITRE_CAMPAIGN_LINK_CACHE
-    global MITRE_TECHNIQUE_INDEX_CACHE
-    MITRE_GROUP_CACHE = None
-    MITRE_DATASET_CACHE = None
-    MITRE_TECHNIQUE_PHASE_CACHE = None
-    MITRE_SOFTWARE_CACHE = None
-    MITRE_CAMPAIGN_LINK_CACHE = None
-    MITRE_TECHNIQUE_INDEX_CACHE = None
-    _ensure_mitre_attack_dataset()
-    with sqlite3.connect(DB_PATH) as connection:
-        db_schema_service.ensure_schema(connection)
+    DB_PATH = db_schema_service.initialize_sqlite_core(
+        deps={
+            'resolve_startup_db_path': _resolve_startup_db_path,
+            'configure_mitre_store': lambda db_path: mitre_store.configure(
+                db_path=db_path,
+                attack_url=ATTACK_ENTERPRISE_STIX_URL,
+            ),
+            'clear_mitre_store_cache': mitre_store.clear_cache,
+            'reset_app_mitre_caches': _reset_mitre_caches,
+            'ensure_mitre_attack_dataset': _ensure_mitre_attack_dataset,
+            'sqlite_connect': sqlite3.connect,
+        },
+    )
 app.include_router(
     routes_dashboard.create_dashboard_router(
         deps={
