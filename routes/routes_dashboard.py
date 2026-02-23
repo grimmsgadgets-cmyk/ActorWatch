@@ -170,7 +170,7 @@ def render_dashboard_root(
                         if parsed.tzinfo is None:
                             parsed = parsed.replace(tzinfo=timezone.utc)
                         age = datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)
-                        should_trigger = age >= timedelta(minutes=max(1, _page_refresh_auto_trigger_minutes))
+                        should_trigger = age >= timedelta(minutes=max(0, _page_refresh_auto_trigger_minutes))
                     except Exception:
                         should_trigger = True
                 if should_trigger:

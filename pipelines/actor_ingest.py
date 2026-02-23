@@ -91,7 +91,11 @@ def upsert_source_for_actor(
             connection.execute(
                 '''
                 UPDATE sources
-                SET pasted_text = ?,
+                SET pasted_text = CASE
+                        WHEN length(COALESCE(?, '')) >= 120 THEN ?
+                        WHEN length(COALESCE(pasted_text, '')) = 0 THEN ?
+                        ELSE pasted_text
+                    END,
                     published_at = COALESCE(?, published_at),
                     retrieved_at = ?,
                     title = COALESCE(?, title),
@@ -104,6 +108,8 @@ def upsert_source_for_actor(
                 WHERE id = ?
                 ''',
                 (
+                    final_text,
+                    final_text,
                     final_text,
                     published_at,
                     now_iso(),

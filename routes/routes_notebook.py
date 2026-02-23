@@ -274,6 +274,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             '.top{margin-bottom:12px;}'
             '.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:10px;margin-bottom:10px;}'
             '.meta{font-size:12px;color:#334155;margin:4px 0 8px;}'
+            '.summary{white-space:pre-line;}'
             '.badge{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #888;font-size:12px;}'
             '.muted{color:#4b5563;font-size:12px;}'
             'a{color:#2255aa;text-decoration:none;}a:hover{text-decoration:underline;}'
@@ -292,9 +293,15 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             for item in detail_rows:
                 ttp_text = ', '.join(item['ttp_ids']) if item['ttp_ids'] else ''
                 source_block = ''
-                event_title = str(item.get('source_title') or item.get('title') or item.get('summary') or '').strip()
+                event_title = str(item.get('title') or item.get('source_title') or item.get('summary') or '').strip()
                 if event_title.startswith(('http://', 'https://')):
                     event_title = str(item.get('summary') or item.get('title') or 'Untitled report').strip()
+                if 'who/what/when/where/how' in event_title.lower():
+                    fallback_title = str(item.get('title') or '').strip()
+                    if fallback_title and 'who/what/when/where/how' not in fallback_title.lower():
+                        event_title = fallback_title
+                    else:
+                        event_title = 'Ransomware disclosure and targeting update'
                 if item['source_url']:
                     source_name = html.escape(str(item['source_name']) or str(item['source_url']))
                     source_url = html.escape(str(item['source_url']))
@@ -309,7 +316,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     f'<span class="muted">{html.escape(str(item["occurred_at"]))}</span></div>'
                 )
                 content.append(f'<h3>{html.escape(event_title)}</h3>')
-                content.append(f'<div>{html.escape(str(item["summary"]))}</div>')
+                content.append(f'<div class="summary">{html.escape(str(item["summary"]))}</div>')
                 if item['target_text']:
                     content.append(f'<div class="meta"><strong>Target:</strong> {html.escape(str(item["target_text"]))}</div>')
                 if ttp_text:

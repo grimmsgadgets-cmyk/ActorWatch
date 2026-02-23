@@ -592,12 +592,65 @@ def test_extract_major_move_events_ransomware_live_keeps_full_structured_synthes
 
     assert len(events) == 1
     assert events[0]['category'] == 'impact'
-    assert 'Qilin ransomware operators.' in str(events[0]['summary'])
-    assert '15 public victim disclosures in the last 90 days.' in str(events[0]['summary'])
-    assert 'Geographies: US (6), FR (1), NZ (1).' in str(events[0]['summary'])
+    assert '90d disclosures: 15' in str(events[0]['summary'])
+    assert 'Top geographies: US (6), FR (1), NZ (1)' in str(events[0]['summary'])
+    assert 'Top sectors: Manufacturing (3), Healthcare (2)' in str(events[0]['summary'])
+    assert '\n' in str(events[0]['summary'])
     assert 'Who:' not in str(events[0]['summary'])
     assert 'What:' not in str(events[0]['summary'])
     assert 'When:' not in str(events[0]['summary'])
+
+
+def test_extract_major_move_events_ransomware_live_normalizes_legacy_trend_blob():
+    events = app_module._extract_major_move_events(  # noqa: SLF001
+        'Ransomware.live',
+        'src-legacy',
+        '2026-02-17T09:37:10+00:00',
+        (
+            'qilin ransomware activity synthesis (tempo, geography, and target examples) from ransomware.live. '
+            'Ransomware.live trend for qilin: 1469 total public victim disclosures, 15 in the last 90 days. '
+            'Latest listed activity: 2026-02-16. '
+            'Most frequent victim geographies in the current sample: US (8), CL (2), IT (1). '
+            'Recently observed targets include: 2026-02-16 - Casartigiani (IT).'
+        ),
+        ['qilin'],
+    )
+
+    assert len(events) == 1
+    assert events[0]['title'] == 'Qilin ransomware disclosure and targeting update'
+    summary = str(events[0]['summary'])
+    assert '90d disclosures: 15' in summary
+    assert 'Total listed: 1469' in summary
+    assert 'Top geographies: US (8), CL (2), IT (1)' in summary
+    assert 'Ransomware.live trend for' not in summary
+    assert 'Latest listed activity date:' not in summary
+
+
+def test_extract_major_move_events_ransomware_live_uses_full_prose_summary():
+    text = (
+        'Qilin ransomware operators have 15 public victim disclosures in the last 90 days '
+        '(1498 total listed disclosures in this ransomware.live sample). '
+        'Latest listed disclosure date is 2026-02-22. '
+        'Most frequently listed victim geographies in this sample are US (6), FR (1), NZ (1). '
+        'Most frequently listed victim sectors are Not Found (5), Manufacturing (3), Healthcare (2). '
+        'Recent listed victim examples: Example One; Example Two; Example Three. '
+        'Analyst use: Treat this as trend context.'
+    )
+    events = app_module._extract_major_move_events(  # noqa: SLF001
+        'Ransomware.live',
+        'src-prose',
+        '2026-02-23T12:23:57+00:00',
+        text,
+        ['qilin'],
+    )
+
+    assert len(events) == 1
+    summary = str(events[0]['summary'])
+    assert '90d disclosures: 15' in summary
+    assert 'Total listed: 1498' in summary
+    assert 'Top geographies: US (6), FR (1), NZ (1)' in summary
+    assert 'Top sectors: Not Found (5), Manufacturing (3), Healthcare (2)' in summary
+    assert 'Analyst use:' not in summary
 
 
 def test_validate_outbound_url_blocks_localhost():
@@ -817,6 +870,46 @@ def test_upsert_source_same_url_merges_duplicates_and_keeps_latest_id(tmp_path):
     assert kept_id == 'src-new'
     assert source_ids == ['src-new']
     assert timeline_source_id == 'src-new'
+
+
+def test_upsert_source_refresh_does_not_downgrade_rich_text_with_short_payload(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Refresh-Guard', 'Refresh downgrade guard scope')
+
+    rich_text = (
+        'APT-Refresh-Guard operators have multiple reported incidents across sectors with geographic distribution '
+        'details and recent examples. ' * 3
+    )
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        source_id = app_module._upsert_source_for_actor(  # noqa: SLF001
+            connection=connection,
+            actor_id=str(actor['id']),
+            source_name='Ransomware.live',
+            source_url='https://api.ransomware.live/v2/groupvictims/example-guard',
+            published_at='2026-02-20T00:00:00+00:00',
+            pasted_text=rich_text,
+            title='Initial rich source',
+            refresh_existing_content=True,
+        )
+        app_module._upsert_source_for_actor(  # noqa: SLF001
+            connection=connection,
+            actor_id=str(actor['id']),
+            source_name='Ransomware.live',
+            source_url='https://api.ransomware.live/v2/groupvictims/example-guard',
+            published_at='2026-02-21T00:00:00+00:00',
+            pasted_text='Short text',
+            title='Short refresh',
+            refresh_existing_content=True,
+        )
+        connection.commit()
+        row = connection.execute(
+            'SELECT id, pasted_text FROM sources WHERE actor_id = ? AND url = ?',
+            (actor['id'], 'https://api.ransomware.live/v2/groupvictims/example-guard'),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == source_id
+    assert len(str(row[1] or '')) >= len(rich_text) - 5
 
 
 def test_timeline_dedupe_prefers_latest_duplicate_event(tmp_path):

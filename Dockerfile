@@ -13,4 +13,4 @@ RUN useradd --create-home --shell /usr/sbin/nologin appuser \
 
 USER appuser
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/bin/sh", "-lc", "if [ \"${UVICORN_RELOAD:-0}\" = \"1\" ]; then exec uvicorn app:app --host 0.0.0.0 --port 8000 --reload; else exec uvicorn app:app --host 0.0.0.0 --port 8000; fi"]
