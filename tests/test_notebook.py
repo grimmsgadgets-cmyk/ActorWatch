@@ -707,6 +707,155 @@ def test_upsert_source_skips_near_duplicate_content_by_fingerprint(tmp_path):
     assert count == 1
 
 
+def test_upsert_source_same_url_merges_duplicates_and_keeps_latest_id(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-URL-Dedupe', 'URL dedupe scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, retrieved_at, pasted_text, title
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-old',
+                actor['id'],
+                'Ransomware.live',
+                'https://api.ransomware.live/v2/groupvictims/example',
+                '2026-02-20T00:00:00+00:00',
+                '2026-02-20T00:00:00+00:00',
+                'Old content',
+                'Old title',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, retrieved_at, pasted_text, title
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-new',
+                actor['id'],
+                'Ransomware.live',
+                'https://api.ransomware.live/v2/groupvictims/example',
+                '2026-02-21T00:00:00+00:00',
+                '2026-02-21T00:00:00+00:00',
+                'New content',
+                'New title',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO timeline_events (
+                id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'evt-old',
+                actor['id'],
+                '2026-02-20T00:00:00+00:00',
+                'impact',
+                'Old event',
+                'Old summary',
+                'src-old',
+                '',
+                '[]',
+            ),
+        )
+
+        kept_id = app_module._upsert_source_for_actor(  # noqa: SLF001
+            connection=connection,
+            actor_id=str(actor['id']),
+            source_name='Ransomware.live',
+            source_url='https://api.ransomware.live/v2/groupvictims/example',
+            published_at='2026-02-22T00:00:00+00:00',
+            pasted_text='Refreshed content',
+            title='Refreshed title',
+            refresh_existing_content=True,
+        )
+        connection.commit()
+
+        source_ids = [row[0] for row in connection.execute(
+            'SELECT id FROM sources WHERE actor_id = ? AND url = ?',
+            (actor['id'], 'https://api.ransomware.live/v2/groupvictims/example'),
+        ).fetchall()]
+        timeline_source_id = connection.execute(
+            'SELECT source_id FROM timeline_events WHERE id = ?',
+            ('evt-old',),
+        ).fetchone()[0]
+
+    assert kept_id == 'src-new'
+    assert source_ids == ['src-new']
+    assert timeline_source_id == 'src-new'
+
+
+def test_timeline_dedupe_prefers_latest_duplicate_event(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Timeline-Newest', 'Timeline newest dedupe scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, retrieved_at, pasted_text, title
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-older',
+                actor['id'],
+                'Example',
+                'https://example.com/older',
+                '2026-02-20T00:00:00+00:00',
+                '2026-02-20T00:00:00+00:00',
+                'APT-Timeline-Newest targeted Acme Hospital and used PowerShell execution for access.',
+                'Older report',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, retrieved_at, pasted_text, title
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-newer',
+                actor['id'],
+                'Example',
+                'https://example.com/newer',
+                '2026-02-22T00:00:00+00:00',
+                '2026-02-22T00:00:00+00:00',
+                'APT-Timeline-Newest targeted Acme Hospital and used PowerShell execution for access.',
+                'Newer report',
+            ),
+        )
+        connection.commit()
+
+    app_module.build_notebook(actor['id'], generate_questions=False, rebuild_timeline=True)
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        row = connection.execute(
+            '''
+            SELECT occurred_at, source_id
+            FROM timeline_events
+            WHERE actor_id = ?
+            ORDER BY occurred_at DESC
+            LIMIT 1
+            ''',
+            (actor['id'],),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == '2026-02-22T00:00:00+00:00'
+    assert row[1] == 'src-newer'
+
+
 def test_capability_category_from_technique_id_uses_mitre_dataset(monkeypatch):
     monkeypatch.setattr(
         app_module,

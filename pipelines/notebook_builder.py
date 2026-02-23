@@ -70,7 +70,7 @@ def build_notebook_core(
 
             deduped_timeline: list[dict[str, object]] = []
             seen_summaries: list[str] = []
-            for event in sorted(timeline_candidates, key=lambda item: str(item['occurred_at'])):
+            for event in sorted(timeline_candidates, key=lambda item: str(item['occurred_at']), reverse=True):
                 norm = normalize_text(str(event['summary']))
                 if any(token_overlap(norm, existing) >= 0.75 for existing in seen_summaries):
                     continue

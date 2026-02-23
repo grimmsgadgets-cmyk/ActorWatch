@@ -55,11 +55,31 @@ def upsert_source_for_actor(
     final_text = pasted_text
     if trigger_excerpt and trigger_excerpt not in final_text:
         final_text = f'{trigger_excerpt}\n\n{pasted_text}'
-    existing = connection.execute(
-        'SELECT id FROM sources WHERE actor_id = ? AND url = ?',
+    existing_rows = connection.execute(
+        '''
+        SELECT id
+        FROM sources
+        WHERE actor_id = ? AND url = ?
+        ORDER BY COALESCE(published_at, retrieved_at) DESC, retrieved_at DESC, id DESC
+        ''',
         (actor_id, source_url),
-    ).fetchone()
-    if existing is not None:
+    ).fetchall()
+    if existing_rows:
+        existing_id = str(existing_rows[0][0])
+        duplicate_ids = [str(row[0]) for row in existing_rows[1:]]
+        for duplicate_id in duplicate_ids:
+            connection.execute(
+                'UPDATE timeline_events SET source_id = ? WHERE source_id = ?',
+                (existing_id, duplicate_id),
+            )
+            connection.execute(
+                'UPDATE question_updates SET source_id = ? WHERE source_id = ?',
+                (existing_id, duplicate_id),
+            )
+            connection.execute(
+                'DELETE FROM sources WHERE id = ?',
+                (duplicate_id,),
+            )
         if refresh_existing_content:
             title_value = str(title or '').strip() or None
             headline_value = str(headline or '').strip() or None
@@ -94,7 +114,7 @@ def upsert_source_for_actor(
                     publisher_value,
                     site_name_value,
                     source_tier_value,
-                    existing[0],
+                    existing_id,
                 ),
             )
         else:
@@ -121,7 +141,7 @@ def upsert_source_for_actor(
                             str(publisher or '').strip() or None,
                             str(site_name or '').strip() or None,
                             str(source_tier or '').strip() or None,
-                            existing[0],
+                            existing_id,
                         ),
                     )
                 else:
@@ -145,7 +165,7 @@ def upsert_source_for_actor(
                             str(publisher or '').strip() or None,
                             str(site_name or '').strip() or None,
                             str(source_tier or '').strip() or None,
-                            existing[0],
+                            existing_id,
                         ),
                     )
         if confidence_weight is not None:
@@ -156,7 +176,7 @@ def upsert_source_for_actor(
                     SET confidence_weight = ?
                     WHERE id = ?
                     ''',
-                    (int(confidence_weight), existing[0]),
+                    (int(confidence_weight), existing_id),
                 )
             else:
                 connection.execute(
@@ -165,7 +185,7 @@ def upsert_source_for_actor(
                     SET confidence_weight = COALESCE(confidence_weight, ?)
                     WHERE id = ?
                     ''',
-                    (int(confidence_weight), existing[0]),
+                    (int(confidence_weight), existing_id),
                 )
         if fingerprint:
             if refresh_existing_content:
@@ -175,7 +195,7 @@ def upsert_source_for_actor(
                     SET source_fingerprint = ?
                     WHERE id = ?
                     ''',
-                    (fingerprint, existing[0]),
+                    (fingerprint, existing_id),
                 )
             else:
                 connection.execute(
@@ -184,9 +204,9 @@ def upsert_source_for_actor(
                     SET source_fingerprint = COALESCE(NULLIF(source_fingerprint, ''), ?)
                     WHERE id = ?
                     ''',
-                    (fingerprint, existing[0]),
+                    (fingerprint, existing_id),
                 )
-        return str(existing[0])
+        return existing_id
 
     if fingerprint:
         fingerprint_existing = connection.execute(
