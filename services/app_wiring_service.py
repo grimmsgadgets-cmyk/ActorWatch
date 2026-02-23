@@ -15,6 +15,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'run_actor_generation': deps['run_actor_generation'],
                 'enqueue_actor_generation': deps['enqueue_actor_generation'],
                 'get_ollama_status': deps['get_ollama_status'],
+                'get_actor_refresh_stats': deps['get_actor_refresh_stats'],
                 'format_duration_ms': deps['format_duration_ms'],
                 'templates': deps['templates'],
             }

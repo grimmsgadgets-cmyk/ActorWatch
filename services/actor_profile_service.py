@@ -103,10 +103,35 @@ def create_actor_profile_core(
                     duplicate = row
                     break
         if duplicate is not None:
-            raise HTTPException(
-                status_code=409,
-                detail=f'actor already exists: {duplicate[1]} ({duplicate[0]})',
-            )
+            existing_row = connection.execute(
+                '''
+                SELECT id, display_name, scope_statement, created_at, is_tracked
+                FROM actor_profiles
+                WHERE id = ?
+                ''',
+                (str(duplicate[0]),),
+            ).fetchone()
+            if existing_row is None:
+                raise HTTPException(status_code=500, detail='duplicate actor resolution failed')
+            if is_tracked and not bool(existing_row[4]):
+                connection.execute(
+                    '''
+                    UPDATE actor_profiles
+                    SET is_tracked = 1,
+                        notebook_status = 'running',
+                        notebook_message = 'Preparing notebook generation...',
+                        notebook_updated_at = ?
+                    WHERE id = ?
+                    ''',
+                    (_utc_now_iso(), str(existing_row[0])),
+                )
+                connection.commit()
+            return {
+                'id': str(existing_row[0]),
+                'display_name': str(existing_row[1]),
+                'scope_statement': existing_row[2],
+                'created_at': str(existing_row[3]),
+            }
 
         connection.execute(
             '''
@@ -410,3 +435,53 @@ def merge_actor_profiles_core(
         'source_actor_id': source_actor_id,
         'moved_counts': moved_counts,
     }
+
+
+def auto_merge_duplicate_actors_core(*, deps: dict[str, object]) -> int:
+    _db_path = deps['db_path']
+    _utc_now_iso = deps['utc_now_iso']
+    _new_id = deps['new_id']
+    merged_count = 0
+    with sqlite3.connect(_db_path()) as connection:
+        dup_keys = connection.execute(
+            '''
+            SELECT canonical_name
+            FROM actor_profiles
+            WHERE COALESCE(TRIM(canonical_name), '') <> ''
+            GROUP BY canonical_name
+            HAVING COUNT(*) > 1
+            ORDER BY canonical_name ASC
+            '''
+        ).fetchall()
+        duplicate_sets: list[tuple[str, list[str]]] = []
+        for row in dup_keys:
+            canonical = str(row[0] or '').strip()
+            members = connection.execute(
+                '''
+                SELECT a.id
+                FROM actor_profiles a
+                LEFT JOIN sources s ON s.actor_id = a.id
+                WHERE a.canonical_name = ?
+                GROUP BY a.id, a.created_at
+                ORDER BY COUNT(s.id) DESC, a.created_at ASC
+                ''',
+                (canonical,),
+            ).fetchall()
+            ids = [str(item[0]) for item in members if str(item[0] or '').strip()]
+            if len(ids) > 1:
+                duplicate_sets.append((canonical, ids))
+
+    for _canonical, ids in duplicate_sets:
+        target_id = ids[0]
+        for source_id in ids[1:]:
+            merge_actor_profiles_core(
+                target_actor_id=target_id,
+                source_actor_id=source_id,
+                deps={
+                    'db_path': _db_path,
+                    'utc_now_iso': _utc_now_iso,
+                    'new_id': _new_id,
+                },
+            )
+            merged_count += 1
+    return merged_count

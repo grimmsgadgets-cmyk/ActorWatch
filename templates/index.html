@@ -367,6 +367,17 @@
       .cmdk-empty { padding: 12px; font-size: 12px; color: #64748b; }
       .live-controls { display: inline-flex; gap: 6px; align-items: center; }
       .live-controls button { border: 1px solid #c7d4ea; background: #fff; border-radius: 999px; font-size: 11px; padding: 4px 8px; cursor: pointer; }
+      .ops-health { border: 1px solid #d9e7fb; border-radius: 8px; background: #f7fbff; padding: 8px; margin-top: 8px; }
+      .ops-health h4 { margin: 0 0 6px; font-size: 13px; }
+      .ops-health-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+      .ops-health-item { border: 1px solid #dce7f8; border-radius: 8px; background: #fff; padding: 6px; min-width: 0; }
+      .ops-health-item .label { font-size: 10px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
+      .ops-health-item .value { font-size: 13px; font-weight: 600; color: #0f172a; margin-top: 2px; overflow-wrap: anywhere; }
+      .merge-row { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #4f5e77; }
+      .merge-list { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+      .merge-list li { margin: 0; }
+      .merge-list form { display: grid; gap: 6px; }
+      .merge-list button { min-height: 32px; font-size: 12px; }
       @media (max-width: 1180px) {
         .workspace-grid { grid-template-columns: 1fr; }
         .workspace-grid .pane { min-height: auto; overflow: visible; }
@@ -421,6 +432,23 @@
             <input type="text" name="display_name" placeholder="Display name" required />
             <button class="action-button" type="submit">Add actor</button>
           </form>
+          {% if duplicate_actor_groups %}
+          <div class="merge-row">
+            <small>Duplicate actor records detected. Use one-click merge below.</small>
+            <ul class="merge-list">
+              {% for group in duplicate_actor_groups %}
+              {% for source_actor in group.source_actors %}
+              <li>
+                <form method="post" action="/actors/{{ group.target_actor.id }}/merge">
+                  <input type="hidden" name="source_actor_id" value="{{ source_actor.id }}" />
+                  <button type="submit">Merge {{ source_actor.display_name }} into {{ group.target_actor.display_name }}</button>
+                </form>
+              </li>
+              {% endfor %}
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
         </div>
 
         {% if notebook %}
@@ -593,6 +621,25 @@
           </div>
           {% endif %}
         </div>
+        {% if refresh_stats %}
+        <div class="ops-health">
+          <h4>Refresh health (at a glance)</h4>
+          <div class="ops-health-grid">
+            <div class="ops-health-item">
+              <div class="label">Feeds in backoff</div>
+              <div class="value">{{ refresh_stats.feed_state.backoff_feeds }}</div>
+            </div>
+            <div class="ops-health-item">
+              <div class="label">High confidence</div>
+              <div class="value">{{ refresh_stats.source_state.high_confidence_sources }}</div>
+            </div>
+            <div class="ops-health-item">
+              <div class="label">24h high confidence</div>
+              <div class="value">{{ refresh_stats.source_state.recent_high_confidence_sources_24h }}</div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
         {% if not notebook %}
         <div class="empty">Select an actor to open the notebook.</div>
         {% else %}

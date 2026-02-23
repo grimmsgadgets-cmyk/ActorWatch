@@ -1,9 +1,6 @@
 import sqlite3
 from pathlib import Path
 
-import pytest
-from fastapi import HTTPException
-
 from services import actor_profile_service
 from services import db_schema_service
 
@@ -13,7 +10,7 @@ def _init_db(path: Path) -> None:
         db_schema_service.ensure_schema(connection)
 
 
-def test_create_actor_profile_blocks_canonical_duplicates(tmp_path):
+def test_create_actor_profile_reuses_canonical_duplicates(tmp_path):
     db_path = tmp_path / 'actors.db'
     _init_db(db_path)
     deps = {
@@ -28,17 +25,19 @@ def test_create_actor_profile_blocks_canonical_duplicates(tmp_path):
         is_tracked=True,
         deps=deps,
     )
-    with pytest.raises(HTTPException) as exc:
-        actor_profile_service.create_actor_profile_core(
-            display_name='  akira  ',
-            scope_statement=None,
-            is_tracked=False,
-            deps={
-                **deps,
-                'new_id': lambda: 'actor-2',
-            },
-        )
-    assert exc.value.status_code == 409
+    duplicate = actor_profile_service.create_actor_profile_core(
+        display_name='  akira  ',
+        scope_statement=None,
+        is_tracked=False,
+        deps={
+            **deps,
+            'new_id': lambda: 'actor-2',
+        },
+    )
+    assert duplicate['id'] == 'actor-1'
+    with sqlite3.connect(str(db_path)) as connection:
+        count = connection.execute('SELECT COUNT(*) FROM actor_profiles').fetchone()[0]
+    assert count == 1
 
 
 def test_merge_actor_profiles_moves_records_and_removes_source(tmp_path):
@@ -127,3 +126,46 @@ def test_merge_actor_profiles_moves_records_and_removes_source(tmp_path):
             '''
         ).fetchone()
         assert feed_state == (5, 3)
+
+
+def test_auto_merge_duplicate_actors_collapses_duplicate_sets(tmp_path):
+    db_path = tmp_path / 'actors.db'
+    _init_db(db_path)
+    with sqlite3.connect(str(db_path)) as connection:
+        connection.execute(
+            '''
+            INSERT INTO actor_profiles (id, display_name, canonical_name, scope_statement, created_at, is_tracked)
+            VALUES
+            ('a1', 'Akira', 'akira', NULL, '2026-02-20T00:00:00+00:00', 1),
+            ('a2', 'AKIRA', 'akira', NULL, '2026-02-21T00:00:00+00:00', 0),
+            ('q1', 'Qilin', 'qilin', NULL, '2026-02-20T00:00:00+00:00', 1),
+            ('q2', 'QILIN', 'qilin', NULL, '2026-02-22T00:00:00+00:00', 0)
+            '''
+        )
+        connection.execute(
+            '''
+            INSERT INTO sources (id, actor_id, source_name, url, published_at, retrieved_at, pasted_text)
+            VALUES
+            ('s1', 'a1', 'Example', 'https://example.com/a1', '2026-02-22T00:00:00Z', '2026-02-22T00:00:00Z', 'text'),
+            ('s2', 'a2', 'Example', 'https://example.com/a2', '2026-02-22T00:00:00Z', '2026-02-22T00:00:00Z', 'text')
+            '''
+        )
+        connection.commit()
+
+    merged = actor_profile_service.auto_merge_duplicate_actors_core(
+        deps={
+            'db_path': lambda: str(db_path),
+            'utc_now_iso': lambda: '2026-02-23T00:00:00+00:00',
+            'new_id': lambda: 'obs-1',
+        }
+    )
+    assert merged == 2
+    with sqlite3.connect(str(db_path)) as connection:
+        akira_count = connection.execute(
+            "SELECT COUNT(*) FROM actor_profiles WHERE canonical_name = 'akira'"
+        ).fetchone()[0]
+        qilin_count = connection.execute(
+            "SELECT COUNT(*) FROM actor_profiles WHERE canonical_name = 'qilin'"
+        ).fetchone()[0]
+        assert akira_count == 1
+        assert qilin_count == 1

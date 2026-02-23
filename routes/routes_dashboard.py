@@ -19,6 +19,7 @@ def render_dashboard_root(
     _set_actor_notebook_status = deps['set_actor_notebook_status']
     _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
     _get_ollama_status = deps['get_ollama_status']
+    _get_actor_refresh_stats = deps.get('get_actor_refresh_stats')
     _format_duration_ms = deps['format_duration_ms']
     _templates = deps['templates']
 
@@ -34,6 +35,30 @@ def render_dashboard_root(
             return raw_value[:10]
 
     actors_all = _list_actor_profiles()
+    duplicate_actor_groups: list[dict[str, object]] = []
+    groups_by_canonical: dict[str, list[dict[str, object]]] = {}
+    for actor in actors_all:
+        canonical = ' '.join(str(actor.get('display_name') or '').strip().lower().split())
+        if not canonical:
+            continue
+        groups_by_canonical.setdefault(canonical, []).append(actor)
+    for canonical, items in groups_by_canonical.items():
+        if len(items) <= 1:
+            continue
+        sorted_items = sorted(
+            items,
+            key=lambda item: (
+                0 if item.get('is_tracked') else 1,
+                str(item.get('created_at') or ''),
+            ),
+        )
+        duplicate_actor_groups.append(
+            {
+                'canonical_name': canonical,
+                'target_actor': sorted_items[0],
+                'source_actors': sorted_items[1:],
+            }
+        )
     tracked_actors = [actor for actor in actors_all if actor['is_tracked']]
     for actor in tracked_actors:
         actor['last_updated_label'] = _actor_last_updated_label(actor)
@@ -50,6 +75,7 @@ def render_dashboard_root(
         selected_actor_id = tracked_actors[0]['id'] if tracked_actors else (actors_all[0]['id'] if actors_all else None)
 
     notebook: dict[str, object] | None = None
+    refresh_stats: dict[str, object] | None = None
     allowed_tiers = {'high', 'medium', 'trusted', 'context', 'unrated'}
     normalized_source_tier = str(source_tier or '').strip().lower() or None
     if normalized_source_tier not in allowed_tiers:
@@ -99,6 +125,11 @@ def render_dashboard_root(
                 actor_meta['notebook_message'] = 'Collecting actor-specific sources and rebuilding recent activity...'
                 if not notice:
                     notice = 'Collecting actor-specific sources in the background...'
+            if _get_actor_refresh_stats is not None:
+                try:
+                    refresh_stats = _get_actor_refresh_stats(selected_actor_id)
+                except Exception:
+                    refresh_stats = None
         except Exception:
             notebook = None
             if not notice:
@@ -161,6 +192,8 @@ def render_dashboard_root(
             'notice': notice,
             'ollama_status': ollama_status,
             'notebook_health': notebook_health,
+            'refresh_stats': refresh_stats,
+            'duplicate_actor_groups': duplicate_actor_groups,
         },
     )
 

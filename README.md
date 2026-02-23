@@ -23,16 +23,18 @@ platform.
 
 ## Architecture
 
-Current module layout:
+See `docs/architecture.md` for the contributor map:
 
--   `app.py` - FastAPI routes and application composition
--   `network_safety.py` - outbound URL validation and safe HTTP fetch helpers
--   `pipelines/actor_ingest.py` - source upsert and source-fingerprint dedupe logic
--   `pipelines/notebook_pipeline.py` - notebook summary/highlight synthesis helpers
--   `pipelines/notebook_builder.py` - notebook build orchestration for timeline/questions/guidance
+- request/route modules
+- service layer responsibilities
+- pipeline responsibilities
+- database ownership and refresh flow
 
-This split keeps request handling and orchestration clear while reducing
-single-file complexity.
+This is the best starting point for community contributors.
+
+For operator onboarding, screen guidance, and common admin workflows, see:
+
+- `docs/community_guide.md`
 
 ------------------------------------------------------------------------
 
@@ -104,6 +106,26 @@ number.
 
 ------------------------------------------------------------------------
 
+## Community Ops (Quick)
+
+Useful endpoints:
+
+- `GET /health`
+- `GET /actors`
+- `POST /actors`
+- `POST /actors/{target_actor_id}/merge` (form or JSON with `source_actor_id`)
+- `GET /actors/{actor_id}/refresh/stats`
+
+Auto-refresh defaults:
+
+- `AUTO_REFRESH_ENABLED=1`
+- `AUTO_REFRESH_MIN_INTERVAL_HOURS=24`
+- `AUTO_REFRESH_LOOP_SECONDS=300`
+- `AUTO_REFRESH_BATCH_SIZE=3`
+- `AUTO_MERGE_DUPLICATE_ACTORS=1`
+
+------------------------------------------------------------------------
+
 ## Stopping the Application
 
 Press:
@@ -113,6 +135,26 @@ Press:
 Then optionally clean up containers:
 
     docker compose down
+
+------------------------------------------------------------------------
+
+## Backup and Restore
+
+The SQLite database lives in Docker volume `actortracker_db`.
+
+Backup:
+
+```bash
+docker run --rm -v actortracker_actortracker_db:/from -v "$PWD":/to alpine \
+  sh -c "cp /from/app.db /to/app.db.backup"
+```
+
+Restore:
+
+```bash
+docker run --rm -v actortracker_actortracker_db:/to -v "$PWD":/from alpine \
+  sh -c "cp /from/app.db.backup /to/app.db"
+```
 
 ## Minimal Troubleshooting Checklist
 
