@@ -69,6 +69,8 @@
       .ataglance-metric { border: 1px solid #dce7f8; border-radius: 8px; background: #f8fbff; padding: 8px; min-height: 54px; }
       .ataglance-label { font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: .03em; }
       .ataglance-value { font-size: 14px; font-weight: 700; color: #0f172a; margin-top: 3px; }
+      .ataglance-value a { color: inherit; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+      .ataglance-value a:hover { text-decoration-thickness: 2px; }
       .mini-trend-inline { display: flex; align-items: flex-end; gap: 2px; margin-top: 6px; height: 20px; }
       .mini-trend-bar { width: 6px; border-radius: 2px; background: #89a8d8; }
       .mini-trend-bar.peak { background: #c44f4f; }
@@ -645,6 +647,25 @@
         {% else %}
         <div class="dashboard">
         {% set recent_change = notebook.get('recent_change_summary', {'new_reports': '0', 'targets': 'Not clear yet', 'damage': 'No clear damage outcome reported yet'}) %}
+        {% set first_new_report_url = '' %}
+        {% if notebook.top_change_signals %}
+          {% for signal in notebook.top_change_signals %}
+            {% if signal.validated_sources %}
+              {% for evidence in signal.validated_sources %}
+                {% if evidence.source_url and not first_new_report_url %}
+                  {% set first_new_report_url = evidence.source_url %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+        {% if not first_new_report_url and notebook.recent_activity_highlights %}
+          {% for highlight in notebook.recent_activity_highlights %}
+            {% if highlight.source_url and not first_new_report_url %}
+              {% set first_new_report_url = highlight.source_url %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
         <section class="card span-2 ataglance-strip" id="section-ataglance">
           <div class="ataglance-metric">
             <div class="ataglance-label">Actor</div>
@@ -652,7 +673,17 @@
           </div>
           <div class="ataglance-metric">
             <div class="ataglance-label">New Reports</div>
-            <div class="ataglance-value"><span id="recent-reports">{{ recent_change.new_reports }}</span></div>
+            <div class="ataglance-value">
+              {% if first_new_report_url %}
+              <a id="recent-reports-link" href="{{ first_new_report_url }}" target="_blank" rel="noreferrer" title="Open most recent supporting report source">
+                <span id="recent-reports">{{ recent_change.new_reports }}</span>
+              </a>
+              {% else %}
+              <a id="recent-reports-link" href="/actors/{{ notebook.actor.id }}/timeline/details" title="Open timeline details">
+                <span id="recent-reports">{{ recent_change.new_reports }}</span>
+              </a>
+              {% endif %}
+            </div>
           </div>
           <div class="ataglance-metric">
             <div class="ataglance-label">Trend</div>
