@@ -7,7 +7,7 @@ import string
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event, Lock, Thread
 from urllib.parse import urlparse
@@ -113,6 +113,8 @@ AUTO_REFRESH_ENABLED = os.environ.get('AUTO_REFRESH_ENABLED', '1').strip().lower
 AUTO_REFRESH_MIN_INTERVAL_HOURS = max(1, int(os.environ.get('AUTO_REFRESH_MIN_INTERVAL_HOURS', '24')))
 AUTO_REFRESH_LOOP_SECONDS = max(30, int(os.environ.get('AUTO_REFRESH_LOOP_SECONDS', '300')))
 AUTO_REFRESH_BATCH_SIZE = max(1, int(os.environ.get('AUTO_REFRESH_BATCH_SIZE', '3')))
+PAGE_REFRESH_AUTO_TRIGGER_MINUTES = max(1, int(os.environ.get('PAGE_REFRESH_AUTO_TRIGGER_MINUTES', '30')))
+RUNNING_STALE_RECOVERY_MINUTES = max(5, int(os.environ.get('RUNNING_STALE_RECOVERY_MINUTES', '10')))
 AUTO_MERGE_DUPLICATE_ACTORS = os.environ.get('AUTO_MERGE_DUPLICATE_ACTORS', '1').strip().lower() in {
     '1', 'true', 'yes', 'on',
 }
@@ -361,8 +363,46 @@ def _auto_refresh_loop(stop_event: Event) -> None:
     refresh_ops_service.auto_refresh_loop_core(
         stop_event=stop_event,
         loop_seconds=AUTO_REFRESH_LOOP_SECONDS,
-        run_once=lambda: _run_tracked_actor_auto_refresh_once(limit=AUTO_REFRESH_BATCH_SIZE),
+        run_once=lambda: (
+            _recover_stale_running_states(),
+            _run_tracked_actor_auto_refresh_once(limit=AUTO_REFRESH_BATCH_SIZE),
+        ),
     )
+
+
+def _recover_stale_running_states() -> int:
+    running_ids = generation_service.running_actor_ids_snapshot_core()
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max(5, RUNNING_STALE_RECOVERY_MINUTES))
+    recovered = 0
+    with sqlite3.connect(DB_PATH) as connection:
+        rows = connection.execute(
+            '''
+            SELECT id, notebook_updated_at
+            FROM actor_profiles
+            WHERE notebook_status = 'running'
+            '''
+        ).fetchall()
+        for row in rows:
+            actor_id = str(row[0] or '')
+            if not actor_id or actor_id in running_ids:
+                continue
+            updated_raw = str(row[1] or '').strip()
+            updated_dt = _parse_published_datetime(updated_raw) if updated_raw else None
+            if updated_dt is not None and updated_dt > cutoff:
+                continue
+            connection.execute(
+                '''
+                UPDATE actor_profiles
+                SET notebook_status = 'error',
+                    notebook_message = 'Previous refresh stalled and was recovered. Refresh again.',
+                    auto_refresh_last_status = 'error'
+                WHERE id = ?
+                ''',
+                (actor_id,),
+            )
+            recovered += 1
+        connection.commit()
+    return recovered
 
 
 def _sync_mitre_cache_to_store() -> None:
@@ -1883,6 +1923,7 @@ def initialize_sqlite() -> None:
             )
         except Exception:
             pass
+    _recover_stale_running_states()
 
 
 def _register_routers() -> None:
@@ -1901,6 +1942,9 @@ def _register_routers() -> None:
             'run_actor_generation': run_actor_generation,
             'enqueue_actor_generation': enqueue_actor_generation,
             'get_ollama_status': get_ollama_status,
+            'page_refresh_auto_trigger_minutes': PAGE_REFRESH_AUTO_TRIGGER_MINUTES,
+            'running_stale_recovery_minutes': RUNNING_STALE_RECOVERY_MINUTES,
+            'recover_stale_running_states': _recover_stale_running_states,
             'format_duration_ms': _format_duration_ms,
             'templates': templates,
             'enforce_request_size': _enforce_request_size,

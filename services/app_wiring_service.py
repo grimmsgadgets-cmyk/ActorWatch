@@ -16,6 +16,9 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'enqueue_actor_generation': deps['enqueue_actor_generation'],
                 'get_ollama_status': deps['get_ollama_status'],
                 'get_actor_refresh_stats': deps['get_actor_refresh_stats'],
+                'page_refresh_auto_trigger_minutes': deps['page_refresh_auto_trigger_minutes'],
+                'running_stale_recovery_minutes': deps['running_stale_recovery_minutes'],
+                'recover_stale_running_states': deps['recover_stale_running_states'],
                 'format_duration_ms': deps['format_duration_ms'],
                 'templates': deps['templates'],
             }

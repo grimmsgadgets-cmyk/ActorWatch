@@ -18,6 +18,11 @@ def mark_actor_generation_finished_core(actor_id: str) -> None:
         _ACTOR_GENERATION_RUNNING.discard(actor_id)
 
 
+def running_actor_ids_snapshot_core() -> set[str]:
+    with _ACTOR_GENERATION_LOCK:
+        return set(_ACTOR_GENERATION_RUNNING)
+
+
 def run_actor_generation_core(*, actor_id: str, deps: dict[str, object]) -> None:
     _mark_started = deps['mark_started']
     _mark_finished = deps['mark_finished']
@@ -43,7 +48,7 @@ def run_actor_generation_core(*, actor_id: str, deps: dict[str, object]) -> None
         _mark_finished(actor_id)
 
 
-def enqueue_actor_generation_core(*, actor_id: str, deps: dict[str, object]) -> None:
+def enqueue_actor_generation_core(*, actor_id: str, deps: dict[str, object]) -> bool:
     _run_actor_generation = deps['run_actor_generation']
     worker = Thread(
         target=_run_actor_generation,
@@ -52,3 +57,4 @@ def enqueue_actor_generation_core(*, actor_id: str, deps: dict[str, object]) -> 
         name=f'actor-generation-{actor_id[:8]}',
     )
     worker.start()
+    return True

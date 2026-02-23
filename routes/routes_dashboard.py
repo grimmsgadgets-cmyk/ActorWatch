@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 
 def render_dashboard_root(
@@ -20,8 +20,17 @@ def render_dashboard_root(
     _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
     _get_ollama_status = deps['get_ollama_status']
     _get_actor_refresh_stats = deps.get('get_actor_refresh_stats')
+    _page_refresh_auto_trigger_minutes = int(deps.get('page_refresh_auto_trigger_minutes', 30))
+    _running_stale_recovery_minutes = int(deps.get('running_stale_recovery_minutes', 10))
+    _recover_stale_running_states = deps.get('recover_stale_running_states')
     _format_duration_ms = deps['format_duration_ms']
     _templates = deps['templates']
+
+    if _recover_stale_running_states is not None:
+        try:
+            _recover_stale_running_states()
+        except Exception:
+            pass
 
     def _actor_last_updated_label(actor: dict[str, object]) -> str:
         raw_value = str(actor.get('notebook_updated_at') or actor.get('created_at') or '').strip()
@@ -125,6 +134,56 @@ def render_dashboard_root(
                 actor_meta['notebook_message'] = 'Collecting actor-specific sources and rebuilding recent activity...'
                 if not notice:
                     notice = 'Collecting actor-specific sources in the background...'
+            elif is_tracked and status == 'running':
+                running_since_raw = str(actor_meta.get('notebook_updated_at') or actor_meta.get('created_at') or '').strip()
+                running_stale = False
+                if running_since_raw:
+                    try:
+                        running_since = datetime.fromisoformat(running_since_raw.replace('Z', '+00:00'))
+                        if running_since.tzinfo is None:
+                            running_since = running_since.replace(tzinfo=timezone.utc)
+                        running_age = datetime.now(timezone.utc) - running_since.astimezone(timezone.utc)
+                        running_stale = running_age >= timedelta(minutes=max(5, _running_stale_recovery_minutes))
+                    except Exception:
+                        running_stale = True
+                else:
+                    running_stale = True
+                if running_stale:
+                    _set_actor_notebook_status(
+                        selected_actor_id,
+                        'running',
+                        'Detected stale running state. Re-queuing refresh...',
+                    )
+                    _enqueue_actor_generation(selected_actor_id)
+                    actor_meta['notebook_status'] = 'running'
+                    actor_meta['notebook_message'] = 'Detected stale running state. Re-queuing refresh...'
+                    if not notice:
+                        notice = 'Detected a stalled refresh and re-queued automatically.'
+            elif is_tracked and status != 'running':
+                last_run_raw = str(actor_meta.get('notebook_updated_at') or actor_meta.get('created_at') or '').strip()
+                should_trigger = False
+                if not last_run_raw:
+                    should_trigger = True
+                else:
+                    try:
+                        parsed = datetime.fromisoformat(last_run_raw.replace('Z', '+00:00'))
+                        if parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=timezone.utc)
+                        age = datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)
+                        should_trigger = age >= timedelta(minutes=max(1, _page_refresh_auto_trigger_minutes))
+                    except Exception:
+                        should_trigger = True
+                if should_trigger:
+                    _set_actor_notebook_status(
+                        selected_actor_id,
+                        'running',
+                        'Refreshing sources from page open...',
+                    )
+                    _enqueue_actor_generation(selected_actor_id)
+                    actor_meta['notebook_status'] = 'running'
+                    actor_meta['notebook_message'] = 'Refreshing sources from page open...'
+                    if not notice:
+                        notice = 'Refresh started automatically from page load.'
             if _get_actor_refresh_stats is not None:
                 try:
                     refresh_stats = _get_actor_refresh_stats(selected_actor_id)
