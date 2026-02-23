@@ -1373,6 +1373,7 @@ def _extract_major_move_events(
     occurred_at: str,
     text: str,
     actor_terms: list[str],
+    source_title: str | None = None,
 ) -> list[dict[str, object]]:
     return timeline_extraction.extract_major_move_events(
         source_name,
@@ -1380,6 +1381,7 @@ def _extract_major_move_events(
         occurred_at,
         text,
         actor_terms,
+        source_title=source_title,
         deps={
             'split_sentences': _split_sentences,
             'extract_ttp_ids': _extract_ttp_ids,

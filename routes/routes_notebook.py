@@ -239,7 +239,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 '''
                 SELECT
                     te.occurred_at, te.category, te.title, te.summary, te.target_text, te.ttp_ids_json,
-                    s.source_name, s.url, s.published_at
+                    s.source_name, s.url, s.published_at, s.title, s.headline, s.og_title, s.html_title
                 FROM timeline_events te
                 LEFT JOIN sources s ON s.id = te.source_id
                 WHERE te.actor_id = ?
@@ -261,6 +261,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     'source_name': row[6] or '',
                     'source_url': row[7] or '',
                     'source_published_at': row[8] or '',
+                    'source_title': row[9] or row[10] or row[11] or row[12] or '',
                 }
             )
 
@@ -291,6 +292,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             for item in detail_rows:
                 ttp_text = ', '.join(item['ttp_ids']) if item['ttp_ids'] else ''
                 source_block = ''
+                event_title = str(item.get('source_title') or item.get('title') or item.get('summary') or '').strip()
+                if event_title.startswith(('http://', 'https://')):
+                    event_title = str(item.get('summary') or item.get('title') or 'Untitled report').strip()
                 if item['source_url']:
                     source_name = html.escape(str(item['source_name']) or str(item['source_url']))
                     source_url = html.escape(str(item['source_url']))
@@ -304,7 +308,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     f'<div><span class="badge">{html.escape(str(item["category"]))}</span> '
                     f'<span class="muted">{html.escape(str(item["occurred_at"]))}</span></div>'
                 )
-                content.append(f'<h3>{html.escape(str(item["title"]))}</h3>')
+                content.append(f'<h3>{html.escape(event_title)}</h3>')
                 content.append(f'<div>{html.escape(str(item["summary"]))}</div>')
                 if item['target_text']:
                     content.append(f'<div class="meta"><strong>Target:</strong> {html.escape(str(item["target_text"]))}</div>')

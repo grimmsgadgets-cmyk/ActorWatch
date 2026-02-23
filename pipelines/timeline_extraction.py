@@ -88,6 +88,7 @@ def extract_major_move_events(
     occurred_at: str,
     text: str,
     actor_terms: list[str],
+    source_title: str | None = None,
     *,
     deps: dict[str, object],
 ) -> list[dict[str, object]]:
@@ -109,7 +110,10 @@ def extract_major_move_events(
             summary = summary[:260].rsplit(' ', 1)[0] + '...'
         target_hint = extract_target_hint(sentence)
         ttp_ids = _extract_ttp_ids(sentence)
-        title = f'{category.replace("_", " ").title()} move'
+        clean_source_title = ' '.join(str(source_title or '').split()).strip()
+        if clean_source_title.startswith(('http://', 'https://')):
+            clean_source_title = ''
+        title = clean_source_title or summary[:120]
         events.append(
             {
                 'id': _new_id(),

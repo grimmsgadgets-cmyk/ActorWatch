@@ -16,7 +16,7 @@ def build_notebook_core(
     actor_exists: Callable[[sqlite3.Connection, str], bool],
     build_actor_profile_from_mitre: Callable[[str], dict[str, object]],
     actor_terms_fn: Callable[[str, str, str], list[str]],
-    extract_major_move_events: Callable[[str, str, str, str, list[str]], list[dict[str, object]]],
+    extract_major_move_events: Callable[[str, str, str, str, list[str], str | None], list[dict[str, object]]],
     normalize_text: Callable[[str], str],
     token_overlap: Callable[[str, str], float],
     extract_question_sentences: Callable[[str], list[str]],
@@ -47,7 +47,7 @@ def build_notebook_core(
 
         sources = connection.execute(
             '''
-            SELECT id, source_name, url, published_at, retrieved_at, pasted_text
+            SELECT id, source_name, url, published_at, retrieved_at, pasted_text, title, headline, og_title, html_title
             FROM sources
             WHERE actor_id = ?
             ORDER BY retrieved_at ASC
@@ -61,7 +61,8 @@ def build_notebook_core(
             for source in sources:
                 occurred_at = source[3] or source[4]
                 text = source[5] or ''
-                moves = extract_major_move_events(source[1], source[0], occurred_at, text, actor_terms)
+                source_title = str(source[6] or source[7] or source[8] or source[9] or '').strip() or None
+                moves = extract_major_move_events(source[1], source[0], occurred_at, text, actor_terms, source_title)
                 if moves:
                     timeline_candidates.extend(moves[:6])
 
