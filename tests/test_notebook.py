@@ -185,7 +185,11 @@ def test_source_quality_filters_scope_recent_change_inputs(tmp_path):
         )
         connection.commit()
 
-    notebook_all = app_module._fetch_actor_notebook(actor['id'])  # noqa: SLF001
+    notebook_all = app_module._fetch_actor_notebook(  # noqa: SLF001
+        actor['id'],
+        min_confidence_weight=0,
+        source_days=3650,
+    )
     all_urls = {
         str(item.get('source_url') or '')
         for item in notebook_all.get('recent_activity_highlights', [])

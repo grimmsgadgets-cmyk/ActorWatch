@@ -10,8 +10,8 @@ def render_dashboard_root(
     actor_id: str | None,
     notice: str | None,
     source_tier: str | None,
-    min_confidence_weight: int | None,
-    source_days: int | None,
+    min_confidence_weight: str | None,
+    source_days: str | None,
     deps: dict[str, object],
 ) -> HTMLResponse:
     _list_actor_profiles = deps['list_actor_profiles']
@@ -50,7 +50,7 @@ def render_dashboard_root(
         selected_actor_id = tracked_actors[0]['id'] if tracked_actors else (actors_all[0]['id'] if actors_all else None)
 
     notebook: dict[str, object] | None = None
-    allowed_tiers = {'high', 'medium', 'trusted', 'unrated'}
+    allowed_tiers = {'high', 'medium', 'trusted', 'context', 'unrated'}
     normalized_source_tier = str(source_tier or '').strip().lower() or None
     if normalized_source_tier not in allowed_tiers:
         normalized_source_tier = None
@@ -66,6 +66,14 @@ def render_dashboard_root(
         normalized_source_days = int(source_days) if source_days is not None and int(source_days) > 0 else None
     except Exception:
         normalized_source_days = None
+    strict_default_mode = (
+        normalized_source_tier is None
+        and normalized_min_confidence_weight is None
+        and normalized_source_days is None
+    )
+    if strict_default_mode:
+        normalized_min_confidence_weight = 3
+        normalized_source_days = 90
 
     if selected_actor_id is not None:
         try:
@@ -148,6 +156,7 @@ def render_dashboard_root(
                 'source_tier': normalized_source_tier or '',
                 'min_confidence_weight': str(normalized_min_confidence_weight) if normalized_min_confidence_weight is not None else '',
                 'source_days': str(normalized_source_days) if normalized_source_days is not None else '',
+                'strict_default_mode': '1' if strict_default_mode else '0',
             },
             'notice': notice,
             'ollama_status': ollama_status,
@@ -166,8 +175,8 @@ def create_dashboard_router(*, deps: dict[str, object]) -> APIRouter:
         actor_id: str | None = None,
         notice: str | None = None,
         source_tier: str | None = None,
-        min_confidence_weight: int | None = None,
-        source_days: int | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
     ) -> HTMLResponse:
         return render_dashboard_root(
             request=request,

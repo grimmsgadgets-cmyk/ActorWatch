@@ -11,14 +11,7 @@
         const impactNode = document.getElementById("recent-impact");
 
         async function fetchLiveState() {
-          const query = new URLSearchParams(window.location.search || "");
-          const liveParams = new URLSearchParams();
-          ["source_tier", "min_confidence_weight", "source_days"].forEach((key) => {
-            const value = String(query.get(key) || "").trim();
-            if (value) liveParams.set(key, value);
-          });
-          const liveUrl = "/actors/" + encodeURIComponent(actorId) + "/ui/live" + (liveParams.toString() ? ("?" + liveParams.toString()) : "");
-          const response = await fetch(liveUrl, { headers: { "Accept": "application/json" } });
+          const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/ui/live", { headers: { "Accept": "application/json" } });
           if (!response.ok) return null;
           return response.json();
         }

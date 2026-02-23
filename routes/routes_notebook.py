@@ -321,8 +321,8 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         request: Request,
         actor_id: str,
         source_tier: str | None = None,
-        min_confidence_weight: int | None = None,
-        source_days: int | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
     ) -> HTMLResponse:
         notebook = _fetch_actor_notebook(
             actor_id,
@@ -343,8 +343,8 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
     def actor_live_state(
         actor_id: str,
         source_tier: str | None = None,
-        min_confidence_weight: int | None = None,
-        source_days: int | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
     ) -> dict[str, object]:
         notebook = _fetch_actor_notebook(
             actor_id,
@@ -422,8 +422,8 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
     def export_analyst_pack(
         actor_id: str,
         source_tier: str | None = None,
-        min_confidence_weight: int | None = None,
-        source_days: int | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
     ) -> dict[str, object]:
         notebook = _fetch_actor_notebook(
             actor_id,

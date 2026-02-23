@@ -1063,7 +1063,7 @@ def fetch_actor_notebook_core(
         }
         for row in sources
     ]
-    allowed_tiers = {'high', 'medium', 'trusted', 'unrated'}
+    allowed_tiers = {'high', 'medium', 'trusted', 'context', 'unrated'}
     normalized_source_tier = str(source_tier or '').strip().lower() or None
     if normalized_source_tier not in allowed_tiers:
         normalized_source_tier = None
@@ -1082,6 +1082,14 @@ def fetch_actor_notebook_core(
             normalized_source_days = parsed_days if parsed_days > 0 else None
         except Exception:
             normalized_source_days = None
+    strict_default_mode = (
+        normalized_source_tier is None
+        and normalized_min_confidence is None
+        and normalized_source_days is None
+    )
+    if strict_default_mode:
+        normalized_min_confidence = 3
+        normalized_source_days = 90
 
     source_cutoff_dt = (
         datetime.now(timezone.utc) - timedelta(days=normalized_source_days)
@@ -1106,10 +1114,13 @@ def fetch_actor_notebook_core(
                 source_weight = 0
             if normalized_min_confidence is not None and source_weight < normalized_min_confidence:
                 continue
+            raw_date = str(source.get('published_at') or source.get('retrieved_at') or '')
+            source_dt = _parse_published_datetime(raw_date)
+            # Undated sources remain available as context but are excluded from change scoring.
+            if source_dt is None:
+                continue
             if source_cutoff_dt is not None:
-                raw_date = str(source.get('published_at') or source.get('retrieved_at') or '')
-                source_dt = _parse_published_datetime(raw_date)
-                if source_dt is None or source_dt < source_cutoff_dt:
+                if source_dt < source_cutoff_dt:
                     continue
             filtered_sources.append(source)
         source_items_for_changes = filtered_sources
@@ -1308,6 +1319,8 @@ def fetch_actor_notebook_core(
             'total_sources': str(len(source_items)),
             'applied_sources': len(source_items_for_changes),
             'filtered_out_sources': max(0, len(source_items) - len(source_items_for_changes)),
+            'undated_excluded': '1',
+            'strict_default_mode': '1' if strict_default_mode else '0',
         },
         'environment_checks': environment_checks,
         'kpis': notebook_kpis,

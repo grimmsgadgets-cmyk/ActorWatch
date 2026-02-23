@@ -88,12 +88,15 @@ MITRE_TECHNIQUE_PHASE_CACHE: dict[str, list[str]] | None = None
 MITRE_CAMPAIGN_LINK_CACHE: dict[str, dict[str, set[str]]] | None = None
 MITRE_TECHNIQUE_INDEX_CACHE: dict[str, dict[str, str]] | None = None
 MITRE_SOFTWARE_CACHE: list[dict[str, object]] | None = None
-ACTOR_FEED_LOOKBACK_DAYS = int(os.environ.get('ACTOR_FEED_LOOKBACK_DAYS', '540'))
+ACTOR_FEED_LOOKBACK_DAYS = int(os.environ.get('ACTOR_FEED_LOOKBACK_DAYS', '180'))
 FEED_IMPORT_MAX_SECONDS = max(20, int(os.environ.get('FEED_IMPORT_MAX_SECONDS', '90')))
 FEED_FETCH_TIMEOUT_SECONDS = max(3.0, float(os.environ.get('FEED_FETCH_TIMEOUT_SECONDS', '10')))
 FEED_ENTRY_SCAN_LIMIT = max(5, int(os.environ.get('FEED_ENTRY_SCAN_LIMIT', '12')))
 FEED_IMPORTED_LIMIT = max(10, int(os.environ.get('FEED_IMPORTED_LIMIT', '30')))
 ACTOR_SEARCH_LINK_LIMIT = max(1, int(os.environ.get('ACTOR_SEARCH_LINK_LIMIT', '6')))
+FEED_REQUIRE_PUBLISHED_AT = os.environ.get('FEED_REQUIRE_PUBLISHED_AT', '1').strip().lower() in {
+    '1', 'true', 'yes', 'on',
+}
 
 CAPABILITY_GRID_KEYS = [
     'initial_access',
@@ -134,12 +137,12 @@ ATTACK_TACTIC_TO_CAPABILITY_MAP = {
     'exfiltration': 'exfiltration',
     'impact': 'impact',
 }
-DEFAULT_CTI_FEEDS = [
+PRIMARY_CTI_FEEDS = [
     ('CISA Alerts', 'https://www.cisa.gov/cybersecurity-advisories/all.xml'),
     ('CISA News', 'https://www.cisa.gov/news.xml'),
+    ('NCSC UK', 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml'),
     ('Mandiant Blog', 'https://www.mandiant.com/resources/blog/rss.xml'),
     ('Microsoft Security', 'https://www.microsoft.com/en-us/security/blog/feed/'),
-    ('NCSC UK', 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml'),
     ('Google Cloud Threat Intelligence', 'https://cloud.google.com/blog/topics/threat-intelligence/rss/'),
     ('Cisco Talos', 'https://blog.talosintelligence.com/rss/'),
     ('Palo Alto Unit 42', 'https://unit42.paloaltonetworks.com/feed/'),
@@ -154,6 +157,8 @@ DEFAULT_CTI_FEEDS = [
     ('Sophos News', 'https://news.sophos.com/en-us/feed/'),
     ('Trend Micro Research', 'https://www.trendmicro.com/en_us/research.html/rss.xml'),
     ('ESET WeLiveSecurity', 'https://www.welivesecurity.com/en/rss/feed'),
+]
+SECONDARY_CONTEXT_FEEDS = [
     ('BleepingComputer', 'https://www.bleepingcomputer.com/feed/'),
     ('The Hacker News', 'https://feeds.feedburner.com/TheHackersNews'),
     ('Krebs on Security', 'https://krebsonsecurity.com/feed/'),
@@ -161,6 +166,14 @@ DEFAULT_CTI_FEEDS = [
     ('Dark Reading', 'https://www.darkreading.com/rss.xml'),
     ('SANS Internet Storm Center', 'https://isc.sans.edu/rssfeed_full.xml'),
 ]
+EXPANDED_PRIMARY_ADVISORY_FEEDS = [
+    ('Cisco PSIRT', 'https://sec.cloudapps.cisco.com/security/center/psirtrss20/CiscoSecurityAdvisory.xml'),
+    ('Fortinet PSIRT', 'https://filestore.fortinet.com/fortiguard/rss/ir.xml'),
+    ('Ivanti Security Advisory', 'https://www.ivanti.com/blog/topics/security-advisory/rss'),
+    ('JPCERT Alerts', 'https://www.jpcert.or.jp/rss/jpcert.rdf'),
+    ('JVN Vulnerability', 'https://jvn.jp/rss/jvn.rdf'),
+]
+DEFAULT_CTI_FEEDS = PRIMARY_CTI_FEEDS + EXPANDED_PRIMARY_ADVISORY_FEEDS + SECONDARY_CONTEXT_FEEDS
 ACTOR_SEARCH_DOMAINS = [
     'cisa.gov',
     'fbi.gov',
@@ -192,6 +205,37 @@ MEDIUM_CONFIDENCE_SOURCE_DOMAINS = {
     'microsoft.com',
     'securelist.com',
 }
+SECONDARY_CONTEXT_DOMAINS = {
+    'bleepingcomputer.com',
+    'thehackernews.com',
+    'therecord.media',
+    'darkreading.com',
+    'krebsonsecurity.com',
+    'isc.sans.edu',
+}
+HIGH_CONFIDENCE_SOURCE_DOMAINS.update(
+    {
+        'jpcert.or.jp',
+        'jvn.jp',
+    }
+)
+MEDIUM_CONFIDENCE_SOURCE_DOMAINS.update(
+    {
+        'cisco.com',
+        'fortinet.com',
+        'ivanti.com',
+    }
+)
+ACTOR_SEARCH_DOMAINS.extend(
+    [
+        'jpcert.or.jp',
+        'jvn.jp',
+        'cisco.com',
+        'fortinet.com',
+        'ivanti.com',
+    ]
+)
+TRUSTED_ACTIVITY_DOMAINS = set(ACTOR_SEARCH_DOMAINS + ['attack.mitre.org'])
 QUESTION_SEED_KEYWORDS = [
     'should review',
     'should detect',
@@ -1170,6 +1214,8 @@ def _source_trust_score(url: str) -> int:
         return 4
     if any(host == domain or host.endswith(f'.{domain}') for domain in MEDIUM_CONFIDENCE_SOURCE_DOMAINS):
         return 3
+    if any(host == domain or host.endswith(f'.{domain}') for domain in SECONDARY_CONTEXT_DOMAINS):
+        return 1
     if any(host == domain or host.endswith(f'.{domain}') for domain in TRUSTED_ACTIVITY_DOMAINS):
         return 2
     return 0
@@ -1183,6 +1229,8 @@ def _source_tier_label(url: str) -> str:
         return 'medium'
     if score == 2:
         return 'trusted'
+    if score == 1:
+        return 'context'
     return 'unrated'
 
 
@@ -1559,6 +1607,7 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
             'feed_entry_scan_limit': FEED_ENTRY_SCAN_LIMIT,
             'feed_imported_limit': FEED_IMPORTED_LIMIT,
             'actor_search_link_limit': ACTOR_SEARCH_LINK_LIMIT,
+            'feed_require_published_at': FEED_REQUIRE_PUBLISHED_AT,
             'actor_exists': actor_exists,
             'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
             'actor_terms': _actor_terms,
@@ -1789,8 +1838,8 @@ def root(
     actor_id: str | None = None,
     notice: str | None = None,
     source_tier: str | None = None,
-    min_confidence_weight: int | None = None,
-    source_days: int | None = None,
+    min_confidence_weight: str | None = None,
+    source_days: str | None = None,
 ) -> HTMLResponse:
     return routes_dashboard.render_dashboard_root(
         request=request,

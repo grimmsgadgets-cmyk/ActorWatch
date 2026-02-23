@@ -8,6 +8,7 @@ def import_default_feeds_for_actor_core(*, actor_id: str, deps: dict[str, object
     _feed_entry_scan_limit = deps['feed_entry_scan_limit']
     _feed_imported_limit = deps['feed_imported_limit']
     _actor_search_link_limit = deps['actor_search_link_limit']
+    _feed_require_published_at = deps['feed_require_published_at']
 
     return _pipeline_import_default_feeds_for_actor_core(
         actor_id,
@@ -19,6 +20,7 @@ def import_default_feeds_for_actor_core(*, actor_id: str, deps: dict[str, object
         feed_entry_scan_limit=_feed_entry_scan_limit,
         feed_imported_limit=_feed_imported_limit,
         actor_search_link_limit=_actor_search_link_limit,
+        feed_require_published_at=_feed_require_published_at,
         deps={
             'actor_exists': deps['actor_exists'],
             'build_actor_profile_from_mitre': deps['build_actor_profile_from_mitre'],

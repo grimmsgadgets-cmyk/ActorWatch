@@ -16,6 +16,7 @@ def import_default_feeds_for_actor_core(
     feed_entry_scan_limit: int = 12,
     feed_imported_limit: int = 30,
     actor_search_link_limit: int = 6,
+    feed_require_published_at: bool = True,
     deps: dict[str, object],
 ) -> int:
     _actor_exists = deps['actor_exists']
@@ -103,6 +104,13 @@ def import_default_feeds_for_actor_core(
                     )
                     if actor_terms and not _text_contains_actor_term(combined_text, actor_terms):
                         continue
+                    resolved_published = str(derived.get('published_at') or '').strip() or (
+                        str(entry.get('published_at') or '').strip()
+                    )
+                    if feed_require_published_at and not resolved_published:
+                        continue
+                    if not _within_lookback(resolved_published or None, actor_feed_lookback_days):
+                        continue
                     resolved_title = str(derived.get('title') or title_text or '').strip() or None
                     resolved_headline = str(derived.get('headline') or title_text or '').strip() or None
                     resolved_og_title = str(derived.get('og_title') or title_text or '').strip() or None
@@ -112,7 +120,7 @@ def import_default_feeds_for_actor_core(
                         actor_id,
                         str(derived['source_name']),
                         str(derived['source_url']),
-                        str(derived['published_at']) if derived['published_at'] else None,
+                        resolved_published or None,
                         str(derived['pasted_text']),
                         str(derived['trigger_excerpt']) if derived['trigger_excerpt'] else None,
                         resolved_title,
@@ -128,13 +136,16 @@ def import_default_feeds_for_actor_core(
                         return imported
                 except Exception:
                     if actor_terms and _text_contains_actor_term(entry_context, actor_terms):
+                        fallback_published = str(entry.get('published_at') or '').strip()
+                        if feed_require_published_at and not fallback_published:
+                            continue
                         try:
                             _upsert_source_for_actor(
                                 connection,
                                 actor_id,
                                 feed_name,
                                 link,
-                                entry.get('published_at'),
+                                fallback_published or None,
                                 title_text or f'Actor-matched feed item from {feed_name}.',
                                 title_text or None,
                                 title_text or None,
@@ -174,12 +185,17 @@ def import_default_feeds_for_actor_core(
                 )
                 if actor_terms and not _text_contains_actor_term(combined_text, actor_terms):
                     continue
+                resolved_search_published = str(derived.get('published_at') or '').strip()
+                if feed_require_published_at and not resolved_search_published:
+                    continue
+                if not _within_lookback(resolved_search_published or None, actor_feed_lookback_days):
+                    continue
                 _upsert_source_for_actor(
                     connection,
                     actor_id,
                     str(derived['source_name']),
                     str(derived['source_url']),
-                    str(derived['published_at']) if derived['published_at'] else None,
+                    resolved_search_published or None,
                     str(derived['pasted_text']),
                     str(derived['trigger_excerpt']) if derived['trigger_excerpt'] else None,
                     str(derived.get('title') or '') or None,

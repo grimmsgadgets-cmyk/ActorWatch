@@ -415,7 +415,6 @@
         </div>
 
         {% if notebook %}
-        {% set sidebar_quality_filters = notebook.get('source_quality_filters', source_quality_filters or {}) %}
         <div class="sidebar-card">
           <h3>Quick actions</h3>
           <div class="quick-actions">
@@ -426,7 +425,7 @@
               <button type="submit">Auto-note changes</button>
             </form>
             <a href="/actors/{{ notebook.actor.id }}/timeline/details">Open timeline details</a>
-            <a href="/actors/{{ notebook.actor.id }}/export/analyst-pack.json{% if sidebar_quality_filters.get('source_tier') or sidebar_quality_filters.get('min_confidence_weight') or sidebar_quality_filters.get('source_days') %}?{% endif %}{% if sidebar_quality_filters.get('source_tier') %}source_tier={{ sidebar_quality_filters.get('source_tier') }}{% endif %}{% if sidebar_quality_filters.get('min_confidence_weight') %}{% if sidebar_quality_filters.get('source_tier') %}&{% endif %}min_confidence_weight={{ sidebar_quality_filters.get('min_confidence_weight') }}{% endif %}{% if sidebar_quality_filters.get('source_days') %}{% if sidebar_quality_filters.get('source_tier') or sidebar_quality_filters.get('min_confidence_weight') %}&{% endif %}source_days={{ sidebar_quality_filters.get('source_days') }}{% endif %}" target="_blank" rel="noreferrer">Export analyst pack</a>
+            <a href="/actors/{{ notebook.actor.id }}/export/analyst-pack.json" target="_blank" rel="noreferrer">Export analyst pack</a>
           </div>
           <details class="compact secondary-action">
             <summary class="action-button">More actions</summary>
@@ -742,47 +741,10 @@
           {% endif %}
           {% if notebook.recent_activity_highlights %}
           {% set quality_filters = notebook.get('source_quality_filters', source_quality_filters or {}) %}
-          <div class="helper-box" style="margin-bottom:8px;">
-            <h4>Source Quality Filter</h4>
-            <form method="get" action="/" class="filter-row">
-              <input type="hidden" name="actor_id" value="{{ selected_actor_id }}" />
-              <label>
-                Tier
-                <select name="source_tier">
-                  <option value="" {% if not quality_filters.get('source_tier') %}selected{% endif %}>Any</option>
-                  <option value="high" {% if quality_filters.get('source_tier') == 'high' %}selected{% endif %}>High</option>
-                  <option value="medium" {% if quality_filters.get('source_tier') == 'medium' %}selected{% endif %}>Medium</option>
-                  <option value="trusted" {% if quality_filters.get('source_tier') == 'trusted' %}selected{% endif %}>Trusted</option>
-                  <option value="unrated" {% if quality_filters.get('source_tier') == 'unrated' %}selected{% endif %}>Unrated</option>
-                </select>
-              </label>
-              <label>
-                Min Weight
-                <select name="min_confidence_weight">
-                  <option value="" {% if not quality_filters.get('min_confidence_weight') %}selected{% endif %}>Any</option>
-                  <option value="2" {% if quality_filters.get('min_confidence_weight') == '2' %}selected{% endif %}>2+</option>
-                  <option value="3" {% if quality_filters.get('min_confidence_weight') == '3' %}selected{% endif %}>3+</option>
-                  <option value="4" {% if quality_filters.get('min_confidence_weight') == '4' %}selected{% endif %}>4</option>
-                </select>
-              </label>
-              <label>
-                Days
-                <select name="source_days">
-                  <option value="" {% if not quality_filters.get('source_days') %}selected{% endif %}>Any</option>
-                  <option value="30" {% if quality_filters.get('source_days') == '30' %}selected{% endif %}>30</option>
-                  <option value="60" {% if quality_filters.get('source_days') == '60' %}selected{% endif %}>60</option>
-                  <option value="90" {% if quality_filters.get('source_days') == '90' %}selected{% endif %}>90</option>
-                  <option value="180" {% if quality_filters.get('source_days') == '180' %}selected{% endif %}>180</option>
-                </select>
-              </label>
-              <button type="submit">Apply</button>
-              <a href="/?actor_id={{ selected_actor_id }}">Clear</a>
-            </form>
-            <p class="inline-note">
-              Applied to recent highlights and change-detection synthesis.
-              Using {{ quality_filters.get('applied_sources', 0) }} of {{ quality_filters.get('total_sources', 0) }} sources{% if quality_filters.get('filtered_out_sources', 0) %} (filtered out: {{ quality_filters.get('filtered_out_sources', 0) }}){% endif %}.
-            </p>
-          </div>
+          <p class="inline-note">
+            Built from fresh, higher-confidence reporting.
+            Using {{ quality_filters.get('applied_sources', 0) }} of {{ quality_filters.get('total_sources', 0) }} sources{% if quality_filters.get('filtered_out_sources', 0) %} (filtered out: {{ quality_filters.get('filtered_out_sources', 0) }}){% endif %}.
+          </p>
           <p><strong>What changed recently (AI reviewed):</strong></p>
           {% if notebook.top_change_signals %}
           <div class="change-list" id="latest-sources-list">
