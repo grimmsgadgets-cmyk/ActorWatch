@@ -82,15 +82,15 @@ def test_ransomware_live_ingest_builds_actionable_summary():
     assert len(saved) == 1
     record = saved[0]
     assert record['source_name'] == 'Ransomware.live'
-    assert 'activity update' in str(record['title']).lower()
-    assert 'who:' in str(record['trigger_excerpt']).lower()
-    assert 'what:' in str(record['trigger_excerpt']).lower()
-    assert 'when:' in str(record['trigger_excerpt']).lower()
-    assert 'who:' in str(record['pasted_text']).lower()
-    assert 'what:' in str(record['pasted_text']).lower()
-    assert 'when:' in str(record['pasted_text']).lower()
-    assert 'where:' in str(record['pasted_text']).lower()
-    assert 'how/targets:' in str(record['pasted_text']).lower()
+    assert 'disclosure and targeting update' in str(record['title']).lower()
+    assert 'who:' not in str(record['trigger_excerpt']).lower()
+    assert 'what:' not in str(record['trigger_excerpt']).lower()
+    assert 'when:' not in str(record['trigger_excerpt']).lower()
+    assert 'who:' not in str(record['pasted_text']).lower()
+    assert 'what:' not in str(record['pasted_text']).lower()
+    assert 'when:' not in str(record['pasted_text']).lower()
+    assert 'where:' not in str(record['pasted_text']).lower()
+    assert 'how/targets:' not in str(record['pasted_text']).lower()
     assert 'Acme Health' in str(record['pasted_text'])
     assert 'trend context' in str(record['pasted_text']).lower()
     assert record['refresh_existing_content'] is True

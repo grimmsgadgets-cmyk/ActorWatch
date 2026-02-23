@@ -157,26 +157,25 @@ def import_ransomware_live_actor_activity_core(
         examples = '; '.join(lines[:3])
         recent_examples = ', '.join(recent_victim_examples[:3]) if recent_victim_examples else ''
         title = (
-            f'{group.capitalize()} ransomware activity update: who/what/when/where/how'
+            f'{group.capitalize()} ransomware disclosure and targeting update'
             if recent_90 > 0
-            else f'{group.capitalize()} ransomware activity update'
+            else f'{group.capitalize()} ransomware disclosure update'
         )
         trigger_excerpt = (
-            f'Who: {group.capitalize()} operators. What: {recent_90} disclosures in the last 90 days. '
-            f'When: latest listed disclosure date {latest_attack_label or "unknown"}.'
+            f'{group.capitalize()} has {recent_90} listed victim disclosures in the last 90 days; '
+            f'latest listed disclosure date is {latest_attack_label or "unknown"}.'
             if recent_examples
-            else f'Who: {group.capitalize()} operators. When: latest listed disclosure date {latest_attack_label or "unknown"}.'
+            else f'{group.capitalize()} latest listed disclosure date is {latest_attack_label or "unknown"}.'
             if latest_attack_label
-            else f'Who: {group.capitalize()} operators. Public disclosure activity observed in ransomware.live.'
+            else f'{group.capitalize()} public disclosure activity observed in ransomware.live.'
         )
         summary = (
-            f'Who: {group.capitalize()} ransomware operators.\n'
-            f'What: {recent_90} public victim disclosures in the last 90 days '
-            f'({len(data)} total listed disclosures in this ransomware.live sample).\n'
-            f'When: Latest listed disclosure date is {latest_attack_label or "unknown"}.\n'
-            f'Where: Most frequently listed victim geographies in this sample: {countries_text}.\n'
-            f'How/Targets: Most frequently listed victim sectors: {sectors_text}. '
-            f'Recent listed victim examples: {examples}.\n'
+            f'{group.capitalize()} ransomware operators have {recent_90} public victim disclosures in the last 90 days '
+            f'({len(data)} total listed disclosures in this ransomware.live sample). '
+            f'Latest listed disclosure date is {latest_attack_label or "unknown"}. '
+            f'Most frequently listed victim geographies in this sample are {countries_text}. '
+            f'Most frequently listed victim sectors are {sectors_text}. '
+            f'Recent listed victim examples: {examples}. '
             'Analyst use: Treat this as trend context, then pivot to victim-specific reporting for TTPs and detections.'
         )
         _upsert_source_for_actor(

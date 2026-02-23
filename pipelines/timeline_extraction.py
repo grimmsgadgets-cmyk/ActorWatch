@@ -96,6 +96,64 @@ def extract_major_move_events(
     _extract_ttp_ids = deps['extract_ttp_ids']
     _new_id = deps['new_id']
 
+    source_name_lower = str(source_name or '').strip().lower()
+    if 'ransomware.live' in source_name_lower:
+        synthesis_fields: dict[str, str] = {}
+        for label in ('Who:', 'What:', 'When:', 'Where:', 'How/Targets:'):
+            pattern = rf'{re.escape(label)}\s*([^\n]+)'
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = ' '.join(match.group(1).split()).strip()
+                if value:
+                    synthesis_fields[label] = value
+        if synthesis_fields:
+            prose_parts: list[str] = []
+            who = synthesis_fields.get('Who:', '')
+            what = synthesis_fields.get('What:', '')
+            when = synthesis_fields.get('When:', '')
+            where = synthesis_fields.get('Where:', '')
+            how_targets = synthesis_fields.get('How/Targets:', '')
+            if who and what:
+                prose_parts.append(f'{who} {what}')
+            elif who:
+                prose_parts.append(who)
+            elif what:
+                prose_parts.append(what)
+            if when:
+                prose_parts.append(when)
+            if where:
+                prose_parts.append(f'Geographies: {where}')
+            if how_targets:
+                prose_parts.append(f'Sectors/targets: {how_targets}')
+            summary = ' '.join(part.rstrip('. ') + '.' for part in prose_parts if part.strip())
+            if len(summary) > 420:
+                summary = summary[:420].rsplit(' ', 1)[0] + '...'
+            clean_source_title = ' '.join(str(source_title or '').split()).strip()
+            if clean_source_title.startswith(('http://', 'https://')):
+                clean_source_title = ''
+            if 'who/what/when/where/how' in clean_source_title.lower():
+                actor_hint = ''
+                if actor_terms:
+                    actor_hint = str(actor_terms[0]).strip().title()
+                clean_source_title = (
+                    f'{actor_hint} ransomware disclosure and targeting update'
+                    if actor_hint
+                    else 'Ransomware disclosure and targeting update'
+                )
+            return [
+                {
+                    'id': _new_id(),
+                    'occurred_at': occurred_at,
+                    'category': 'impact',
+                    'title': clean_source_title or 'Ransomware activity update',
+                    'summary': summary,
+                    'source_id': source_id,
+                    'source_name': source_name,
+                    'target_text': '',
+                    'ttp_ids': [],
+                }
+            ]
+
     events: list[dict[str, object]] = []
     for sentence in _split_sentences(text):
         if not sentence_mentions_actor_terms(sentence, actor_terms):

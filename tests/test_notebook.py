@@ -575,6 +575,31 @@ def test_extract_major_move_events_behavior_classifies_and_targets():
     assert 'Acme Hospital' in str(events[0]['target_text'])
 
 
+def test_extract_major_move_events_ransomware_live_keeps_full_structured_synthesis():
+    events = app_module._extract_major_move_events(  # noqa: SLF001
+        'Ransomware.live',
+        'src-1',
+        '2026-02-23T11:57:55.045635+00:00',
+        (
+            'Who: Qilin ransomware operators.\n'
+            'What: 15 public victim disclosures in the last 90 days.\n'
+            'When: Latest listed disclosure date is 2026-02-22.\n'
+            'Where: US (6), FR (1), NZ (1).\n'
+            'How/Targets: Manufacturing (3), Healthcare (2).'
+        ),
+        ['qilin'],
+    )
+
+    assert len(events) == 1
+    assert events[0]['category'] == 'impact'
+    assert 'Qilin ransomware operators.' in str(events[0]['summary'])
+    assert '15 public victim disclosures in the last 90 days.' in str(events[0]['summary'])
+    assert 'Geographies: US (6), FR (1), NZ (1).' in str(events[0]['summary'])
+    assert 'Who:' not in str(events[0]['summary'])
+    assert 'What:' not in str(events[0]['summary'])
+    assert 'When:' not in str(events[0]['summary'])
+
+
 def test_validate_outbound_url_blocks_localhost():
     with pytest.raises(app_module.HTTPException):
         app_module._validate_outbound_url('http://localhost/internal')  # noqa: SLF001
