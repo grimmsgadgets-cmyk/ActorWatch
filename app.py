@@ -243,6 +243,16 @@ ACTOR_SEARCH_DOMAINS.extend(
         'cisco.com',
         'fortinet.com',
         'ivanti.com',
+        'cloud.google.com',
+        'proofpoint.com',
+        'redcanary.com',
+        'huntress.com',
+        'arcticwolf.com',
+        'rapid7.com',
+        'sophos.com',
+        'trendmicro.com',
+        'welivesecurity.com',
+        'eset.com',
     ]
 )
 TRUSTED_ACTIVITY_DOMAINS = set(ACTOR_SEARCH_DOMAINS + ['attack.mitre.org'])
@@ -1630,6 +1640,8 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
             'pipeline_import_default_feeds_for_actor_core': pipeline_import_default_feeds_for_actor_core,
             'db_path': lambda: DB_PATH,
             'default_cti_feeds': DEFAULT_CTI_FEEDS,
+            'primary_cti_feeds': PRIMARY_CTI_FEEDS + EXPANDED_PRIMARY_ADVISORY_FEEDS,
+            'secondary_context_feeds': SECONDARY_CONTEXT_FEEDS,
             'actor_feed_lookback_days': ACTOR_FEED_LOOKBACK_DAYS,
             'feed_import_max_seconds': FEED_IMPORT_MAX_SECONDS,
             'feed_fetch_timeout_seconds': FEED_FETCH_TIMEOUT_SECONDS,

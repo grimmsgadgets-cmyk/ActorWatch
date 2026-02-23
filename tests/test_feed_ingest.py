@@ -200,7 +200,11 @@ def test_feed_ingest_incremental_checkpoint_skips_older_entries(tmp_path):
             ],
             'text_contains_actor_term': lambda _text, _terms: True,
             'within_lookback': lambda _published_at, _days: True,
-            'parse_published_datetime': lambda value: datetime.fromisoformat(str(value).replace('Z', '+00:00')),
+            'parse_published_datetime': (
+                lambda value: datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+                if str(value or '').strip()
+                else None
+            ),
             'derive_source_from_url': lambda link, **_kwargs: {
                 'source_name': 'Example',
                 'source_url': link,
@@ -292,3 +296,65 @@ def test_feed_ingest_backs_off_after_repeated_failures(tmp_path):
 
     assert imported == 0
     assert called['fetch'] == 0
+
+
+def test_feed_ingest_caps_secondary_context_volume(tmp_path):
+    db_path = tmp_path / 'feed_ingest.db'
+    actor_id = 'actor-5'
+    _seed_actor_db(db_path, actor_id, 'Akira')
+
+    secondary_feeds = [
+        ('Secondary A', 'https://sec.example/a.xml'),
+        ('Secondary B', 'https://sec.example/b.xml'),
+        ('Secondary C', 'https://sec.example/c.xml'),
+        ('Secondary D', 'https://sec.example/d.xml'),
+        ('Secondary E', 'https://sec.example/e.xml'),
+    ]
+    saved: list[str] = []
+
+    imported = import_default_feeds_for_actor_core(
+        actor_id,
+        db_path=str(db_path),
+        default_cti_feeds=[],
+        primary_cti_feeds=[],
+        secondary_context_feeds=secondary_feeds,
+        actor_feed_lookback_days=180,
+        feed_imported_limit=10,
+        deps={
+            'actor_exists': lambda connection, _actor_id: True,
+            'build_actor_profile_from_mitre': lambda _name: {'group_name': 'Akira', 'aliases_csv': 'Akira'},
+            'actor_terms': lambda *_args: ['akira'],
+            'actor_query_feeds': lambda _terms: [],
+            'import_ransomware_live_actor_activity': lambda *_args: 0,
+            'safe_http_get': lambda url, timeout=10.0: _OkResponse(text=url),
+            'parse_feed_entries': lambda xml: [
+                {'title': 'Akira update', 'link': f'{xml}/post', 'published_at': '2026-02-23T00:00:00Z'}
+            ],
+            'text_contains_actor_term': lambda _text, _terms: True,
+            'within_lookback': lambda _published_at, _days: True,
+            'parse_published_datetime': (
+                lambda value: datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+                if str(value or '').strip()
+                else None
+            ),
+            'derive_source_from_url': lambda link, **_kwargs: {
+                'source_name': 'Example',
+                'source_url': link,
+                'published_at': '2026-02-23T00:00:00Z',
+                'pasted_text': 'Akira details',
+                'trigger_excerpt': 'Akira details',
+                'title': 'Akira details',
+                'headline': None,
+                'og_title': None,
+                'html_title': None,
+                'publisher': 'Example',
+                'site_name': 'Example',
+            },
+            'upsert_source_for_actor': lambda _connection, _actor_id, _name, source_url, *_args: saved.append(source_url),
+            'duckduckgo_actor_search_urls': lambda _terms, limit=1: [],
+            'utc_now_iso': lambda: '2026-02-23T00:00:00+00:00',
+        },
+    )
+
+    assert imported == 3
+    assert len(saved) == 3

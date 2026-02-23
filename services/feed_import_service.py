@@ -2,6 +2,8 @@ def import_default_feeds_for_actor_core(*, actor_id: str, deps: dict[str, object
     _pipeline_import_default_feeds_for_actor_core = deps['pipeline_import_default_feeds_for_actor_core']
     _db_path = deps['db_path']
     _default_cti_feeds = deps['default_cti_feeds']
+    _primary_cti_feeds = deps.get('primary_cti_feeds')
+    _secondary_context_feeds = deps.get('secondary_context_feeds')
     _actor_feed_lookback_days = deps['actor_feed_lookback_days']
     _feed_import_max_seconds = deps['feed_import_max_seconds']
     _feed_fetch_timeout_seconds = deps['feed_fetch_timeout_seconds']
@@ -14,6 +16,8 @@ def import_default_feeds_for_actor_core(*, actor_id: str, deps: dict[str, object
         actor_id,
         db_path=_db_path(),
         default_cti_feeds=_default_cti_feeds,
+        primary_cti_feeds=_primary_cti_feeds,
+        secondary_context_feeds=_secondary_context_feeds,
         actor_feed_lookback_days=_actor_feed_lookback_days,
         feed_import_max_seconds=_feed_import_max_seconds,
         feed_fetch_timeout_seconds=_feed_fetch_timeout_seconds,

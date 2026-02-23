@@ -166,6 +166,8 @@ def import_default_feeds_for_actor_core(
     *,
     db_path: str,
     default_cti_feeds: list[tuple[str, str]],
+    primary_cti_feeds: list[tuple[str, str]] | None = None,
+    secondary_context_feeds: list[tuple[str, str]] | None = None,
     actor_feed_lookback_days: int,
     feed_import_max_seconds: int = 90,
     feed_fetch_timeout_seconds: float = 10.0,
@@ -210,10 +212,24 @@ def import_default_feeds_for_actor_core(
             str(mitre_profile.get('aliases_csv') or ''),
         )
 
-        feed_list: list[tuple[str, str]] = list(default_cti_feeds)
-        feed_list.extend(_actor_query_feeds(actor_terms))
+        primary_feeds = list(primary_cti_feeds) if primary_cti_feeds is not None else list(default_cti_feeds)
+        secondary_feeds = list(secondary_context_feeds) if secondary_context_feeds is not None else []
+        actor_query_feeds = _actor_query_feeds(actor_terms)
+        feed_list: list[tuple[str, str]] = primary_feeds + actor_query_feeds + secondary_feeds
+        secondary_feed_keys = {(name, url) for name, url in secondary_feeds}
+        secondary_import_cap = max(3, int(max(10, int(feed_imported_limit)) * 0.35))
+        secondary_imported = 0
         feed_state = _load_actor_feed_state(connection, actor_id)
-        feed_list = sorted(feed_list, key=lambda feed: _feed_priority_key(feed, feed_state))
+        primary_and_query = primary_feeds + actor_query_feeds
+        prioritized_primary_and_query = sorted(
+            primary_and_query,
+            key=lambda feed: _feed_priority_key(feed, feed_state),
+        )
+        prioritized_secondary = sorted(
+            secondary_feeds,
+            key=lambda feed: _feed_priority_key(feed, feed_state),
+        )
+        feed_list = prioritized_primary_and_query + prioritized_secondary
         seen_links: set[str] = set()
 
         imported += _import_ransomware_live_actor_activity(connection, actor_id, actor_terms)
@@ -221,6 +237,9 @@ def import_default_feeds_for_actor_core(
         for feed_name, feed_url in feed_list:
             if time.perf_counter() >= deadline:
                 break
+            is_secondary_feed = (feed_name, feed_url) in secondary_feed_keys
+            if is_secondary_feed and secondary_imported >= secondary_import_cap:
+                continue
             state_key = (feed_name, feed_url)
             state = dict(feed_state.get(state_key, {}))
             now_utc = datetime.now(timezone.utc)
@@ -324,6 +343,8 @@ def import_default_feeds_for_actor_core(
                     )
                     imported += 1
                     imported_from_feed += 1
+                    if is_secondary_feed:
+                        secondary_imported += 1
                     resolved_dt = _parse_published_datetime(resolved_published or None)
                     if resolved_dt is not None and (
                         latest_imported_published_dt is None or resolved_dt > latest_imported_published_dt
@@ -373,6 +394,8 @@ def import_default_feeds_for_actor_core(
                             )
                             imported += 1
                             imported_from_feed += 1
+                            if is_secondary_feed:
+                                secondary_imported += 1
                             fallback_dt = _parse_published_datetime(fallback_published or None)
                             if fallback_dt is not None and (
                                 latest_imported_published_dt is None or fallback_dt > latest_imported_published_dt
