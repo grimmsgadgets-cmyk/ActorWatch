@@ -37,6 +37,9 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
     return _pipeline_fetch_actor_notebook_core(
         actor_id,
         db_path=_db_path(),
+        source_tier=deps.get('source_tier'),
+        min_confidence_weight=deps.get('min_confidence_weight'),
+        source_days=deps.get('source_days'),
         deps={
             'parse_published_datetime': deps['parse_published_datetime'],
             'safe_json_string_list': deps['safe_json_string_list'],
@@ -71,6 +74,7 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
             'compact_timeline_rows': deps['compact_timeline_rows'],
             'actor_terms': deps['actor_terms'],
             'build_recent_activity_highlights': deps['build_recent_activity_highlights'],
+            'build_top_change_signals': deps['build_top_change_signals'],
             'build_recent_activity_synthesis': deps['build_recent_activity_synthesis'],
             'recent_change_summary': deps['recent_change_summary'],
             'build_environment_checks': deps['build_environment_checks'],

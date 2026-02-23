@@ -9,6 +9,9 @@ def render_dashboard_root(
     background_tasks: BackgroundTasks,
     actor_id: str | None,
     notice: str | None,
+    source_tier: str | None,
+    min_confidence_weight: int | None,
+    source_days: int | None,
     deps: dict[str, object],
 ) -> HTMLResponse:
     _list_actor_profiles = deps['list_actor_profiles']
@@ -47,14 +50,37 @@ def render_dashboard_root(
         selected_actor_id = tracked_actors[0]['id'] if tracked_actors else (actors_all[0]['id'] if actors_all else None)
 
     notebook: dict[str, object] | None = None
+    allowed_tiers = {'high', 'medium', 'trusted', 'unrated'}
+    normalized_source_tier = str(source_tier or '').strip().lower() or None
+    if normalized_source_tier not in allowed_tiers:
+        normalized_source_tier = None
+    try:
+        normalized_min_confidence_weight = (
+            max(0, min(4, int(min_confidence_weight)))
+            if min_confidence_weight is not None
+            else None
+        )
+    except Exception:
+        normalized_min_confidence_weight = None
+    try:
+        normalized_source_days = int(source_days) if source_days is not None and int(source_days) > 0 else None
+    except Exception:
+        normalized_source_days = None
+
     if selected_actor_id is not None:
         try:
-            notebook = _fetch_actor_notebook(selected_actor_id)
+            notebook = _fetch_actor_notebook(
+                selected_actor_id,
+                source_tier=normalized_source_tier,
+                min_confidence_weight=normalized_min_confidence_weight,
+                source_days=normalized_source_days,
+            )
             actor_meta = notebook.get('actor', {}) if isinstance(notebook, dict) else {}
             is_tracked = bool(actor_meta.get('is_tracked'))
             status = str(actor_meta.get('notebook_status') or '')
-            needs_activity = not bool(notebook.get('recent_activity_highlights'))
-            if is_tracked and needs_activity and status != 'running':
+            source_count = int(notebook.get('counts', {}).get('sources', 0)) if isinstance(notebook, dict) else 0
+            needs_bootstrap = source_count == 0
+            if is_tracked and needs_bootstrap and status != 'running':
                 _set_actor_notebook_status(
                     selected_actor_id,
                     'running',
@@ -118,6 +144,11 @@ def render_dashboard_root(
             'all_actors': actors_all,
             'selected_actor_id': selected_actor_id,
             'notebook': notebook,
+            'source_quality_filters': {
+                'source_tier': normalized_source_tier or '',
+                'min_confidence_weight': str(normalized_min_confidence_weight) if normalized_min_confidence_weight is not None else '',
+                'source_days': str(normalized_source_days) if normalized_source_days is not None else '',
+            },
             'notice': notice,
             'ollama_status': ollama_status,
             'notebook_health': notebook_health,
@@ -134,12 +165,18 @@ def create_dashboard_router(*, deps: dict[str, object]) -> APIRouter:
         background_tasks: BackgroundTasks,
         actor_id: str | None = None,
         notice: str | None = None,
+        source_tier: str | None = None,
+        min_confidence_weight: int | None = None,
+        source_days: int | None = None,
     ) -> HTMLResponse:
         return render_dashboard_root(
             request=request,
             background_tasks=background_tasks,
             actor_id=actor_id,
             notice=notice,
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
             deps=deps,
         )
 

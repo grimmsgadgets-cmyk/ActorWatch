@@ -57,6 +57,7 @@ from pipelines.notebook_pipeline import fetch_actor_notebook_core as pipeline_fe
 from pipelines.notebook_pipeline import build_recent_activity_highlights as pipeline_build_recent_activity_highlights
 from pipelines.notebook_pipeline import latest_reporting_recency_label as pipeline_latest_reporting_recency_label
 from pipelines.notebook_pipeline import recent_change_summary as pipeline_recent_change_summary
+from pipelines.notebook_pipeline import build_top_change_signals as pipeline_build_top_change_signals
 from pipelines.requirements_pipeline import generate_actor_requirements_core as pipeline_generate_actor_requirements_core
 from pipelines.source_derivation import canonical_group_domain as pipeline_canonical_group_domain
 from pipelines.source_derivation import derive_source_from_url_core as pipeline_derive_source_from_url_core
@@ -176,6 +177,21 @@ ACTOR_SEARCH_DOMAINS = [
     'ransomware.live',
 ]
 TRUSTED_ACTIVITY_DOMAINS = set(ACTOR_SEARCH_DOMAINS + ['attack.mitre.org'])
+HIGH_CONFIDENCE_SOURCE_DOMAINS = {
+    'cisa.gov',
+    'fbi.gov',
+    'ncsc.gov.uk',
+    'attack.mitre.org',
+}
+MEDIUM_CONFIDENCE_SOURCE_DOMAINS = {
+    'mandiant.com',
+    'crowdstrike.com',
+    'sentinelone.com',
+    'talosintelligence.com',
+    'unit42.paloaltonetworks.com',
+    'microsoft.com',
+    'securelist.com',
+}
 QUESTION_SEED_KEYWORDS = [
     'should review',
     'should detect',
@@ -222,6 +238,9 @@ TRUST_PROXY_HEADERS = os.environ.get('TRUST_PROXY_HEADERS', '0').strip().lower()
 }
 RATE_LIMIT_ENABLED = os.environ.get('RATE_LIMIT_ENABLED', '1').strip().lower() not in {
     '0', 'false', 'no', 'off',
+}
+SOURCE_QUALITY_OVERWRITE_ON_UPSERT = os.environ.get('SOURCE_QUALITY_OVERWRITE_ON_UPSERT', '0').strip().lower() in {
+    '1', 'true', 'yes', 'on',
 }
 RATE_LIMIT_WINDOW_SECONDS = max(1, int(os.environ.get('RATE_LIMIT_WINDOW_SECONDS', '60')))
 RATE_LIMIT_DEFAULT_PER_MINUTE = max(1, int(os.environ.get('RATE_LIMIT_DEFAULT_PER_MINUTE', '60')))
@@ -1135,8 +1154,36 @@ def _build_recent_activity_highlights(
             'split_sentences': _split_sentences,
             'looks_like_navigation_noise': _looks_like_navigation_noise,
             'format_date_or_unknown': _format_date_or_unknown,
+            'source_trust_score': _source_trust_score,
         },
     )
+
+
+def _source_trust_score(url: str) -> int:
+    try:
+        host = (urlparse(url).hostname or '').strip('.').lower()
+    except Exception:
+        return 0
+    if not host:
+        return 0
+    if any(host == domain or host.endswith(f'.{domain}') for domain in HIGH_CONFIDENCE_SOURCE_DOMAINS):
+        return 4
+    if any(host == domain or host.endswith(f'.{domain}') for domain in MEDIUM_CONFIDENCE_SOURCE_DOMAINS):
+        return 3
+    if any(host == domain or host.endswith(f'.{domain}') for domain in TRUSTED_ACTIVITY_DOMAINS):
+        return 2
+    return 0
+
+
+def _source_tier_label(url: str) -> str:
+    score = _source_trust_score(url)
+    if score >= 4:
+        return 'high'
+    if score == 3:
+        return 'medium'
+    if score == 2:
+        return 'trusted'
+    return 'unrated'
 
 
 def _extract_target_from_activity_text(text: str) -> str:
@@ -1332,6 +1379,24 @@ def _ollama_generate_questions(actor_name: str, scope_statement: str | None, exc
     )
 
 
+def _ollama_review_change_signals(
+    actor_name: str,
+    source_items: list[dict[str, object]],
+    recent_activity_highlights: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return analyst_text_service.ollama_review_change_signals_core(
+        actor_name,
+        source_items,
+        recent_activity_highlights,
+        deps={
+            'ollama_available': _ollama_available,
+            'get_env': os.environ.get,
+            'http_post': httpx.post,
+            'parse_published_datetime': _parse_published_datetime,
+        },
+    )
+
+
 def actor_exists(connection: sqlite3.Connection, actor_id: str) -> bool:
     return actor_profile_service.actor_exists_core(connection, actor_id)
 
@@ -1423,7 +1488,15 @@ def _upsert_source_for_actor(
     html_title: str | None = None,
     publisher: str | None = None,
     site_name: str | None = None,
+    source_tier: str | None = None,
+    confidence_weight: int | None = None,
 ) -> str:
+    resolved_source_tier = str(source_tier or '').strip() or _source_tier_label(source_url)
+    resolved_confidence_weight = (
+        int(confidence_weight)
+        if confidence_weight is not None
+        else int(_source_trust_score(source_url))
+    )
     return source_store_service.upsert_source_for_actor_core(
         connection=connection,
         actor_id=actor_id,
@@ -1438,6 +1511,9 @@ def _upsert_source_for_actor(
         html_title=html_title,
         publisher=publisher,
         site_name=site_name,
+        source_tier=resolved_source_tier,
+        confidence_weight=resolved_confidence_weight,
+        overwrite_source_quality=SOURCE_QUALITY_OVERWRITE_ON_UPSERT,
         deps={
             'source_fingerprint': _source_fingerprint,
             'new_id': lambda: str(uuid.uuid4()),
@@ -1555,17 +1631,35 @@ def build_notebook(
     )
 
 
-def _fetch_actor_notebook(actor_id: str) -> dict[str, object]:
+def _fetch_actor_notebook(
+    actor_id: str,
+    *,
+    source_tier: str | None = None,
+    min_confidence_weight: int | None = None,
+    source_days: int | None = None,
+) -> dict[str, object]:
     return notebook_service.fetch_actor_notebook_wrapper_core(
         actor_id=actor_id,
-        deps=_fetch_actor_notebook_deps(),
+        deps=_fetch_actor_notebook_deps(
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        ),
     )
 
 
-def _fetch_actor_notebook_deps() -> dict[str, object]:
+def _fetch_actor_notebook_deps(
+    *,
+    source_tier: str | None = None,
+    min_confidence_weight: int | None = None,
+    source_days: int | None = None,
+) -> dict[str, object]:
     return {
         'pipeline_fetch_actor_notebook_core': pipeline_fetch_actor_notebook_core,
         'db_path': _db_path,
+        'source_tier': source_tier,
+        'min_confidence_weight': min_confidence_weight,
+        'source_days': source_days,
         'parse_published_datetime': _parse_published_datetime,
         'safe_json_string_list': _safe_json_string_list,
         'actor_signal_categories': _actor_signal_categories,
@@ -1599,6 +1693,8 @@ def _fetch_actor_notebook_deps() -> dict[str, object]:
         'compact_timeline_rows': _compact_timeline_rows,
         'actor_terms': _actor_terms,
         'build_recent_activity_highlights': _build_recent_activity_highlights,
+        'build_top_change_signals': pipeline_build_top_change_signals,
+        'ollama_review_change_signals': _ollama_review_change_signals,
         'build_recent_activity_synthesis': _build_recent_activity_synthesis,
         'recent_change_summary': _recent_change_summary,
         'build_environment_checks': _build_environment_checks,
@@ -1692,12 +1788,18 @@ def root(
     background_tasks: BackgroundTasks,
     actor_id: str | None = None,
     notice: str | None = None,
+    source_tier: str | None = None,
+    min_confidence_weight: int | None = None,
+    source_days: int | None = None,
 ) -> HTMLResponse:
     return routes_dashboard.render_dashboard_root(
         request=request,
         background_tasks=background_tasks,
         actor_id=actor_id,
         notice=notice,
+        source_tier=source_tier,
+        min_confidence_weight=min_confidence_weight,
+        source_days=source_days,
         deps={
             'list_actor_profiles': list_actor_profiles,
             'fetch_actor_notebook': _fetch_actor_notebook,

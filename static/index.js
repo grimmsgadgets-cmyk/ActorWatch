@@ -3,12 +3,22 @@
         if (!actorId) return;
 
         const liveIndicator = document.getElementById("live-indicator");
+        const notebookHealthChip = document.getElementById("notebook-health-chip");
+        const notebookHealthMessage = document.getElementById("notebook-health-message");
+        const notebookHealthProgress = document.getElementById("notebook-health-progress");
         const reportNode = document.getElementById("recent-reports");
         const targetsNode = document.getElementById("recent-targets");
         const impactNode = document.getElementById("recent-impact");
 
         async function fetchLiveState() {
-          const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/ui/live", { headers: { "Accept": "application/json" } });
+          const query = new URLSearchParams(window.location.search || "");
+          const liveParams = new URLSearchParams();
+          ["source_tier", "min_confidence_weight", "source_days"].forEach((key) => {
+            const value = String(query.get(key) || "").trim();
+            if (value) liveParams.set(key, value);
+          });
+          const liveUrl = "/actors/" + encodeURIComponent(actorId) + "/ui/live" + (liveParams.toString() ? ("?" + liveParams.toString()) : "");
+          const response = await fetch(liveUrl, { headers: { "Accept": "application/json" } });
           if (!response.ok) return null;
           return response.json();
         }
@@ -18,6 +28,27 @@
           if (liveIndicator) {
             const state = String(data.notebook_status || "idle");
             liveIndicator.textContent = "Live: " + state;
+          }
+          if (notebookHealthChip && notebookHealthMessage) {
+            const state = String(data.notebook_status || "idle").toLowerCase();
+            let chipClass = "status-idle";
+            let message = "Notebook status unknown.";
+            if (state === "running") {
+              chipClass = "status-running";
+              message = String(data.notebook_message || "Refreshing notebook...");
+            } else if (state === "ready") {
+              chipClass = "status-ready";
+              message = String(data.notebook_message || "Notebook is ready.");
+            } else if (state === "error") {
+              chipClass = "status-error";
+              message = String(data.notebook_message || "Refresh failed.");
+            } else if (state === "idle") {
+              chipClass = "status-idle";
+              message = String(data.notebook_message || "Notebook is idle.");
+            }
+            notebookHealthChip.className = "notice status-chip " + chipClass;
+            notebookHealthMessage.textContent = message;
+            if (notebookHealthProgress) notebookHealthProgress.style.display = state === "running" ? "" : "none";
           }
           const recent = data.recent_change_summary || {};
           if (reportNode && recent.new_reports !== undefined) reportNode.textContent = String(recent.new_reports);

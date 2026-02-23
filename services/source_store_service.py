@@ -42,6 +42,9 @@ def upsert_source_for_actor_core(
     html_title: str | None,
     publisher: str | None,
     site_name: str | None,
+    source_tier: str | None,
+    confidence_weight: int | None,
+    overwrite_source_quality: bool,
     deps: dict[str, object],
 ) -> str:
     _source_fingerprint = deps['source_fingerprint']
@@ -62,6 +65,9 @@ def upsert_source_for_actor_core(
         html_title=html_title,
         publisher=publisher,
         site_name=site_name,
+        source_tier=source_tier,
+        confidence_weight=confidence_weight,
+        overwrite_source_quality=overwrite_source_quality,
         build_fingerprint=_source_fingerprint,
         new_id=_new_id,
         now_iso=_now_iso,

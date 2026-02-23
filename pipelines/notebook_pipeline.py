@@ -269,6 +269,125 @@ def recent_change_summary(
     }
 
 
+def build_top_change_signals(
+    recent_activity_highlights: list[dict[str, object]],
+    *,
+    limit: int = 3,
+) -> list[dict[str, object]]:
+    def _norm_text(value: object) -> str:
+        return ' '.join(str(value or '').strip().lower().split())
+
+    def _is_generic_noise(item: dict[str, object]) -> bool:
+        title = _norm_text(item.get('evidence_title'))
+        text = _norm_text(item.get('text'))
+        source_label = _norm_text(item.get('evidence_source_label') or item.get('source_name'))
+        category = _norm_text(item.get('category'))
+        has_structured_signal = bool(str(item.get('ttp_ids') or '').strip() or str(item.get('target_text') or '').strip())
+        combined = f'{title} {text}'
+        if (
+            'victim disclosures in the last 90 days' in combined
+            or 'total public victim disclosures' in combined
+            or 'activity synthesis' in combined
+            or 'trend for' in combined
+            or 'tempo, geography' in combined
+        ):
+            return True
+        if (
+            ('ransomware.live' in source_label or 'ransomware.live' in _norm_text(item.get('source_url')))
+            and category in {'impact', 'activity synthesis'}
+            and not has_structured_signal
+        ):
+            return True
+        return False
+
+    def _int_value(value: object) -> int:
+        try:
+            return int(str(value or '0').strip() or '0')
+        except Exception:
+            return 0
+
+    def _is_change_signal(item: dict[str, object]) -> bool:
+        if _is_generic_noise(item):
+            return False
+        ttp_csv = str(item.get('ttp_ids') or '').strip()
+        if ttp_csv:
+            return True
+        target_text = str(item.get('target_text') or '').strip()
+        if target_text:
+            return True
+        if _int_value(item.get('corroboration_sources')) >= 2:
+            return True
+        text = str(item.get('text') or '').strip().lower()
+        if any(
+            token in text
+            for token in (
+                'first observed',
+                'newly observed',
+                'new campaign',
+                'shift',
+                'pivot',
+                'lateral movement',
+                'beacon',
+                'c2',
+                'command and control',
+                'exploit',
+                'ransom',
+                'encrypt',
+            )
+        ):
+            return True
+        return False
+
+    def _signal_score(item: dict[str, object]) -> int:
+        score = _int_value(item.get('corroboration_sources'))
+        if str(item.get('ttp_ids') or '').strip():
+            score += 3
+        if str(item.get('target_text') or '').strip():
+            score += 2
+        if str(item.get('category') or '').strip().lower() not in {'', 'activity synthesis'}:
+            score += 1
+        return score
+
+    if limit <= 0:
+        return []
+
+    filtered = [
+        item
+        for item in recent_activity_highlights
+        if isinstance(item, dict) and _is_change_signal(item)
+    ]
+    filtered.sort(key=_signal_score, reverse=True)
+
+    picked: list[dict[str, object]] = []
+    seen_fingerprints: set[str] = set()
+    seen_domains: set[str] = set()
+    for item in filtered:
+        fingerprint = (
+            _norm_text(item.get('source_url'))
+            + '|'
+            + _norm_text(item.get('evidence_title'))
+            + '|'
+            + _norm_text(item.get('text'))
+        )
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
+        domain_key = str(
+            item.get('evidence_group_domain')
+            or item.get('evidence_source_label')
+            or item.get('source_name')
+            or 'unknown'
+        ).strip().lower()
+        if domain_key in seen_domains:
+            continue
+        seen_domains.add(domain_key)
+        picked.append(item)
+        if len(picked) >= limit:
+            break
+
+    return picked[:limit]
+
+
 def build_recent_activity_highlights(
     timeline_items: list[dict[str, object]],
     sources: list[dict[str, object]],
@@ -289,10 +408,34 @@ def build_recent_activity_highlights(
     extract_ttp_ids: Callable[[str], list[str]],
     split_sentences: Callable[[str], list[str]],
     looks_like_navigation_noise: Callable[[str], bool],
+    source_trust_score: Callable[[str], int] | None = None,
 ) -> list[dict[str, str | None]]:
+    def _host_from_domain(domain: str) -> str:
+        return (domain or '').strip().split(':', 1)[0].strip('.').lower()
+
+    def _domain_matches_trusted(domain: str) -> bool:
+        host = _host_from_domain(domain)
+        if not host:
+            return False
+        for trusted in trusted_activity_domains:
+            candidate = _host_from_domain(str(trusted))
+            if not candidate:
+                continue
+            if host == candidate or host.endswith(f'.{candidate}'):
+                return True
+        return False
+
     def _is_trusted_domain(url: str) -> bool:
         domain = source_domain(url)
-        return bool(domain and any(d in domain for d in trusted_activity_domains))
+        return _domain_matches_trusted(domain)
+
+    def _domain_trust_points(url: str) -> int:
+        if callable(source_trust_score):
+            try:
+                return max(0, int(source_trust_score(url)))
+            except Exception:
+                return 0
+        return 2 if _is_trusted_domain(url) else 0
 
     def _actor_specific_text(text: str, terms: list[str]) -> bool:
         return bool(text and terms and sentence_mentions_actor_terms(text, terms))
@@ -378,8 +521,7 @@ def build_recent_activity_highlights(
         source_url = str(candidate.get('source_url') or '')
         corroboration_sources = len(signal_domains.get(signal_key, set()))
         score = _recency_points(str(candidate.get('date_value') or ''))
-        if _is_trusted_domain(source_url):
-            score += 2
+        score += _domain_trust_points(source_url)
         if corroboration_sources >= 3:
             score += 3
         elif corroboration_sources == 2:
@@ -428,6 +570,7 @@ def build_recent_activity_highlights(
                 'evidence_group_domain': canonical_group_domain(source) if source else (source_domain(source_url) or 'unknown-source'),
                 'source_published_at': str(source['published_at']) if source and source.get('published_at') else None,
                 'corroboration_sources': str(candidate.get('corroboration_sources') or '0'),
+                'source_trust_score': str(_domain_trust_points(source_url)),
                 'freshness_label': freshness_label,
                 'freshness_class': freshness_class,
             }
@@ -507,6 +650,9 @@ def fetch_actor_notebook_core(
     actor_id: str,
     *,
     db_path: str,
+    source_tier: str | None = None,
+    min_confidence_weight: int | None = None,
+    source_days: int | None = None,
     deps: dict[str, object],
 ) -> dict[str, object]:
     _parse_published_datetime = deps['parse_published_datetime']
@@ -541,6 +687,8 @@ def fetch_actor_notebook_core(
     _compact_timeline_rows = deps['compact_timeline_rows']
     _actor_terms = deps['actor_terms']
     _build_recent_activity_highlights = deps['build_recent_activity_highlights']
+    _build_top_change_signals = deps.get('build_top_change_signals', build_top_change_signals)
+    _ollama_review_change_signals = deps.get('ollama_review_change_signals', lambda *_args, **_kwargs: [])
     _build_recent_activity_synthesis = deps['build_recent_activity_synthesis']
     _recent_change_summary = deps['recent_change_summary']
     _build_environment_checks = deps['build_environment_checks']
@@ -566,7 +714,8 @@ def fetch_actor_notebook_core(
             '''
             SELECT
                 id, source_name, url, published_at, retrieved_at, pasted_text,
-                title, headline, og_title, html_title, publisher, site_name
+                title, headline, og_title, html_title, publisher, site_name,
+                source_tier, confidence_weight
             FROM sources
             WHERE actor_id = ?
             ORDER BY COALESCE(published_at, retrieved_at) DESC
@@ -909,8 +1058,87 @@ def fetch_actor_notebook_core(
             'html_title': row[9],
             'publisher': row[10],
             'site_name': row[11],
+            'source_tier': row[12],
+            'confidence_weight': row[13],
         }
         for row in sources
+    ]
+    allowed_tiers = {'high', 'medium', 'trusted', 'unrated'}
+    normalized_source_tier = str(source_tier or '').strip().lower() or None
+    if normalized_source_tier not in allowed_tiers:
+        normalized_source_tier = None
+
+    normalized_min_confidence: int | None = None
+    if min_confidence_weight is not None:
+        try:
+            normalized_min_confidence = max(0, min(4, int(min_confidence_weight)))
+        except Exception:
+            normalized_min_confidence = None
+
+    normalized_source_days: int | None = None
+    if source_days is not None:
+        try:
+            parsed_days = int(source_days)
+            normalized_source_days = parsed_days if parsed_days > 0 else None
+        except Exception:
+            normalized_source_days = None
+
+    source_cutoff_dt = (
+        datetime.now(timezone.utc) - timedelta(days=normalized_source_days)
+        if normalized_source_days is not None
+        else None
+    )
+
+    source_items_for_changes = source_items
+    if (
+        normalized_source_tier is not None
+        or normalized_min_confidence is not None
+        or source_cutoff_dt is not None
+    ):
+        filtered_sources: list[dict[str, object]] = []
+        for source in source_items:
+            source_tier_value = str(source.get('source_tier') or '').strip().lower() or 'unrated'
+            if normalized_source_tier is not None and source_tier_value != normalized_source_tier:
+                continue
+            try:
+                source_weight = int(source.get('confidence_weight') or 0)
+            except Exception:
+                source_weight = 0
+            if normalized_min_confidence is not None and source_weight < normalized_min_confidence:
+                continue
+            if source_cutoff_dt is not None:
+                raw_date = str(source.get('published_at') or source.get('retrieved_at') or '')
+                source_dt = _parse_published_datetime(raw_date)
+                if source_dt is None or source_dt < source_cutoff_dt:
+                    continue
+            filtered_sources.append(source)
+        source_items_for_changes = filtered_sources
+
+    allowed_source_ids_for_changes = {
+        str(source.get('id') or '').strip()
+        for source in source_items_for_changes
+        if str(source.get('id') or '').strip()
+    }
+    timeline_items_for_changes = (
+        [
+            item
+            for item in timeline_items
+            if str(item.get('source_id') or '').strip() in allowed_source_ids_for_changes
+        ]
+        if (
+            normalized_source_tier is not None
+            or normalized_min_confidence is not None
+            or source_cutoff_dt is not None
+        )
+        else timeline_items
+    )
+    timeline_recent_items_for_changes = [
+        item
+        for item in timeline_items_for_changes
+        if (
+            (dt := _parse_published_datetime(str(item.get('occurred_at') or ''))) is not None
+            and dt >= cutoff_90
+        )
     ]
     mitre_profile = _build_actor_profile_from_mitre(str(actor['display_name']))
     actor_profile_summary = str(mitre_profile['summary'])
@@ -923,7 +1151,10 @@ def fetch_actor_notebook_core(
             for item in top_techniques
             if item.get('technique_id')
         }
-    emerging_techniques = _emerging_techniques_from_timeline(timeline_recent_items, known_technique_ids)
+    emerging_techniques = _emerging_techniques_from_timeline(
+        timeline_recent_items_for_changes,
+        known_technique_ids,
+    )
     emerging_technique_ids = [str(item.get('technique_id') or '') for item in emerging_techniques]
     emerging_techniques_with_dates = [
         {
@@ -939,11 +1170,103 @@ def fetch_actor_notebook_core(
         str(mitre_profile.get('group_name') or ''),
         str(mitre_profile.get('aliases_csv') or ''),
     )
-    recent_activity_highlights = _build_recent_activity_highlights(timeline_items, source_items, actor_terms)
+    recent_activity_highlights = _build_recent_activity_highlights(
+        timeline_items_for_changes,
+        source_items_for_changes,
+        actor_terms,
+    )
+    llm_change_signals_raw = _ollama_review_change_signals(
+        str(actor.get('display_name') or ''),
+        source_items_for_changes,
+        recent_activity_highlights,
+    )
+    llm_change_signals = (
+        [item for item in llm_change_signals_raw if isinstance(item, dict)]
+        if isinstance(llm_change_signals_raw, list)
+        else []
+    )
+
+    # Carry over freshness metadata from known sources referenced in validated evidence.
+    highlight_by_url = {
+        str(item.get('source_url') or '').strip(): item
+        for item in recent_activity_highlights
+        if str(item.get('source_url') or '').strip()
+    }
+    for item in llm_change_signals:
+        evidence_values = item.get('validated_sources')
+        if not isinstance(evidence_values, list):
+            continue
+        for evidence in evidence_values:
+            if not isinstance(evidence, dict):
+                continue
+            source_url = str(evidence.get('source_url') or '').strip()
+            if not source_url:
+                continue
+            original = highlight_by_url.get(source_url)
+            if not original:
+                continue
+            evidence.setdefault('freshness_label', str(original.get('freshness_label') or ''))
+            evidence.setdefault('freshness_class', str(original.get('freshness_class') or 'badge'))
+            evidence.setdefault('source_date', str(evidence.get('source_date') or original.get('date') or ''))
+
+    top_change_signals = [
+        item
+        for item in llm_change_signals[:3]
+        if str(item.get('change_summary') or '').strip()
+        and isinstance(item.get('validated_sources'), list)
+        and len(item.get('validated_sources') or []) > 0
+    ]
+    if not top_change_signals:
+        deterministic_signals = _build_top_change_signals(recent_activity_highlights, limit=3)
+        for item in deterministic_signals:
+            evidence_url = str(item.get('source_url') or '').strip()
+            evidence_date = str(item.get('source_published_at') or item.get('date') or '').strip()
+            evidence_label = str(item.get('evidence_source_label') or item.get('source_name') or evidence_url).strip()
+            proof = ' '.join(str(item.get('text') or '').split()).strip()[:220]
+            corroboration = int(str(item.get('corroboration_sources') or '0') or '0')
+            confidence = 'high' if corroboration >= 3 else 'medium' if corroboration >= 2 else 'low'
+
+            window_days = '90'
+            observed_dt = _parse_published_datetime(evidence_date)
+            if observed_dt is not None:
+                age_days = max(0, (datetime.now(timezone.utc) - observed_dt).days)
+                if age_days <= 30:
+                    window_days = '30'
+                elif age_days <= 60:
+                    window_days = '60'
+
+            top_change_signals.append(
+                {
+                    'change_summary': str(item.get('evidence_title') or item.get('text') or '').strip()[:180],
+                    'change_why_new': str(item.get('text') or '').strip()[:300],
+                    'category': str(item.get('category') or ''),
+                    'ttp_ids': str(item.get('ttp_ids') or ''),
+                    'target_text': str(item.get('target_text') or ''),
+                    'change_window_days': window_days,
+                    'change_confidence': confidence,
+                    'validated_source_count': str(max(1, corroboration)),
+                    'validated_sources': [
+                        {
+                            'source_url': evidence_url,
+                            'source_label': evidence_label,
+                            'source_date': evidence_date,
+                            'proof': proof,
+                            'freshness_label': str(item.get('freshness_label') or ''),
+                            'freshness_class': str(item.get('freshness_class') or 'badge'),
+                        }
+                    ]
+                    if evidence_url
+                    else [],
+                }
+            )
     recent_activity_synthesis = _build_recent_activity_synthesis(recent_activity_highlights)
-    recent_change_summary = _recent_change_summary(timeline_recent_items, recent_activity_highlights, source_items)
+    recent_change_summary = _recent_change_summary(
+        timeline_recent_items_for_changes,
+        recent_activity_highlights,
+        source_items_for_changes,
+    )
     environment_checks = _build_environment_checks(
-        timeline_recent_items,
+        timeline_recent_items_for_changes,
         recent_activity_highlights,
         top_techniques,
     )
@@ -975,8 +1298,17 @@ def fetch_actor_notebook_core(
         'timeline_graph': timeline_graph,
         'timeline_compact_rows': timeline_compact_rows,
         'recent_activity_highlights': recent_activity_highlights,
+        'top_change_signals': top_change_signals,
         'recent_activity_synthesis': recent_activity_synthesis,
         'recent_change_summary': recent_change_summary,
+        'source_quality_filters': {
+            'source_tier': normalized_source_tier or '',
+            'min_confidence_weight': str(normalized_min_confidence) if normalized_min_confidence is not None else '',
+            'source_days': str(normalized_source_days) if normalized_source_days is not None else '',
+            'total_sources': str(len(source_items)),
+            'applied_sources': len(source_items_for_changes),
+            'filtered_out_sources': max(0, len(source_items) - len(source_items_for_changes)),
+        },
         'environment_checks': environment_checks,
         'kpis': notebook_kpis,
         'ioc_items': [

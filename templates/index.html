@@ -415,6 +415,7 @@
         </div>
 
         {% if notebook %}
+        {% set sidebar_quality_filters = notebook.get('source_quality_filters', source_quality_filters or {}) %}
         <div class="sidebar-card">
           <h3>Quick actions</h3>
           <div class="quick-actions">
@@ -425,7 +426,7 @@
               <button type="submit">Auto-note changes</button>
             </form>
             <a href="/actors/{{ notebook.actor.id }}/timeline/details">Open timeline details</a>
-            <a href="/actors/{{ notebook.actor.id }}/export/analyst-pack.json" target="_blank" rel="noreferrer">Export analyst pack</a>
+            <a href="/actors/{{ notebook.actor.id }}/export/analyst-pack.json{% if sidebar_quality_filters.get('source_tier') or sidebar_quality_filters.get('min_confidence_weight') or sidebar_quality_filters.get('source_days') %}?{% endif %}{% if sidebar_quality_filters.get('source_tier') %}source_tier={{ sidebar_quality_filters.get('source_tier') }}{% endif %}{% if sidebar_quality_filters.get('min_confidence_weight') %}{% if sidebar_quality_filters.get('source_tier') %}&{% endif %}min_confidence_weight={{ sidebar_quality_filters.get('min_confidence_weight') }}{% endif %}{% if sidebar_quality_filters.get('source_days') %}{% if sidebar_quality_filters.get('source_tier') or sidebar_quality_filters.get('min_confidence_weight') %}&{% endif %}source_days={{ sidebar_quality_filters.get('source_days') }}{% endif %}" target="_blank" rel="noreferrer">Export analyst pack</a>
           </div>
           <details class="compact secondary-action">
             <summary class="action-button">More actions</summary>
@@ -570,12 +571,10 @@
 
       <main class="main">
         <div class="top-status-row">
-          <div class="notice status-chip status-{{ notebook_health.state }}">
-            <strong>Notebook health:</strong> {{ notebook_health.message }}
-            <div class="status-meta">Last refresh: {{ notebook_health.last_refresh_duration }} | Sources processed: {{ notebook_health.last_refresh_sources }}</div>
-            {% if notebook and notebook.actor.notebook_status == 'running' %}
-            <div class="progress-wrap"><div class="progress-bar"></div></div>
-            {% endif %}
+          <div id="notebook-health-chip" class="notice status-chip status-{{ notebook_health.state }}">
+            <strong>Notebook health:</strong> <span id="notebook-health-message">{{ notebook_health.message }}</span>
+            <div class="status-meta">Last refresh: <span id="notebook-health-duration">{{ notebook_health.last_refresh_duration }}</span> | Sources processed: <span id="notebook-health-sources">{{ notebook_health.last_refresh_sources }}</span></div>
+            <div id="notebook-health-progress" class="progress-wrap" {% if not notebook or notebook.actor.notebook_status != 'running' %}style="display:none;"{% endif %}><div class="progress-bar"></div></div>
           </div>
           {% if notice %}
           <div class="notice status-chip">{{ notice }}</div>
@@ -742,70 +741,90 @@
           </div>
           {% endif %}
           {% if notebook.recent_activity_highlights %}
-          <p><strong>Top 3 changes:</strong></p>
-          {% set latest_diverse = namespace(items=[], seen_domains=[]) %}
-          {% for item in notebook.recent_activity_highlights %}
-          {% set domain_key = (item.evidence_group_domain or item.evidence_source_label or item.source_name or 'unknown')|lower %}
-          {% if domain_key not in latest_diverse.seen_domains %}
-          {% set _ = latest_diverse.items.append(item) %}
-          {% set _ = latest_diverse.seen_domains.append(domain_key) %}
-          {% endif %}
-          {% endfor %}
-          <div class="change-list" id="latest-sources-list">
-            {% for item in latest_diverse.items[:3] %}
-            {% set raw_title = (item.evidence_title or 'Untitled article') %}
-            {% if raw_title.startswith('http://') or raw_title.startswith('https://') or (raw_title.count('/') >= 2 and ' ' not in raw_title) %}
-            {% set display_title = 'Untitled article' %}
-            {% else %}
-            {% set display_title = raw_title %}
-            {% endif %}
-            <div class="change-row" data-source-date="{{ item.date }}">
-              <div class="change-row-main">
-                <div class="change-row-title">{{ display_title }}</div>
-                <div><span class="badge">{{ item.date }}</span> <span class="badge {{ item.freshness_class }}">{{ item.freshness_label }}</span></div>
-              </div>
-              <div class="change-row-source">
-                {% if item.source_url %}
-                <a class="source-title-link" href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ item.evidence_source_label or item.source_name or 'Source' }}</a>
-                {% else %}
-                {{ item.evidence_source_label or item.source_name or 'Source' }}
-                {% endif %}
-                | corroborated by {{ item.corroboration_sources or '1' }} source(s)
-              </div>
-            </div>
-            {% endfor %}
+          {% set quality_filters = notebook.get('source_quality_filters', source_quality_filters or {}) %}
+          <div class="helper-box" style="margin-bottom:8px;">
+            <h4>Source Quality Filter</h4>
+            <form method="get" action="/" class="filter-row">
+              <input type="hidden" name="actor_id" value="{{ selected_actor_id }}" />
+              <label>
+                Tier
+                <select name="source_tier">
+                  <option value="" {% if not quality_filters.get('source_tier') %}selected{% endif %}>Any</option>
+                  <option value="high" {% if quality_filters.get('source_tier') == 'high' %}selected{% endif %}>High</option>
+                  <option value="medium" {% if quality_filters.get('source_tier') == 'medium' %}selected{% endif %}>Medium</option>
+                  <option value="trusted" {% if quality_filters.get('source_tier') == 'trusted' %}selected{% endif %}>Trusted</option>
+                  <option value="unrated" {% if quality_filters.get('source_tier') == 'unrated' %}selected{% endif %}>Unrated</option>
+                </select>
+              </label>
+              <label>
+                Min Weight
+                <select name="min_confidence_weight">
+                  <option value="" {% if not quality_filters.get('min_confidence_weight') %}selected{% endif %}>Any</option>
+                  <option value="2" {% if quality_filters.get('min_confidence_weight') == '2' %}selected{% endif %}>2+</option>
+                  <option value="3" {% if quality_filters.get('min_confidence_weight') == '3' %}selected{% endif %}>3+</option>
+                  <option value="4" {% if quality_filters.get('min_confidence_weight') == '4' %}selected{% endif %}>4</option>
+                </select>
+              </label>
+              <label>
+                Days
+                <select name="source_days">
+                  <option value="" {% if not quality_filters.get('source_days') %}selected{% endif %}>Any</option>
+                  <option value="30" {% if quality_filters.get('source_days') == '30' %}selected{% endif %}>30</option>
+                  <option value="60" {% if quality_filters.get('source_days') == '60' %}selected{% endif %}>60</option>
+                  <option value="90" {% if quality_filters.get('source_days') == '90' %}selected{% endif %}>90</option>
+                  <option value="180" {% if quality_filters.get('source_days') == '180' %}selected{% endif %}>180</option>
+                </select>
+              </label>
+              <button type="submit">Apply</button>
+              <a href="/?actor_id={{ selected_actor_id }}">Clear</a>
+            </form>
+            <p class="inline-note">
+              Applied to recent highlights and change-detection synthesis.
+              Using {{ quality_filters.get('applied_sources', 0) }} of {{ quality_filters.get('total_sources', 0) }} sources{% if quality_filters.get('filtered_out_sources', 0) %} (filtered out: {{ quality_filters.get('filtered_out_sources', 0) }}){% endif %}.
+            </p>
           </div>
-          <details class="compact">
-            <summary>All sources</summary>
-            <div class="event">
-              <div><strong>Recent sources</strong></div>
-              <ul class="recent-source-list">
-                {% for item in notebook.recent_activity_highlights %}
-                {% set raw_title = (item.evidence_title or 'Untitled article') %}
-                {% if raw_title.startswith('http://') or raw_title.startswith('https://') or (raw_title.count('/') >= 2 and ' ' not in raw_title) %}
-                {% set display_title = 'Untitled article' %}
-                {% else %}
-                {% set display_title = raw_title %}
-                {% endif %}
-                <li data-source-date="{{ item.date }}">
+          <p><strong>What changed recently (AI reviewed):</strong></p>
+          {% if notebook.top_change_signals %}
+          <div class="change-list" id="latest-sources-list">
+            {% for item in notebook.top_change_signals %}
+            <div class="change-row">
+              <div class="change-row-main">
+                <div class="change-row-title">{{ item.change_summary }}</div>
+                <div>
+                  {% if item.change_window_days %}<span class="badge">first seen in the last {{ item.change_window_days }} days</span>{% endif %}
+                  {% if item.change_confidence %}<span class="badge">{{ item.change_confidence }}</span>{% endif %}
+                </div>
+              </div>
+              {% if item.change_why_new %}
+              <div class="change-row-source"><em>{{ item.change_why_new }}</em></div>
+              {% endif %}
+              <div class="change-row-source">
+                Based on {{ item.validated_source_count or '0' }} source(s) we checked
+                {% if item.category and item.category != 'activity synthesis' %} | {{ item.category.replace('_', ' ') }}{% endif %}
+                {% if item.ttp_ids %} | {{ item.ttp_ids }}{% endif %}
+                {% if item.target_text %} | target: {{ item.target_text }}{% endif %}
+              </div>
+              {% if item.validated_sources %}
+              <ul class="recent-source-list" style="margin-top:6px;">
+                {% for evidence in item.validated_sources %}
+                <li>
                   <div class="source-headline">
-                    <span class="badge">{{ item.date }}</span>
-                    <span class="badge {{ item.freshness_class }}">{{ item.freshness_label }}</span>
-                    {% if item.source_url %}
-                    <a class="source-title-link" href="{{ item.source_url }}" target="_blank" rel="noreferrer">{{ display_title }}</a>
-                    {% else %}
-                    <span class="source-title-link">{{ display_title }}</span>
-                    {% endif %}
-                    {% if item.category %}<span class="badge">{{ item.category }}</span>{% endif %}
-                    {% if item.ttp_ids %}<span class="badge">{{ item.ttp_ids }}</span>{% endif %}
+                    {% if evidence.source_date %}<span class="badge">{{ evidence.source_date }}</span>{% endif %}
+                    {% if evidence.freshness_label %}<span class="badge {{ evidence.freshness_class }}">{{ evidence.freshness_label }}</span>{% endif %}
+                    <a class="source-title-link" href="{{ evidence.source_url }}" target="_blank" rel="noreferrer">{{ evidence.source_label or evidence.source_url }}</a>
                   </div>
-                  <small class="source-meta">{{ item.evidence_source_label or item.source_name or 'Unknown source' }} | corroboration: {{ item.corroboration_sources or '1' }} source(s)</small>
+                  {% if evidence.proof %}<small class="source-meta">{{ evidence.proof }}</small>{% endif %}
                 </li>
                 {% endfor %}
               </ul>
-              <div class="timeline-footer-link"><a href="/actors/{{ notebook.actor.id }}/timeline/details">View all sources</a></div>
+              {% endif %}
             </div>
-          </details>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p><small>No clear new behavior was confirmed from recent reporting (last 30/60/90 days).</small></p>
+          {% endif %}
+          <div class="timeline-footer-link"><a href="/actors/{{ notebook.actor.id }}/timeline/details">View source timeline evidence</a></div>
           {% else %}
           <p>No recent activity summary yet.</p>
           {% endif %}

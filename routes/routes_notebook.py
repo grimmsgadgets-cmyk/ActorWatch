@@ -317,8 +317,19 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         return HTMLResponse(''.join(content))
 
     @router.get(route_paths.ACTOR_QUESTIONS_WORKSPACE, response_class=HTMLResponse)
-    def actor_questions_workspace(request: Request, actor_id: str) -> HTMLResponse:
-        notebook = _fetch_actor_notebook(actor_id)
+    def actor_questions_workspace(
+        request: Request,
+        actor_id: str,
+        source_tier: str | None = None,
+        min_confidence_weight: int | None = None,
+        source_days: int | None = None,
+    ) -> HTMLResponse:
+        notebook = _fetch_actor_notebook(
+            actor_id,
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        )
         return _templates.TemplateResponse(
             request,
             'questions.html',
@@ -329,8 +340,18 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         )
 
     @router.get(route_paths.ACTOR_UI_LIVE, response_class=JSONResponse)
-    def actor_live_state(actor_id: str) -> dict[str, object]:
-        notebook = _fetch_actor_notebook(actor_id)
+    def actor_live_state(
+        actor_id: str,
+        source_tier: str | None = None,
+        min_confidence_weight: int | None = None,
+        source_days: int | None = None,
+    ) -> dict[str, object]:
+        notebook = _fetch_actor_notebook(
+            actor_id,
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        )
         return {
             'actor_id': actor_id,
             'notebook_status': str(notebook.get('actor', {}).get('notebook_status') or 'idle'),
@@ -398,8 +419,18 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         }
 
     @router.get(route_paths.ACTOR_EXPORT_ANALYST_PACK, response_class=JSONResponse)
-    def export_analyst_pack(actor_id: str) -> dict[str, object]:
-        notebook = _fetch_actor_notebook(actor_id)
+    def export_analyst_pack(
+        actor_id: str,
+        source_tier: str | None = None,
+        min_confidence_weight: int | None = None,
+        source_days: int | None = None,
+    ) -> dict[str, object]:
+        notebook = _fetch_actor_notebook(
+            actor_id,
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        )
         observations = _fetch_analyst_observations(actor_id, limit=None, offset=0)
         with sqlite3.connect(_db_path()) as connection:
             if not _actor_exists(connection, actor_id):
@@ -429,9 +460,34 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             }
             for row in history_rows
         ]
+        quality_filters = notebook.get('source_quality_filters', {})
+        quality_filters_dict = quality_filters if isinstance(quality_filters, dict) else {}
+        source_scope_active = any(
+            str(quality_filters_dict.get(key) or '').strip()
+            for key in ('source_tier', 'min_confidence_weight', 'source_days')
+        )
+        if source_scope_active:
+            allowed_source_ids = {
+                str(item.get('id') or '').strip()
+                for item in (notebook.get('sources', []) if isinstance(notebook.get('sources', []), list) else [])
+                if isinstance(item, dict) and str(item.get('id') or '').strip()
+            }
+            observations = [
+                item
+                for item in observations
+                if str(item.get('item_type') or '').strip().lower() != 'source'
+                or str(item.get('item_key') or '').strip() in allowed_source_ids
+            ]
+            history_items = [
+                item
+                for item in history_items
+                if str(item.get('item_type') or '').strip().lower() != 'source'
+                or str(item.get('item_key') or '').strip() in allowed_source_ids
+            ]
         return {
             'actor_id': actor_id,
             'exported_at': _utc_now_iso(),
+            'source_quality_filters': quality_filters_dict,
             'actor': notebook.get('actor', {}),
             'recent_change_summary': notebook.get('recent_change_summary', {}),
             'priority_questions': notebook.get('priority_questions', [])[:3],

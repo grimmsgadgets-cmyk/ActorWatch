@@ -22,6 +22,7 @@ def build_recent_activity_highlights_core(
     _split_sentences = deps['split_sentences']
     _looks_like_navigation_noise = deps['looks_like_navigation_noise']
     _format_date_or_unknown = deps['format_date_or_unknown']
+    _source_trust_score = deps.get('source_trust_score', lambda _url: 0)
 
     pipeline_items = _pipeline_build_recent_activity_highlights(
         timeline_items,
@@ -42,6 +43,7 @@ def build_recent_activity_highlights_core(
         extract_ttp_ids=_extract_ttp_ids,
         split_sentences=lambda text: _split_sentences(text),
         looks_like_navigation_noise=_looks_like_navigation_noise,
+        source_trust_score=_source_trust_score,
     )
 
     highlights: list[dict[str, str | None]] = []

@@ -42,6 +42,9 @@ def upsert_source_for_actor(
     html_title: str | None = None,
     publisher: str | None = None,
     site_name: str | None = None,
+    source_tier: str | None = None,
+    confidence_weight: int | None = None,
+    overwrite_source_quality: bool = False,
     *,
     build_fingerprint: Callable[[str | None, str | None, str | None, str | None, str], str],
     new_id: Callable[[], str],
@@ -53,29 +56,75 @@ def upsert_source_for_actor(
         (actor_id, source_url),
     ).fetchone()
     if existing is not None:
-        metadata_values = [title, headline, og_title, html_title, publisher, site_name]
+        metadata_values = [title, headline, og_title, html_title, publisher, site_name, source_tier]
         if any(str(value or '').strip() for value in metadata_values):
-            connection.execute(
-                '''
-                UPDATE sources
-                SET title = COALESCE(NULLIF(title, ''), ?),
-                    headline = COALESCE(NULLIF(headline, ''), ?),
-                    og_title = COALESCE(NULLIF(og_title, ''), ?),
-                    html_title = COALESCE(NULLIF(html_title, ''), ?),
-                    publisher = COALESCE(NULLIF(publisher, ''), ?),
-                    site_name = COALESCE(NULLIF(site_name, ''), ?)
-                WHERE id = ?
-                ''',
-                (
-                    str(title or '').strip() or None,
-                    str(headline or '').strip() or None,
-                    str(og_title or '').strip() or None,
-                    str(html_title or '').strip() or None,
-                    str(publisher or '').strip() or None,
-                    str(site_name or '').strip() or None,
-                    existing[0],
-                ),
-            )
+            if overwrite_source_quality:
+                connection.execute(
+                    '''
+                    UPDATE sources
+                    SET title = COALESCE(NULLIF(title, ''), ?),
+                        headline = COALESCE(NULLIF(headline, ''), ?),
+                        og_title = COALESCE(NULLIF(og_title, ''), ?),
+                        html_title = COALESCE(NULLIF(html_title, ''), ?),
+                        publisher = COALESCE(NULLIF(publisher, ''), ?),
+                        site_name = COALESCE(NULLIF(site_name, ''), ?),
+                        source_tier = COALESCE(NULLIF(?, ''), source_tier)
+                    WHERE id = ?
+                    ''',
+                    (
+                        str(title or '').strip() or None,
+                        str(headline or '').strip() or None,
+                        str(og_title or '').strip() or None,
+                        str(html_title or '').strip() or None,
+                        str(publisher or '').strip() or None,
+                        str(site_name or '').strip() or None,
+                        str(source_tier or '').strip() or None,
+                        existing[0],
+                    ),
+                )
+            else:
+                connection.execute(
+                    '''
+                    UPDATE sources
+                    SET title = COALESCE(NULLIF(title, ''), ?),
+                        headline = COALESCE(NULLIF(headline, ''), ?),
+                        og_title = COALESCE(NULLIF(og_title, ''), ?),
+                        html_title = COALESCE(NULLIF(html_title, ''), ?),
+                        publisher = COALESCE(NULLIF(publisher, ''), ?),
+                        site_name = COALESCE(NULLIF(site_name, ''), ?),
+                        source_tier = COALESCE(NULLIF(source_tier, ''), ?)
+                    WHERE id = ?
+                    ''',
+                    (
+                        str(title or '').strip() or None,
+                        str(headline or '').strip() or None,
+                        str(og_title or '').strip() or None,
+                        str(html_title or '').strip() or None,
+                        str(publisher or '').strip() or None,
+                        str(site_name or '').strip() or None,
+                        str(source_tier or '').strip() or None,
+                        existing[0],
+                    ),
+                )
+        if confidence_weight is not None:
+            if overwrite_source_quality:
+                connection.execute(
+                    '''
+                    UPDATE sources
+                    SET confidence_weight = ?
+                    WHERE id = ?
+                    ''',
+                    (int(confidence_weight), existing[0]),
+                )
+            else:
+                connection.execute(
+                    '''
+                    UPDATE sources
+                    SET confidence_weight = COALESCE(confidence_weight, ?)
+                    WHERE id = ?
+                    ''',
+                    (int(confidence_weight), existing[0]),
+                )
         if fingerprint:
             connection.execute(
                 '''
@@ -109,9 +158,10 @@ def upsert_source_for_actor(
         '''
         INSERT INTO sources (
             id, actor_id, source_name, url, published_at, retrieved_at, pasted_text,
-            source_fingerprint, title, headline, og_title, html_title, publisher, site_name
+            source_fingerprint, title, headline, og_title, html_title, publisher, site_name,
+            source_tier, confidence_weight
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             source_id,
@@ -128,6 +178,8 @@ def upsert_source_for_actor(
             str(html_title or '').strip() or None,
             str(publisher or '').strip() or None,
             str(site_name or '').strip() or None,
+            str(source_tier or '').strip() or None,
+            int(confidence_weight) if confidence_weight is not None else None,
         ),
     )
     return source_id

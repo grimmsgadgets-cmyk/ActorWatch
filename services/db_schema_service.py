@@ -104,7 +104,9 @@ def ensure_schema(connection) -> None:
             published_at TEXT,
             retrieved_at TEXT NOT NULL,
             pasted_text TEXT NOT NULL,
-            source_fingerprint TEXT
+            source_fingerprint TEXT,
+            source_tier TEXT,
+            confidence_weight INTEGER
         )
         '''
     )
@@ -123,6 +125,10 @@ def ensure_schema(connection) -> None:
         connection.execute("ALTER TABLE sources ADD COLUMN publisher TEXT")
     if not any(col[1] == 'site_name' for col in source_cols):
         connection.execute("ALTER TABLE sources ADD COLUMN site_name TEXT")
+    if not any(col[1] == 'source_tier' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN source_tier TEXT")
+    if not any(col[1] == 'confidence_weight' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN confidence_weight INTEGER")
     connection.execute(
         '''
         CREATE INDEX IF NOT EXISTS idx_sources_actor_fingerprint
