@@ -27,6 +27,7 @@ import services.actor_search_service as actor_search_service
 import services.app_wiring_service as app_wiring_service
 import priority_questions
 import services.priority_service as priority_service
+import services.quick_check_service as quick_check_service
 import services.rate_limit_service as rate_limit_service
 import services.recent_activity_service as recent_activity_service
 import services.refresh_ops_service as refresh_ops_service
@@ -1566,6 +1567,35 @@ def _ollama_review_change_signals(
     )
 
 
+def _ollama_enrich_quick_checks(
+    actor_name: str,
+    cards: list[dict[str, object]],
+) -> dict[str, dict[str, str]]:
+    return quick_check_service.generate_quick_check_overrides_core(
+        actor_name,
+        cards,
+        deps={
+            'ollama_available': _ollama_available,
+            'get_env': os.environ.get,
+            'http_post': httpx.post,
+        },
+    )
+
+
+def _store_quick_check_overrides(
+    connection: sqlite3.Connection,
+    actor_id: str,
+    overrides: dict[str, dict[str, str]],
+    generated_at: str,
+) -> None:
+    quick_check_service.replace_quick_check_overrides_core(
+        connection,
+        actor_id=actor_id,
+        overrides=overrides,
+        generated_at=generated_at,
+    )
+
+
 def actor_exists(connection: sqlite3.Connection, actor_id: str) -> bool:
     return actor_profile_service.actor_exists_core(connection, actor_id)
 
@@ -1824,6 +1854,8 @@ def build_notebook(
             'ollama_generate_questions': _ollama_generate_questions,
             'platforms_for_question': _platforms_for_question,
             'guidance_for_platform': _guidance_for_platform,
+            'ollama_enrich_quick_checks': _ollama_enrich_quick_checks,
+            'store_quick_check_overrides': _store_quick_check_overrides,
         },
     )
 
@@ -1897,6 +1929,10 @@ def _fetch_actor_notebook_deps(
         'build_environment_checks': _build_environment_checks,
         'build_notebook_kpis': _build_notebook_kpis,
         'format_date_or_unknown': _format_date_or_unknown,
+        'load_quick_check_overrides': lambda connection, actor: quick_check_service.load_quick_check_overrides_core(
+            connection,
+            actor_id=actor,
+        ),
     }
 
 

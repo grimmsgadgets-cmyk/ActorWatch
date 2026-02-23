@@ -694,7 +694,9 @@ def fetch_actor_notebook_core(
     _build_environment_checks = deps['build_environment_checks']
     _build_notebook_kpis = deps['build_notebook_kpis']
     _format_date_or_unknown = deps['format_date_or_unknown']
+    _load_quick_check_overrides = deps.get('load_quick_check_overrides')
 
+    quick_check_overrides: dict[str, dict[str, str]] = {}
     with sqlite3.connect(db_path) as connection:
         actor_row = connection.execute(
             '''
@@ -827,6 +829,17 @@ def fetch_actor_notebook_core(
                     'created_at': row[6],
                 }
             )
+        if callable(_load_quick_check_overrides):
+            try:
+                loaded = _load_quick_check_overrides(connection, actor_id)
+                if isinstance(loaded, dict):
+                    quick_check_overrides = {
+                        str(key): value
+                        for key, value in loaded.items()
+                        if isinstance(value, dict)
+                    }
+            except Exception:
+                quick_check_overrides = {}
 
     actor = {
         'id': actor_row[0],
@@ -1033,6 +1046,24 @@ def fetch_actor_notebook_core(
             )
             if len(priority_questions) >= 5:
                 break
+
+    if quick_check_overrides:
+        for card in priority_questions:
+            card_id = str(card.get('id') or '').strip()
+            if not card_id:
+                continue
+            override = quick_check_overrides.get(card_id)
+            if not override:
+                continue
+            first_step = str(override.get('first_step') or '').strip()
+            what_to_look_for = str(override.get('what_to_look_for') or '').strip()
+            expected_output = str(override.get('expected_output') or '').strip()
+            if first_step:
+                card['first_step'] = first_step
+            if what_to_look_for:
+                card['what_to_look_for'] = what_to_look_for
+            if expected_output:
+                card['expected_output'] = expected_output
 
     phase_group_order: list[str] = []
     phase_groups_map: dict[str, list[dict[str, object]]] = {}

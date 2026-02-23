@@ -101,6 +101,64 @@ def test_fetch_actor_notebook_wrapper_delegates_to_pipeline_core(monkeypatch):
     assert 'build_recent_activity_highlights' in deps
     assert 'build_notebook_kpis' in deps
     assert 'format_date_or_unknown' in deps
+    assert 'load_quick_check_overrides' in deps
+
+
+def test_quick_check_overrides_are_applied_to_priority_cards(tmp_path, monkeypatch):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Actionable', 'Actionability scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, retrieved_at, pasted_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-qc-1',
+                actor['id'],
+                'Unit42',
+                'https://example.com/apt-actionable',
+                '2026-02-20',
+                '2026-02-20T00:00:00+00:00',
+                'APT-Actionable operators should review suspicious PowerShell activity and DNS beaconing in finance systems.',
+            ),
+        )
+        connection.commit()
+
+    def _fake_generate_quick_checks(actor_name, cards, *, deps):
+        _ = actor_name
+        _ = deps
+        if not cards:
+            return {}
+        first_id = str(cards[0].get('id') or '')
+        if not first_id:
+            return {}
+        return {
+            first_id: {
+                'first_step': 'Open Defender Advanced Hunting and run EmailEvents for the last 24h.',
+                'what_to_look_for': 'Repeated sender domains targeting finance users.',
+                'expected_output': 'Record sender pattern delta and confidence shift with source links.',
+            }
+        }
+
+    monkeypatch.setattr(
+        app_module.quick_check_service,
+        'generate_quick_check_overrides_core',
+        _fake_generate_quick_checks,
+    )
+
+    app_module.build_notebook(actor['id'])
+    notebook = app_module._fetch_actor_notebook(actor['id'])  # noqa: SLF001
+
+    cards = notebook.get('priority_questions', [])
+    assert cards
+    assert any(
+        str(card.get('first_step') or '') == 'Open Defender Advanced Hunting and run EmailEvents for the last 24h.'
+        for card in cards
+    )
 
 
 def test_fetch_actor_notebook_payload_shape_regression(tmp_path):

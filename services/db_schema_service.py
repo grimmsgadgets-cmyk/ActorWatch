@@ -238,6 +238,19 @@ def ensure_schema(connection) -> None:
     )
     connection.execute(
         '''
+        CREATE TABLE IF NOT EXISTS quick_check_overrides (
+            actor_id TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            first_step TEXT NOT NULL DEFAULT '',
+            what_to_look_for TEXT NOT NULL DEFAULT '',
+            expected_output TEXT NOT NULL DEFAULT '',
+            generated_at TEXT NOT NULL,
+            PRIMARY KEY (actor_id, thread_id)
+        )
+        '''
+    )
+    connection.execute(
+        '''
         CREATE TABLE IF NOT EXISTS ioc_items (
             id TEXT PRIMARY KEY,
             actor_id TEXT NOT NULL,

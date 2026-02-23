@@ -26,6 +26,8 @@ def build_notebook_core(
     ollama_generate_questions: Callable[[str, str | None, list[str]], list[str]],
     platforms_for_question: Callable[[str], list[str]],
     guidance_for_platform: Callable[[str, str], dict[str, str]],
+    ollama_enrich_quick_checks: Callable[[str, list[dict[str, object]]], dict[str, dict[str, str]]] | None = None,
+    store_quick_check_overrides: Callable[[sqlite3.Connection, str, dict[str, dict[str, str]], str], None] | None = None,
 ) -> None:
     now = now_iso()
     with sqlite3.connect(db_path) as connection:
@@ -227,11 +229,13 @@ def build_notebook_core(
             ''',
             (actor_id,),
         ).fetchall()
+        guidance_by_thread: dict[str, list[dict[str, str]]] = {}
         for thread in open_threads:
             thread_id = thread[0]
             question_text = thread[1]
             for platform in platforms_for_question(question_text):
                 guidance = guidance_for_platform(platform, question_text)
+                guidance_by_thread.setdefault(thread_id, []).append(guidance)
                 connection.execute(
                     '''
                     INSERT INTO environment_guidance (
@@ -251,5 +255,38 @@ def build_notebook_core(
                         now,
                     ),
                 )
+
+        if callable(store_quick_check_overrides):
+            quick_check_overrides: dict[str, dict[str, str]] = {}
+            if callable(ollama_enrich_quick_checks):
+                candidates: list[dict[str, object]] = []
+                for thread in open_threads[:5]:
+                    thread_id = str(thread[0] or '')
+                    question_text = str(thread[1] or '')
+                    guidance_items = guidance_by_thread.get(thread_id, [])
+                    where_to_check = ', '.join(
+                        [
+                            str(item.get('platform') or '').strip()
+                            for item in guidance_items
+                            if str(item.get('platform') or '').strip()
+                        ][:3]
+                    ) or 'Windows Event Logs'
+                    what_to_look_for = ''
+                    for item in guidance_items:
+                        candidate = str(item.get('what_to_look_for') or '').strip()
+                        if candidate:
+                            what_to_look_for = candidate
+                            break
+                    candidates.append(
+                        {
+                            'id': thread_id,
+                            'question_text': question_text,
+                            'where_to_check': where_to_check,
+                            'what_to_look_for': what_to_look_for,
+                            'expected_output': '',
+                        }
+                    )
+                quick_check_overrides = ollama_enrich_quick_checks(actor_name, candidates)
+            store_quick_check_overrides(connection, actor_id, quick_check_overrides, now)
 
         connection.commit()

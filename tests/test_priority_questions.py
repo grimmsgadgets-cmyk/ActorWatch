@@ -26,3 +26,30 @@ def test_expected_output_line_default_shape():
     text = priority_questions.expected_output_line('General anomaly check question')
     assert text.startswith('Record the observed delta versus prior review')
     assert 'source links' in text
+
+
+def test_priority_next_best_action_windows_execution_is_specific():
+    text = priority_questions.priority_next_best_action(
+        'Check for suspicious PowerShell execution activity',
+        'Windows Event Logs, EDR',
+    )
+    assert 'Event IDs 4104, 4688, and 4698' in text
+    assert 'scheduled tasks' in text
+
+
+def test_priority_next_best_action_m365_is_specific():
+    text = priority_questions.priority_next_best_action(
+        'Check for phishing sender behavior',
+        'M365, Email Gateway',
+    )
+    assert 'Defender Advanced Hunting' in text
+    assert 'EmailEvents' in text
+
+
+def test_priority_next_best_action_firewall_vpn_is_specific():
+    text = priority_questions.priority_next_best_action(
+        'Check for active edge intrusion signals',
+        'Firewall/VPN, EDR',
+    )
+    assert 'firewall/VPN query' in text
+    assert 'group by source IP and destination asset' in text

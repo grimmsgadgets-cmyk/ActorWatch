@@ -311,9 +311,67 @@ def priority_alternative_hypothesis(question_text: str) -> str:
 
 
 def priority_next_best_action(question_text: str, where_to_check: str) -> str:
-    _ = question_text
+    lowered = question_text.lower()
     first_location = where_to_check.split(',')[0].strip() if where_to_check else 'Windows Event Logs'
-    return f'Run a targeted 15-minute validation query in {first_location} for the latest cue and confirm signal presence.'
+    location_key = first_location.lower()
+
+    if 'm365' in location_key or 'email' in location_key:
+        if any(token in lowered for token in ('phish', 'email', 'sender', 'inbox')):
+            return (
+                'Open Defender Advanced Hunting and run an EmailEvents query for the last 24h; '
+                'filter to suspicious sender domains and lookalike sender addresses.'
+            )
+        return (
+            'Open Defender Advanced Hunting and run a 24h query scoped to suspicious sign-in or message anomalies '
+            'for high-risk users.'
+        )
+
+    if 'firewall' in location_key or 'vpn' in location_key:
+        return (
+            'Run a last-24h firewall/VPN query for exploit attempts or unusual remote logins on internet-facing systems; '
+            'group by source IP and destination asset to find repeat hits.'
+        )
+
+    if 'dns' in location_key or 'proxy' in location_key:
+        return (
+            'Run a DNS/Proxy query for the last 24h to find rare domains with repeated outbound connections; '
+            'pivot on hosts making periodic beacon-like requests.'
+        )
+
+    if 'edr' in location_key:
+        if any(token in lowered for token in ('encrypt', 'ransom', 'impact', 'disrupt')):
+            return (
+                'In EDR, filter the last 24h for suspicious mass file modifications, encryption tool execution, '
+                'or backup tampering commands on critical hosts.'
+            )
+        if any(token in lowered for token in ('powershell', 'wmi', 'execution', 'scheduled task')):
+            return (
+                'In EDR, query last-24h process activity for PowerShell/WMI/schtasks execution and review unusual '
+                'parent-child process chains.'
+            )
+        return (
+            'In EDR, run a last-24h host activity query scoped to the actor cue and prioritize alerts on critical assets.'
+        )
+
+    if 'windows event logs' in location_key:
+        if any(token in lowered for token in ('powershell', 'wmi', 'execution', 'scheduled task')):
+            return (
+                'Query Event IDs 4104, 4688, and 4698 for the last 24h to find suspicious PowerShell command lines '
+                'and newly created scheduled tasks.'
+            )
+        if any(token in lowered for token in ('lateral', 'rdp', 'smb', 'pivot')):
+            return (
+                'Query Event IDs 4624 (logon type 3/10), 4648, and 4672 over the last 24h; '
+                'identify unusual host-to-host admin logons and account pivots.'
+            )
+        return (
+            'Query the last 24h of key security events and isolate repeated suspicious patterns tied to the current actor cue.'
+        )
+
+    return (
+        f'Start in {first_location}: run a last-24h query for the actor cue, group by host/user/source, '
+        'and validate whether activity is increasing.'
+    )
 
 
 def priority_action_ladder(question_text: str) -> tuple[str, str, str]:

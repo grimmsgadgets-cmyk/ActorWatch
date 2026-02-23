@@ -27,6 +27,8 @@ def build_notebook_wrapper_core(
         ollama_generate_questions=deps['ollama_generate_questions'],
         platforms_for_question=deps['platforms_for_question'],
         guidance_for_platform=deps['guidance_for_platform'],
+        ollama_enrich_quick_checks=deps.get('ollama_enrich_quick_checks'),
+        store_quick_check_overrides=deps.get('store_quick_check_overrides'),
     )
 
 
@@ -80,5 +82,6 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
             'build_environment_checks': deps['build_environment_checks'],
             'build_notebook_kpis': deps['build_notebook_kpis'],
             'format_date_or_unknown': deps['format_date_or_unknown'],
+            'load_quick_check_overrides': deps.get('load_quick_check_overrides'),
         },
     )
