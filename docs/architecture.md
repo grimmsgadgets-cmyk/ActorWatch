@@ -1,4 +1,4 @@
-# ThreatCompass Architecture Map
+# ActorWatch Architecture Map
 
 ## Goal
 
