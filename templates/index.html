@@ -14,6 +14,41 @@
       .sidebar-panel:first-of-type { margin-top: 0; }
       .actor-list { list-style: none; padding: 0; margin: 0; }
       .actor-list li { margin-bottom: 6px; }
+      .actor-autocomplete-wrap { position: relative; }
+      .actor-autocomplete-list {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(100% + 4px);
+        z-index: 30;
+        border: 1px solid #3d4658;
+        border-radius: 8px;
+        background: #1f2735;
+        max-height: 220px;
+        overflow-y: auto;
+        box-shadow: 0 10px 30px rgba(10, 15, 25, 0.35);
+      }
+      .actor-autocomplete-list[hidden] { display: none; }
+      .actor-autocomplete-item {
+        width: 100%;
+        border: 0;
+        border-bottom: 1px solid #2d3646;
+        background: transparent;
+        color: #e8eef6;
+        text-align: left;
+        padding: 8px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .actor-autocomplete-item:last-child { border-bottom: 0; }
+      .actor-autocomplete-item:hover,
+      .actor-autocomplete-item.active { background: #31415a; }
+      .actor-autocomplete-hint {
+        display: block;
+        margin-top: 6px;
+        font-size: 11px;
+        color: #a7b7cb;
+      }
       .actor-link {
         display: block;
         padding: 8px 10px;
@@ -430,9 +465,13 @@
 
         <div class="sidebar-panel">
           <h3>Add actor</h3>
-          <form method="post" action="/actors/new">
-            <input type="text" name="display_name" placeholder="Display name" required />
+          <form id="add-actor-form" method="post" action="/actors/new">
+            <div class="actor-autocomplete-wrap">
+              <input id="add-actor-input" type="text" name="display_name" placeholder="Display name" autocomplete="off" required />
+              <div id="actor-autocomplete-list" class="actor-autocomplete-list" role="listbox" aria-label="Actor suggestions" hidden></div>
+            </div>
             <button class="action-button" type="submit">Add actor</button>
+            <small id="actor-autocomplete-hint" class="actor-autocomplete-hint"></small>
           </form>
           {% if duplicate_actor_groups %}
           <div class="merge-row">
@@ -940,6 +979,7 @@
         <div id="cmdk-list" class="cmdk-list"></div>
       </div>
     </div>
+    <script src="/static/actor_autocomplete.js" defer></script>
     {% if notebook %}
     <script src="/static/index.js" defer></script>
     {% endif %}
