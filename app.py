@@ -114,7 +114,7 @@ AUTO_REFRESH_ENABLED = os.environ.get('AUTO_REFRESH_ENABLED', '1').strip().lower
 AUTO_REFRESH_MIN_INTERVAL_HOURS = max(1, int(os.environ.get('AUTO_REFRESH_MIN_INTERVAL_HOURS', '24')))
 AUTO_REFRESH_LOOP_SECONDS = max(30, int(os.environ.get('AUTO_REFRESH_LOOP_SECONDS', '300')))
 AUTO_REFRESH_BATCH_SIZE = max(1, int(os.environ.get('AUTO_REFRESH_BATCH_SIZE', '3')))
-PAGE_REFRESH_AUTO_TRIGGER_MINUTES = max(1, int(os.environ.get('PAGE_REFRESH_AUTO_TRIGGER_MINUTES', '30')))
+PAGE_REFRESH_AUTO_TRIGGER_MINUTES = max(0, int(os.environ.get('PAGE_REFRESH_AUTO_TRIGGER_MINUTES', '30')))
 RUNNING_STALE_RECOVERY_MINUTES = max(5, int(os.environ.get('RUNNING_STALE_RECOVERY_MINUTES', '10')))
 AUTO_MERGE_DUPLICATE_ACTORS = os.environ.get('AUTO_MERGE_DUPLICATE_ACTORS', '1').strip().lower() in {
     '1', 'true', 'yes', 'on',
@@ -1712,6 +1712,7 @@ def _upsert_source_for_actor(
     site_name: str | None = None,
     source_tier: str | None = None,
     confidence_weight: int | None = None,
+    refresh_existing_content: bool = False,
 ) -> str:
     resolved_source_tier = str(source_tier or '').strip() or _source_tier_label(source_url)
     resolved_confidence_weight = (
@@ -1736,6 +1737,7 @@ def _upsert_source_for_actor(
         source_tier=resolved_source_tier,
         confidence_weight=resolved_confidence_weight,
         overwrite_source_quality=SOURCE_QUALITY_OVERWRITE_ON_UPSERT,
+        refresh_existing_content=refresh_existing_content,
         deps={
             'source_fingerprint': _source_fingerprint,
             'new_id': lambda: str(uuid.uuid4()),

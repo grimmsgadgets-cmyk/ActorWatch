@@ -47,6 +47,7 @@ def test_ransomware_live_ingest_builds_actionable_summary():
         html_title=None,
         publisher=None,
         site_name=None,
+        refresh_existing_content=False,
     ):
         _ = connection
         saved.append(
@@ -61,6 +62,7 @@ def test_ransomware_live_ingest_builds_actionable_summary():
                 'headline': headline,
                 'publisher': publisher,
                 'site_name': site_name,
+                'refresh_existing_content': refresh_existing_content,
             }
         )
         return 'src-1'
@@ -80,7 +82,15 @@ def test_ransomware_live_ingest_builds_actionable_summary():
     assert len(saved) == 1
     record = saved[0]
     assert record['source_name'] == 'Ransomware.live'
-    assert 'victim disclosures in the last 90 days' in str(record['title'])
-    assert 'recent victims include' in str(record['trigger_excerpt']).lower()
+    assert 'activity update' in str(record['title']).lower()
+    assert 'who:' in str(record['trigger_excerpt']).lower()
+    assert 'what:' in str(record['trigger_excerpt']).lower()
+    assert 'when:' in str(record['trigger_excerpt']).lower()
+    assert 'who:' in str(record['pasted_text']).lower()
+    assert 'what:' in str(record['pasted_text']).lower()
+    assert 'when:' in str(record['pasted_text']).lower()
+    assert 'where:' in str(record['pasted_text']).lower()
+    assert 'how/targets:' in str(record['pasted_text']).lower()
     assert 'Acme Health' in str(record['pasted_text'])
-    assert 'Most frequent victim geographies' in str(record['pasted_text'])
+    assert 'trend context' in str(record['pasted_text']).lower()
+    assert record['refresh_existing_content'] is True

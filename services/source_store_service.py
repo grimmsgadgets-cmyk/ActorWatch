@@ -45,6 +45,7 @@ def upsert_source_for_actor_core(
     source_tier: str | None,
     confidence_weight: int | None,
     overwrite_source_quality: bool,
+    refresh_existing_content: bool = False,
     deps: dict[str, object],
 ) -> str:
     _source_fingerprint = deps['source_fingerprint']
@@ -68,6 +69,7 @@ def upsert_source_for_actor_core(
         source_tier=source_tier,
         confidence_weight=confidence_weight,
         overwrite_source_quality=overwrite_source_quality,
+        refresh_existing_content=refresh_existing_content,
         build_fingerprint=_source_fingerprint,
         new_id=_new_id,
         now_iso=_now_iso,
