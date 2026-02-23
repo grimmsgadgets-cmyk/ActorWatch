@@ -958,7 +958,10 @@ def _safe_json_string_list(value: str | None) -> list[str]:
 
 def _parse_iso_for_sort(value: str) -> datetime:
     try:
-        return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except Exception:
         return datetime.min.replace(tzinfo=timezone.utc)
 
