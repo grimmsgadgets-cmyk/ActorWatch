@@ -51,6 +51,14 @@ def ensure_schema(connection) -> None:
         connection.execute(
             "ALTER TABLE actor_profiles ADD COLUMN last_refresh_sources_processed INTEGER"
         )
+    if not any(col[1] == 'auto_refresh_last_run_at' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN auto_refresh_last_run_at TEXT"
+        )
+    if not any(col[1] == 'auto_refresh_last_status' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN auto_refresh_last_status TEXT"
+        )
 
     connection.execute(
         '''

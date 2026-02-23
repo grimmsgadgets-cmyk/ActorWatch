@@ -7,9 +7,9 @@ import string
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock, Thread
 from urllib.parse import urlparse
 
 import httpx
@@ -70,8 +70,26 @@ from pipelines.source_derivation import strip_html as pipeline_strip_html
 
 @asynccontextmanager
 async def app_lifespan(_: FastAPI):
+    global AUTO_REFRESH_STOP_EVENT, AUTO_REFRESH_THREAD
     initialize_sqlite()
-    yield
+    if AUTO_REFRESH_ENABLED:
+        AUTO_REFRESH_STOP_EVENT = Event()
+        AUTO_REFRESH_THREAD = Thread(
+            target=_auto_refresh_loop,
+            args=(AUTO_REFRESH_STOP_EVENT,),
+            daemon=True,
+            name='actor-auto-refresh',
+        )
+        AUTO_REFRESH_THREAD.start()
+    try:
+        yield
+    finally:
+        if AUTO_REFRESH_STOP_EVENT is not None:
+            AUTO_REFRESH_STOP_EVENT.set()
+        if AUTO_REFRESH_THREAD is not None:
+            AUTO_REFRESH_THREAD.join(timeout=2.0)
+        AUTO_REFRESH_STOP_EVENT = None
+        AUTO_REFRESH_THREAD = None
 
 
 app = FastAPI(lifespan=app_lifespan)
@@ -88,6 +106,12 @@ MITRE_TECHNIQUE_PHASE_CACHE: dict[str, list[str]] | None = None
 MITRE_CAMPAIGN_LINK_CACHE: dict[str, dict[str, set[str]]] | None = None
 MITRE_TECHNIQUE_INDEX_CACHE: dict[str, dict[str, str]] | None = None
 MITRE_SOFTWARE_CACHE: list[dict[str, object]] | None = None
+AUTO_REFRESH_ENABLED = os.environ.get('AUTO_REFRESH_ENABLED', '1').strip().lower() in {
+    '1', 'true', 'yes', 'on',
+}
+AUTO_REFRESH_MIN_INTERVAL_HOURS = max(1, int(os.environ.get('AUTO_REFRESH_MIN_INTERVAL_HOURS', '24')))
+AUTO_REFRESH_LOOP_SECONDS = max(30, int(os.environ.get('AUTO_REFRESH_LOOP_SECONDS', '300')))
+AUTO_REFRESH_BATCH_SIZE = max(1, int(os.environ.get('AUTO_REFRESH_BATCH_SIZE', '3')))
 ACTOR_FEED_LOOKBACK_DAYS = int(os.environ.get('ACTOR_FEED_LOOKBACK_DAYS', '180'))
 FEED_IMPORT_MAX_SECONDS = max(20, int(os.environ.get('FEED_IMPORT_MAX_SECONDS', '90')))
 FEED_FETCH_TIMEOUT_SECONDS = max(3.0, float(os.environ.get('FEED_FETCH_TIMEOUT_SECONDS', '10')))
@@ -313,6 +337,57 @@ _RATE_LIMIT_STATE: dict[str, deque[float]] = defaultdict(deque)
 _RATE_LIMIT_LOCK = Lock()
 _RATE_LIMIT_REQUEST_COUNTER = 0
 _RATE_LIMIT_CLEANUP_EVERY = 512
+AUTO_REFRESH_STOP_EVENT: Event | None = None
+AUTO_REFRESH_THREAD: Thread | None = None
+
+
+def _run_tracked_actor_auto_refresh_once(*, limit: int = 3) -> int:
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc - timedelta(hours=AUTO_REFRESH_MIN_INTERVAL_HOURS)
+    queued_actor_ids: list[str] = []
+    with sqlite3.connect(DB_PATH) as connection:
+        rows = connection.execute(
+            '''
+            SELECT id, notebook_status, auto_refresh_last_run_at
+            FROM actor_profiles
+            WHERE is_tracked = 1
+            ORDER BY COALESCE(auto_refresh_last_run_at, created_at) ASC
+            '''
+        ).fetchall()
+        for row in rows:
+            actor_id = str(row[0])
+            notebook_status = str(row[1] or '')
+            if notebook_status == 'running':
+                continue
+            last_run_raw = str(row[2] or '').strip()
+            last_run_dt = _parse_published_datetime(last_run_raw) if last_run_raw else None
+            if last_run_dt is not None and last_run_dt > cutoff:
+                continue
+            queued_actor_ids.append(actor_id)
+            if len(queued_actor_ids) >= max(1, int(limit)):
+                break
+        for actor_id in queued_actor_ids:
+            connection.execute(
+                '''
+                UPDATE actor_profiles
+                SET auto_refresh_last_run_at = ?, auto_refresh_last_status = ?
+                WHERE id = ?
+                ''',
+                (now_utc.isoformat(), 'queued', actor_id),
+            )
+        connection.commit()
+    for actor_id in queued_actor_ids:
+        enqueue_actor_generation(actor_id)
+    return len(queued_actor_ids)
+
+
+def _auto_refresh_loop(stop_event: Event) -> None:
+    while not stop_event.is_set():
+        try:
+            _run_tracked_actor_auto_refresh_once(limit=AUTO_REFRESH_BATCH_SIZE)
+        except Exception:
+            pass
+        stop_event.wait(AUTO_REFRESH_LOOP_SECONDS)
 
 
 def _sync_mitre_cache_to_store() -> None:
@@ -1561,6 +1636,96 @@ def merge_actor_profiles(target_actor_id: str, source_actor_id: str) -> dict[str
     )
 
 
+def get_actor_refresh_stats(actor_id: str) -> dict[str, object]:
+    now_utc = datetime.now(timezone.utc)
+    freshness_cutoff = now_utc - timedelta(hours=24)
+    with sqlite3.connect(DB_PATH) as connection:
+        actor_row = connection.execute(
+            '''
+            SELECT display_name, is_tracked, notebook_status, auto_refresh_last_run_at, auto_refresh_last_status
+            FROM actor_profiles
+            WHERE id = ?
+            ''',
+            (actor_id,),
+        ).fetchone()
+        if actor_row is None:
+            raise HTTPException(status_code=404, detail='actor not found')
+        feed_rows = connection.execute(
+            '''
+            SELECT
+                feed_name,
+                feed_url,
+                last_checked_at,
+                last_success_at,
+                last_success_published_at,
+                last_imported_count,
+                total_imported,
+                consecutive_failures,
+                total_failures,
+                last_error
+            FROM actor_feed_state
+            WHERE actor_id = ?
+            ORDER BY total_imported DESC, feed_name ASC
+            ''',
+            (actor_id,),
+        ).fetchall()
+        source_stats = connection.execute(
+            '''
+            SELECT
+                COUNT(*),
+                SUM(CASE WHEN COALESCE(confidence_weight, 0) >= 3 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN COALESCE(confidence_weight, 0) >= 3
+                          AND COALESCE(published_at, retrieved_at) >= ? THEN 1 ELSE 0 END)
+            FROM sources
+            WHERE actor_id = ?
+            ''',
+            (freshness_cutoff.isoformat(), actor_id),
+        ).fetchone()
+    feed_count = len(feed_rows)
+    failing = [row for row in feed_rows if int(row[7] or 0) > 0]
+    backoff = [row for row in feed_rows if int(row[7] or 0) >= 3]
+    top_failures = [
+        {
+            'feed_name': str(row[0]),
+            'feed_url': str(row[1]),
+            'consecutive_failures': int(row[7] or 0),
+            'total_failures': int(row[8] or 0),
+            'last_error': str(row[9] or '') or None,
+        }
+        for row in sorted(feed_rows, key=lambda item: int(item[7] or 0), reverse=True)[:5]
+        if int(row[7] or 0) > 0
+    ]
+    latest_success = next(
+        (str(row[3]) for row in feed_rows if str(row[3] or '').strip()),
+        None,
+    )
+    latest_checked = next(
+        (str(row[2]) for row in feed_rows if str(row[2] or '').strip()),
+        None,
+    )
+    return {
+        'actor_id': actor_id,
+        'actor_name': str(actor_row[0]),
+        'is_tracked': bool(actor_row[1]),
+        'notebook_status': str(actor_row[2]),
+        'auto_refresh_last_run_at': str(actor_row[3] or '') or None,
+        'auto_refresh_last_status': str(actor_row[4] or '') or None,
+        'feed_state': {
+            'total_feeds': feed_count,
+            'failing_feeds': len(failing),
+            'backoff_feeds': len(backoff),
+            'latest_checked_at': latest_checked,
+            'latest_success_at': latest_success,
+            'top_failures': top_failures,
+        },
+        'source_state': {
+            'total_sources': int(source_stats[0] or 0) if source_stats else 0,
+            'high_confidence_sources': int(source_stats[1] or 0) if source_stats else 0,
+            'recent_high_confidence_sources_24h': int(source_stats[2] or 0) if source_stats else 0,
+        },
+    }
+
+
 def _upsert_source_for_actor(
     connection: sqlite3.Connection,
     actor_id: str,
@@ -1844,6 +2009,7 @@ def _register_routers() -> None:
             'import_default_feeds_for_actor': import_default_feeds_for_actor,
             'parse_ioc_values': _parse_ioc_values,
             'utc_now_iso': utc_now_iso,
+            'get_actor_refresh_stats': get_actor_refresh_stats,
             'generate_actor_requirements': generate_actor_requirements,
             'safe_json_string_list': _safe_json_string_list,
             'observation_body_limit_bytes': OBSERVATION_BODY_LIMIT_BYTES,

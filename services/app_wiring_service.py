@@ -66,6 +66,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'parse_ioc_values': deps['parse_ioc_values'],
                 'utc_now_iso': deps['utc_now_iso'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
+                'get_actor_refresh_stats': deps['get_actor_refresh_stats'],
                 'run_actor_generation': deps['run_actor_generation'],
                 'enqueue_actor_generation': deps['enqueue_actor_generation'],
             }

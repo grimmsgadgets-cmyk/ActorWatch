@@ -20,6 +20,7 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
     _parse_ioc_values = deps['parse_ioc_values']
     _utc_now_iso = deps['utc_now_iso']
     _set_actor_notebook_status = deps['set_actor_notebook_status']
+    _get_actor_refresh_stats = deps['get_actor_refresh_stats']
     _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
 
     @router.post('/actors/{actor_id}/sources')
@@ -132,5 +133,12 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
             url=f'/?actor_id={actor_id}&notice=Notebook refresh started',
             status_code=303,
         )
+
+    @router.get('/actors/{actor_id}/refresh/stats')
+    def actor_refresh_stats(actor_id: str) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+        return _get_actor_refresh_stats(actor_id)
 
     return router

@@ -37,7 +37,9 @@ def run_actor_generation_core(
             connection.execute(
                 '''
                 UPDATE actor_profiles
-                SET last_refresh_duration_ms = ?, last_refresh_sources_processed = ?
+                SET last_refresh_duration_ms = ?,
+                    last_refresh_sources_processed = ?,
+                    auto_refresh_last_status = 'completed'
                 WHERE id = ?
                 ''',
                 (elapsed_ms, imported, actor_id),
@@ -55,7 +57,9 @@ def run_actor_generation_core(
                 connection.execute(
                     '''
                     UPDATE actor_profiles
-                    SET last_refresh_duration_ms = ?, last_refresh_sources_processed = ?
+                    SET last_refresh_duration_ms = ?,
+                        last_refresh_sources_processed = ?,
+                        auto_refresh_last_status = 'error'
                     WHERE id = ?
                     ''',
                     (elapsed_ms, 0, actor_id),
