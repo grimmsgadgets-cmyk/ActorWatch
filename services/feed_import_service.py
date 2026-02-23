@@ -31,8 +31,10 @@ def import_default_feeds_for_actor_core(*, actor_id: str, deps: dict[str, object
             'parse_feed_entries': deps['parse_feed_entries'],
             'text_contains_actor_term': deps['text_contains_actor_term'],
             'within_lookback': deps['within_lookback'],
+            'parse_published_datetime': deps['parse_published_datetime'],
             'derive_source_from_url': deps['derive_source_from_url'],
             'upsert_source_for_actor': deps['upsert_source_for_actor'],
             'duckduckgo_actor_search_urls': deps['duckduckgo_actor_search_urls'],
+            'utc_now_iso': deps['utc_now_iso'],
         },
     )

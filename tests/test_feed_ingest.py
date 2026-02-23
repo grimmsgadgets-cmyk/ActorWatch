@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pipelines.feed_ingest import _is_google_news_wrapper_url
@@ -139,3 +140,155 @@ def test_feed_ingest_uses_derived_actor_match_when_feed_title_does_not_match(tmp
 
     assert imported == 1
     assert saved == [{'url': 'https://example.com/post-1'}]
+
+
+def test_feed_ingest_incremental_checkpoint_skips_older_entries(tmp_path):
+    db_path = tmp_path / 'feed_ingest.db'
+    actor_id = 'actor-3'
+    _seed_actor_db(db_path, actor_id, 'Akira')
+    with sqlite3.connect(str(db_path)) as connection:
+        connection.execute(
+            '''
+            CREATE TABLE actor_feed_state (
+                actor_id TEXT NOT NULL,
+                feed_name TEXT NOT NULL,
+                feed_url TEXT NOT NULL,
+                last_checked_at TEXT,
+                last_success_at TEXT,
+                last_success_published_at TEXT,
+                last_imported_count INTEGER NOT NULL DEFAULT 0,
+                total_imported INTEGER NOT NULL DEFAULT 0,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                total_failures INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                PRIMARY KEY (actor_id, feed_name, feed_url)
+            )
+            '''
+        )
+        connection.execute(
+            '''
+            INSERT INTO actor_feed_state (
+                actor_id, feed_name, feed_url, last_success_published_at, last_success_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ''',
+            (
+                actor_id,
+                'Primary Feed',
+                'https://example.com/feed.xml',
+                '2026-02-20T00:00:00Z',
+                '2026-02-20T01:00:00Z',
+            ),
+        )
+        connection.commit()
+
+    saved: list[dict[str, str]] = []
+    imported = import_default_feeds_for_actor_core(
+        actor_id,
+        db_path=str(db_path),
+        default_cti_feeds=[('Primary Feed', 'https://example.com/feed.xml')],
+        actor_feed_lookback_days=180,
+        deps={
+            'actor_exists': lambda connection, _actor_id: True,
+            'build_actor_profile_from_mitre': lambda _name: {'group_name': 'Akira', 'aliases_csv': 'Akira'},
+            'actor_terms': lambda *_args: ['akira'],
+            'actor_query_feeds': lambda _terms: [],
+            'import_ransomware_live_actor_activity': lambda *_args: 0,
+            'safe_http_get': lambda _url, timeout=10.0: _OkResponse(),
+            'parse_feed_entries': lambda _xml: [
+                {'title': 'Akira old', 'link': 'https://example.com/old', 'published_at': '2026-02-19T00:00:00Z'},
+                {'title': 'Akira new', 'link': 'https://example.com/new', 'published_at': '2026-02-22T00:00:00Z'},
+            ],
+            'text_contains_actor_term': lambda _text, _terms: True,
+            'within_lookback': lambda _published_at, _days: True,
+            'parse_published_datetime': lambda value: datetime.fromisoformat(str(value).replace('Z', '+00:00')),
+            'derive_source_from_url': lambda link, **_kwargs: {
+                'source_name': 'Example',
+                'source_url': link,
+                'published_at': '2026-02-22T00:00:00Z' if link.endswith('/new') else '2026-02-19T00:00:00Z',
+                'pasted_text': 'Akira activity details',
+                'trigger_excerpt': 'Akira activity details',
+                'title': 'Akira source',
+                'headline': None,
+                'og_title': None,
+                'html_title': None,
+                'publisher': 'Example',
+                'site_name': 'Example',
+            },
+            'upsert_source_for_actor': lambda _connection, *_args: saved.append({'url': _args[2]}),
+            'duckduckgo_actor_search_urls': lambda _terms, limit=1: [],
+            'utc_now_iso': lambda: '2026-02-23T00:00:00+00:00',
+        },
+    )
+
+    assert imported == 1
+    assert saved == [{'url': 'https://example.com/new'}]
+
+
+def test_feed_ingest_backs_off_after_repeated_failures(tmp_path):
+    db_path = tmp_path / 'feed_ingest.db'
+    actor_id = 'actor-4'
+    _seed_actor_db(db_path, actor_id, 'Akira')
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with sqlite3.connect(str(db_path)) as connection:
+        connection.execute(
+            '''
+            CREATE TABLE actor_feed_state (
+                actor_id TEXT NOT NULL,
+                feed_name TEXT NOT NULL,
+                feed_url TEXT NOT NULL,
+                last_checked_at TEXT,
+                last_success_at TEXT,
+                last_success_published_at TEXT,
+                last_imported_count INTEGER NOT NULL DEFAULT 0,
+                total_imported INTEGER NOT NULL DEFAULT 0,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                total_failures INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                PRIMARY KEY (actor_id, feed_name, feed_url)
+            )
+            '''
+        )
+        connection.execute(
+            '''
+            INSERT INTO actor_feed_state (
+                actor_id, feed_name, feed_url, last_checked_at, consecutive_failures, total_failures
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                actor_id,
+                'Primary Feed',
+                'https://example.com/feed.xml',
+                now_iso,
+                4,
+                4,
+            ),
+        )
+        connection.commit()
+
+    called = {'fetch': 0}
+
+    imported = import_default_feeds_for_actor_core(
+        actor_id,
+        db_path=str(db_path),
+        default_cti_feeds=[('Primary Feed', 'https://example.com/feed.xml')],
+        actor_feed_lookback_days=180,
+        deps={
+            'actor_exists': lambda connection, _actor_id: True,
+            'build_actor_profile_from_mitre': lambda _name: {'group_name': 'Akira', 'aliases_csv': 'Akira'},
+            'actor_terms': lambda *_args: ['akira'],
+            'actor_query_feeds': lambda _terms: [],
+            'import_ransomware_live_actor_activity': lambda *_args: 0,
+            'safe_http_get': lambda _url, timeout=10.0: called.__setitem__('fetch', called['fetch'] + 1),
+            'parse_feed_entries': lambda _xml: [],
+            'text_contains_actor_term': lambda _text, _terms: True,
+            'within_lookback': lambda _published_at, _days: True,
+            'parse_published_datetime': lambda _value: datetime.now(timezone.utc),
+            'derive_source_from_url': lambda *_args, **_kwargs: {},
+            'upsert_source_for_actor': lambda *_args: None,
+            'duckduckgo_actor_search_urls': lambda _terms, limit=1: [],
+            'utc_now_iso': lambda: '2026-02-23T00:05:00+00:00',
+        },
+    )
+
+    assert imported == 0
+    assert called['fetch'] == 0

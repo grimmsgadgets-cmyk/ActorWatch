@@ -1633,9 +1633,11 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
             'parse_feed_entries': _parse_feed_entries,
             'text_contains_actor_term': _text_contains_actor_term,
             'within_lookback': _within_lookback,
+            'parse_published_datetime': _parse_published_datetime,
             'derive_source_from_url': derive_source_from_url,
             'upsert_source_for_actor': _upsert_source_for_actor,
             'duckduckgo_actor_search_urls': _duckduckgo_actor_search_urls,
+            'utc_now_iso': utc_now_iso,
         },
     )
 

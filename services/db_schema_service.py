@@ -110,6 +110,24 @@ def ensure_schema(connection) -> None:
         )
         '''
     )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_feed_state (
+            actor_id TEXT NOT NULL,
+            feed_name TEXT NOT NULL,
+            feed_url TEXT NOT NULL,
+            last_checked_at TEXT,
+            last_success_at TEXT,
+            last_success_published_at TEXT,
+            last_imported_count INTEGER NOT NULL DEFAULT 0,
+            total_imported INTEGER NOT NULL DEFAULT 0,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            total_failures INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            PRIMARY KEY (actor_id, feed_name, feed_url)
+        )
+        '''
+    )
     source_cols = connection.execute('PRAGMA table_info(sources)').fetchall()
     if not any(col[1] == 'source_fingerprint' for col in source_cols):
         connection.execute("ALTER TABLE sources ADD COLUMN source_fingerprint TEXT")
