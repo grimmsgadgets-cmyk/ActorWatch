@@ -792,6 +792,14 @@
                 <div class="dq-line"><strong>Where to start:</strong> {{ question.first_step or question.telemetry_anchor }}</div>
                 <div class="dq-line"><strong>What to watch:</strong> {{ question.what_to_look_for or question.success_condition or question.decision_trigger }}</div>
                 <div class="dq-line"><strong>What to note:</strong> {{ question.expected_output }}</div>
+                {% if question.related_iocs %}
+                <div class="dq-line">
+                  <strong>Relevant IOCs:</strong>
+                  {% for ioc in question.related_iocs %}
+                  <span class="badge">{{ ioc.ioc_type }}</span> {{ ioc.ioc_value }}{% if ioc.source_ref %} ({{ ioc.source_ref }}){% endif %}{% if not loop.last %} | {% endif %}
+                  {% endfor %}
+                </div>
+                {% endif %}
               </div>
             </details>
             {% endfor %}

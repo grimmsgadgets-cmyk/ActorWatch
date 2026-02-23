@@ -1,8 +1,86 @@
 import sqlite3
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from fastapi import HTTPException
+
+
+def _quick_check_ioc_type_hints(text: str) -> set[str]:
+    normalized = str(text or '').lower()
+    hints: set[str] = set()
+    matched_specific_signal = False
+
+    def _contains(pattern: str) -> bool:
+        return bool(re.search(pattern, normalized))
+
+    if _contains(r'\b(dns|domain|domains|fqdn|host|url|uri|proxy)\b'):
+        hints.update({'domain', 'url', 'indicator'})
+        matched_specific_signal = True
+    if _contains(r'\b(ip|ipv4|ipv6|network|c2|beacon|egress|vpn|firewall|address)\b'):
+        hints.update({'ip', 'domain', 'url', 'indicator'})
+        matched_specific_signal = True
+    if _contains(r'\b(email|phish|sender|mailbox|m365|exchange)\b'):
+        hints.update({'email', 'domain', 'url', 'indicator'})
+        matched_specific_signal = True
+    if _contains(r'\b(hash|sha256|sha1|md5|binary|payload|malware)\b'):
+        hints.update({'hash', 'indicator'})
+        matched_specific_signal = True
+    if (not matched_specific_signal) and _contains(r'\b(ioc|iocs|indicator|indicators|artifact|artifacts)\b'):
+        hints.update({'ip', 'domain', 'url', 'hash', 'email', 'indicator'})
+    return hints
+
+
+def _relevant_iocs_for_quick_check(
+    card: dict[str, object],
+    ioc_items: list[dict[str, object]],
+    *,
+    limit: int = 5,
+) -> list[dict[str, str]]:
+    if not ioc_items:
+        return []
+    card_text = ' '.join(
+        [
+            str(card.get('question_text') or ''),
+            str(card.get('first_step') or ''),
+            str(card.get('what_to_look_for') or ''),
+            str(card.get('query_hint') or ''),
+            str(card.get('telemetry_anchor') or ''),
+        ]
+    ).lower()
+    if not card_text.strip():
+        return []
+
+    hinted_types = _quick_check_ioc_type_hints(card_text)
+    relevant: list[tuple[int, dict[str, str]]] = []
+    for item in ioc_items:
+        ioc_type = str(item.get('ioc_type') or '').strip().lower()
+        ioc_value = str(item.get('ioc_value') or '').strip().lower()
+        if not ioc_type or not ioc_value:
+            continue
+
+        score = 0
+        if ioc_type in hinted_types:
+            score += 3
+        if ioc_value in card_text:
+            score += 5
+        if score <= 0:
+            continue
+        relevant.append(
+            (
+                score,
+                {
+                    'ioc_type': str(item.get('ioc_type') or ''),
+                    'ioc_value': str(item.get('ioc_value') or ''),
+                    'source_ref': str(item.get('source_ref') or ''),
+                },
+            )
+        )
+
+    if not relevant:
+        return []
+    ranked = sorted(relevant, key=lambda row: int(row[0]), reverse=True)
+    return [row[1] for row in ranked[:limit]]
 
 
 def latest_reporting_recency_label(
@@ -797,6 +875,16 @@ def fetch_actor_notebook_core(
             ''',
             (actor_id,),
         ).fetchall()
+        ioc_items = [
+            {
+                'id': row[0],
+                'ioc_type': row[1],
+                'ioc_value': row[2],
+                'source_ref': row[3],
+                'created_at': row[4],
+            }
+            for row in ioc_rows
+        ]
         context_row = connection.execute(
             '''
             SELECT org_context, priority_mode, updated_at
@@ -1065,6 +1153,8 @@ def fetch_actor_notebook_core(
                 card['what_to_look_for'] = what_to_look_for
             if expected_output:
                 card['expected_output'] = expected_output
+    for card in priority_questions:
+        card['related_iocs'] = _relevant_iocs_for_quick_check(card, ioc_items, limit=4)
 
     phase_group_order: list[str] = []
     phase_groups_map: dict[str, list[dict[str, object]]] = {}
@@ -1377,16 +1467,7 @@ def fetch_actor_notebook_core(
         },
         'environment_checks': environment_checks,
         'kpis': notebook_kpis,
-        'ioc_items': [
-            {
-                'id': row[0],
-                'ioc_type': row[1],
-                'ioc_value': row[2],
-                'source_ref': row[3],
-                'created_at': row[4],
-            }
-            for row in ioc_rows
-        ],
+        'ioc_items': ioc_items,
         'requirements_context': {
             'org_context': str(context_row[0]) if context_row else '',
             'priority_mode': str(context_row[1]) if context_row else 'Operational',

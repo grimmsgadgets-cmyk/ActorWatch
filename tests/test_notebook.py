@@ -161,6 +161,124 @@ def test_quick_check_overrides_are_applied_to_priority_cards(tmp_path, monkeypat
     )
 
 
+def test_priority_questions_autopopulate_relevant_iocs(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-IOC', 'IOC relevance scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, retrieved_at, pasted_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-ioc-1',
+                actor['id'],
+                'CISA',
+                'https://example.com/apt-ioc',
+                '2026-02-22',
+                '2026-02-22T00:00:00+00:00',
+                'APT-IOC operators were linked to DNS beaconing infrastructure.',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO question_threads (
+                id, actor_id, question_text, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'thread-ioc-1',
+                actor['id'],
+                'Is APT-IOC using DNS beaconing to known malicious domains?',
+                'open',
+                '2026-02-22T00:00:00+00:00',
+                '2026-02-22T01:00:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO timeline_events (
+                id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'evt-ioc-1',
+                actor['id'],
+                '2026-02-22T00:30:00+00:00',
+                'command_and_control',
+                'Beaconing activity',
+                'Observed DNS beaconing behavior tied to actor infrastructure.',
+                'src-ioc-1',
+                'Enterprise network',
+                '[]',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO question_updates (
+                id, thread_id, source_id, trigger_excerpt, update_note, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+                (
+                    'update-ioc-1',
+                    'thread-ioc-1',
+                    'src-ioc-1',
+                    'Recent APT-IOC DNS beaconing was observed against managed networks.',
+                    '',
+                    '2026-02-22T01:00:00+00:00',
+                ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO ioc_items (id, actor_id, ioc_type, ioc_value, source_ref, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ioc-domain-1',
+                actor['id'],
+                'domain',
+                'malicious-example.net',
+                'CISA alert',
+                '2026-02-22T01:05:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO ioc_items (id, actor_id, ioc_type, ioc_value, source_ref, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ioc-hash-1',
+                actor['id'],
+                'hash',
+                '9f86d081884c7d659a2feaa0c55ad015',
+                'Sample feed',
+                '2026-02-22T01:06:00+00:00',
+            ),
+        )
+        connection.commit()
+
+    notebook = app_module._fetch_actor_notebook(actor['id'])  # noqa: SLF001
+    cards = notebook.get('priority_questions', [])
+    assert cards
+
+    card = next((item for item in cards if str(item.get('id') or '') == 'thread-ioc-1'), None)
+    assert card is not None
+    related_iocs = card.get('related_iocs', [])
+    assert any(
+        str(ioc.get('ioc_type') or '').lower() == 'domain'
+        and str(ioc.get('ioc_value') or '') == 'malicious-example.net'
+        for ioc in related_iocs
+    )
+    assert not any(str(ioc.get('ioc_type') or '').lower() == 'hash' for ioc in related_iocs)
+
+
 def test_fetch_actor_notebook_payload_shape_regression(tmp_path):
     _setup_db(tmp_path)
     actor = app_module.create_actor_profile('APT-Payload', 'Payload shape scope')
