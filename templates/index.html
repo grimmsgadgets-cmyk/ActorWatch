@@ -72,6 +72,15 @@
       .mini-trend-inline { display: flex; align-items: flex-end; gap: 2px; margin-top: 6px; height: 20px; }
       .mini-trend-bar { width: 6px; border-radius: 2px; background: #89a8d8; }
       .mini-trend-bar.peak { background: #c44f4f; }
+      .mini-trend-meta { margin-top: 4px; font-size: 10px; color: #475569; line-height: 1.2; }
+      .mini-trend-labels { display: flex; justify-content: space-between; margin-top: 2px; font-size: 9px; color: #64748b; }
+      .mini-trend-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-top: 5px; }
+      .mini-trend-kpi { border: 1px solid #d7e2f4; border-radius: 6px; background: #f2f7ff; padding: 3px 4px; }
+      .mini-trend-kpi .k { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; line-height: 1.1; }
+      .mini-trend-kpi .v { display: block; font-size: 11px; font-weight: 700; color: #1f2937; line-height: 1.2; margin-top: 1px; }
+      .mini-trend-kpi.up .v { color: #0f6b2f; }
+      .mini-trend-kpi.down .v { color: #8a1c1c; }
+      .mini-trend-kpi.flat .v { color: #334155; }
       .bottom-drawer { min-height: 0; }
       .section-title { margin-top: 0; margin-bottom: 8px; font-size: 16px; line-height: 1.2; padding-bottom: 6px; border-bottom: 1px solid #e8eef8; }
       .role-chip { display: inline-block; margin-left: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; border: 1px solid #cfdcee; border-radius: 999px; padding: 2px 7px; color: #41556f; background: #f3f8ff; vertical-align: middle; }
@@ -600,12 +609,47 @@
           </div>
           <div class="ataglance-metric">
             <div class="ataglance-label">Trend</div>
-            <div class="ataglance-value">{% if notebook.timeline_compact_rows %}Active{% else %}Quiet{% endif %}</div>
+            {% set trend_buckets = notebook.timeline_graph[-6:] if notebook.timeline_graph else [] %}
+            {% set latest_bucket = trend_buckets[-1] if trend_buckets else None %}
+            {% set prev_bucket = trend_buckets[-2] if trend_buckets|length > 1 else None %}
+            {% set latest_total = latest_bucket.total if latest_bucket else 0 %}
+            {% set prev_total = prev_bucket.total if prev_bucket else 0 %}
+            {% set delta = latest_total - prev_total %}
+            {% if latest_total == 0 and prev_total == 0 %}
+            {% set trend_label = 'Quiet' %}
+            {% elif delta > 0 %}
+            {% set trend_label = 'Rising' %}
+            {% elif delta < 0 %}
+            {% set trend_label = 'Cooling' %}
+            {% else %}
+            {% set trend_label = 'Steady' %}
+            {% endif %}
+            <div class="ataglance-value">{{ trend_label }}</div>
             {% if notebook.timeline_graph %}
             <div class="mini-trend-inline" aria-hidden="true">
-              {% for bucket in notebook.timeline_graph[:8] %}
-              <span class="mini-trend-bar{% if loop.last %} peak{% endif %}" style="height: {{ [4, bucket.height_pct // 2]|max }}px;"></span>
+              {% for bucket in trend_buckets %}
+              <span class="mini-trend-bar{% if loop.last %} peak{% endif %}" style="height: {{ [4, bucket.height_pct // 2]|max }}px;" title="{{ bucket.label }}: {{ bucket.total }} events"></span>
               {% endfor %}
+            </div>
+            <div class="mini-trend-labels"><span>Older</span><span>Latest</span></div>
+            <div class="mini-trend-kpis">
+              <div class="mini-trend-kpi">
+                <span class="k">Latest</span>
+                <span class="v">{{ latest_total }}</span>
+              </div>
+              <div class="mini-trend-kpi">
+                <span class="k">Prev</span>
+                <span class="v">{{ prev_total }}</span>
+              </div>
+              <div class="mini-trend-kpi {% if delta > 0 %}up{% elif delta < 0 %}down{% else %}flat{% endif %}">
+                <span class="k">Direction</span>
+                <span class="v">
+                  {% if delta > 0 %}+{{ delta }}{% elif delta < 0 %}{{ delta }}{% else %}0{% endif %}
+                </span>
+              </div>
+            </div>
+            <div class="mini-trend-meta">
+              Latest bucket: {{ trend_buckets[-1].total if trend_buckets else 0 }} events
             </div>
             {% endif %}
           </div>
