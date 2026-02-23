@@ -113,6 +113,7 @@ def derive_source_from_url_core(
     *,
     fallback_source_name: str | None = None,
     published_hint: str | None = None,
+    fetch_timeout_seconds: float = 20.0,
     deps: dict[str, object],
 ) -> dict[str, str | None]:
     _safe_http_get = deps['safe_http_get']
@@ -120,7 +121,7 @@ def derive_source_from_url_core(
     _first_sentences = deps['first_sentences']
 
     try:
-        response = _safe_http_get(source_url, timeout=20.0)
+        response = _safe_http_get(source_url, timeout=max(1.0, float(fetch_timeout_seconds)))
         response.raise_for_status()
     except HTTPException:
         raise

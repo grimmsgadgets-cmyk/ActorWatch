@@ -204,6 +204,16 @@ MEDIUM_CONFIDENCE_SOURCE_DOMAINS = {
     'unit42.paloaltonetworks.com',
     'microsoft.com',
     'securelist.com',
+    'cloud.google.com',
+    'proofpoint.com',
+    'redcanary.com',
+    'huntress.com',
+    'arcticwolf.com',
+    'rapid7.com',
+    'sophos.com',
+    'trendmicro.com',
+    'welivesecurity.com',
+    'eset.com',
 }
 SECONDARY_CONTEXT_DOMAINS = {
     'bleepingcomputer.com',
@@ -1349,11 +1359,17 @@ def _safe_http_get(
     )
 
 
-def derive_source_from_url(source_url: str, fallback_source_name: str | None = None, published_hint: str | None = None) -> dict[str, str | None]:
+def derive_source_from_url(
+    source_url: str,
+    fallback_source_name: str | None = None,
+    published_hint: str | None = None,
+    fetch_timeout_seconds: float = 20.0,
+) -> dict[str, str | None]:
     return source_derivation_service.derive_source_from_url_core(
         source_url,
         fallback_source_name=fallback_source_name,
         published_hint=published_hint,
+        fetch_timeout_seconds=fetch_timeout_seconds,
         deps={
             'pipeline_derive_source_from_url_core': pipeline_derive_source_from_url_core,
             'safe_http_get': _safe_http_get,

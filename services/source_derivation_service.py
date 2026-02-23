@@ -3,6 +3,7 @@ def derive_source_from_url_core(
     *,
     fallback_source_name: str | None,
     published_hint: str | None,
+    fetch_timeout_seconds: float = 20.0,
     deps: dict[str, object],
 ) -> dict[str, str | None]:
     _pipeline_derive_source_from_url_core = deps['pipeline_derive_source_from_url_core']
@@ -14,6 +15,7 @@ def derive_source_from_url_core(
         source_url,
         fallback_source_name=fallback_source_name,
         published_hint=published_hint,
+        fetch_timeout_seconds=fetch_timeout_seconds,
         deps={
             'safe_http_get': _safe_http_get,
             'extract_question_sentences': _extract_question_sentences,

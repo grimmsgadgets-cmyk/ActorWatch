@@ -1,8 +1,21 @@
 import sqlite3
 import time
 from typing import Callable
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
+
+
+def _is_google_news_wrapper_url(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = urlparse(str(value).strip())
+    except Exception:
+        return False
+    host = (parsed.hostname or '').strip('.').lower()
+    path = (parsed.path or '').strip()
+    return host.endswith('news.google.com') and path.startswith('/rss/articles/')
 
 
 def import_default_feeds_for_actor_core(
@@ -61,7 +74,11 @@ def import_default_feeds_for_actor_core(
             if time.perf_counter() >= deadline:
                 break
             try:
-                feed_resp = _safe_http_get(feed_url, timeout=feed_fetch_timeout_seconds)
+                remaining_seconds = max(1.0, deadline - time.perf_counter())
+                feed_resp = _safe_http_get(
+                    feed_url,
+                    timeout=min(float(feed_fetch_timeout_seconds), float(remaining_seconds)),
+                )
                 feed_resp.raise_for_status()
                 entries = _parse_feed_entries(feed_resp.text)
             except Exception:
@@ -87,14 +104,14 @@ def import_default_feeds_for_actor_core(
                     continue
                 title_text = str(entry.get('title') or '')
                 entry_context = f'{title_text} {link}'
-                if actor_terms and not _text_contains_actor_term(entry_context, actor_terms):
-                    continue
                 seen_links.add(link)
                 try:
+                    remaining_seconds = max(1.0, deadline - time.perf_counter())
                     derived = _derive_source_from_url(
                         link,
                         fallback_source_name=feed_name,
                         published_hint=entry.get('published_at'),
+                        fetch_timeout_seconds=min(20.0, float(remaining_seconds)),
                     )
                     combined_text = (
                         f'{entry.get("title") or ""} '
@@ -103,6 +120,9 @@ def import_default_feeds_for_actor_core(
                         f'{derived.get("pasted_text") or ""}'
                     )
                     if actor_terms and not _text_contains_actor_term(combined_text, actor_terms):
+                        continue
+                    resolved_source_url = str(derived.get('source_url') or '').strip()
+                    if _is_google_news_wrapper_url(link) and _is_google_news_wrapper_url(resolved_source_url):
                         continue
                     resolved_published = str(derived.get('published_at') or '').strip() or (
                         str(entry.get('published_at') or '').strip()
@@ -136,6 +156,8 @@ def import_default_feeds_for_actor_core(
                         return imported
                 except Exception:
                     if actor_terms and _text_contains_actor_term(entry_context, actor_terms):
+                        if _is_google_news_wrapper_url(link):
+                            continue
                         fallback_published = str(entry.get('published_at') or '').strip()
                         if feed_require_published_at and not fallback_published:
                             continue
@@ -177,7 +199,12 @@ def import_default_feeds_for_actor_core(
                 continue
             seen_links.add(link)
             try:
-                derived = _derive_source_from_url(link, fallback_source_name='Actor Search')
+                remaining_seconds = max(1.0, deadline - time.perf_counter())
+                derived = _derive_source_from_url(
+                    link,
+                    fallback_source_name='Actor Search',
+                    fetch_timeout_seconds=min(20.0, float(remaining_seconds)),
+                )
                 combined_text = (
                     f'{derived.get("source_name") or ""} '
                     f'{derived.get("source_url") or ""} '
