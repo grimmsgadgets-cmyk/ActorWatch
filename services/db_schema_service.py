@@ -14,6 +14,23 @@ def ensure_schema(connection) -> None:
         connection.execute(
             "ALTER TABLE actor_profiles ADD COLUMN is_tracked INTEGER NOT NULL DEFAULT 0"
         )
+    if not any(col[1] == 'canonical_name' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN canonical_name TEXT"
+        )
+    connection.execute(
+        '''
+        UPDATE actor_profiles
+        SET canonical_name = LOWER(TRIM(display_name))
+        WHERE COALESCE(TRIM(canonical_name), '') = ''
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_actor_profiles_canonical_name
+        ON actor_profiles(canonical_name)
+        '''
+    )
     if not any(col[1] == 'notebook_status' for col in actor_cols):
         connection.execute(
             "ALTER TABLE actor_profiles ADD COLUMN notebook_status TEXT NOT NULL DEFAULT 'idle'"

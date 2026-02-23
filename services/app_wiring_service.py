@@ -28,6 +28,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'enforce_request_size': deps['enforce_request_size'],
                 'default_body_limit_bytes': deps['default_body_limit_bytes'],
                 'create_actor_profile': deps['create_actor_profile'],
+                'merge_actor_profiles': deps['merge_actor_profiles'],
                 'db_path': deps['db_path'],
                 'actor_exists': deps['actor_exists'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],

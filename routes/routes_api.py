@@ -11,6 +11,7 @@ def create_api_router(*, deps: dict[str, object]) -> APIRouter:
     _enforce_request_size = deps['enforce_request_size']
     _default_body_limit_bytes = deps['default_body_limit_bytes']
     _create_actor_profile = deps['create_actor_profile']
+    _merge_actor_profiles = deps['merge_actor_profiles']
     _db_path = deps['db_path']
     _actor_exists = deps['actor_exists']
     _set_actor_notebook_status = deps['set_actor_notebook_status']
@@ -84,5 +85,19 @@ def create_api_router(*, deps: dict[str, object]) -> APIRouter:
             connection.commit()
         _set_actor_notebook_status(actor_id, 'idle', 'Actor untracked.')
         return RedirectResponse(url=f'/?actor_id={actor_id}', status_code=303)
+
+    @router.post('/actors/{target_actor_id}/merge')
+    async def merge_actor(target_actor_id: str, request: Request) -> dict[str, object]:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = request.headers.get('content-type', '')
+        if 'application/json' in content_type:
+            payload = await request.json()
+        else:
+            form_data = await request.form()
+            payload = dict(form_data)
+        source_actor_id = str(payload.get('source_actor_id') or '').strip()
+        if not source_actor_id:
+            raise HTTPException(status_code=400, detail='source_actor_id is required')
+        return _merge_actor_profiles(target_actor_id, source_actor_id)
 
     return router

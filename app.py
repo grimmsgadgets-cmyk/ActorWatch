@@ -1534,6 +1534,19 @@ def create_actor_profile(
             'db_path': lambda: DB_PATH,
             'new_id': lambda: str(uuid.uuid4()),
             'utc_now_iso': utc_now_iso,
+            'normalize_actor_name': actor_profile_service.normalize_actor_name_core,
+        },
+    )
+
+
+def merge_actor_profiles(target_actor_id: str, source_actor_id: str) -> dict[str, object]:
+    return actor_profile_service.merge_actor_profiles_core(
+        target_actor_id=target_actor_id,
+        source_actor_id=source_actor_id,
+        deps={
+            'db_path': lambda: DB_PATH,
+            'utc_now_iso': utc_now_iso,
+            'new_id': lambda: str(uuid.uuid4()),
         },
     )
 
@@ -1810,6 +1823,7 @@ def _register_routers() -> None:
             'enforce_request_size': _enforce_request_size,
             'default_body_limit_bytes': DEFAULT_BODY_LIMIT_BYTES,
             'create_actor_profile': create_actor_profile,
+            'merge_actor_profiles': merge_actor_profiles,
             'db_path': _db_path,
             'actor_exists': actor_exists,
             'source_upload_body_limit_bytes': SOURCE_UPLOAD_BODY_LIMIT_BYTES,
