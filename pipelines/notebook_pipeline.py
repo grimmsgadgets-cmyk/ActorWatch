@@ -694,6 +694,7 @@ def fetch_actor_notebook_core(
     _build_environment_checks = deps['build_environment_checks']
     _build_notebook_kpis = deps['build_notebook_kpis']
     _format_date_or_unknown = deps['format_date_or_unknown']
+    _recent_change_max_days = int(deps.get('recent_change_max_days', 45))
     _load_quick_check_overrides = deps.get('load_quick_check_overrides')
 
     quick_check_overrides: dict[str, dict[str, str]] = {}
@@ -1229,27 +1230,45 @@ def fetch_actor_notebook_core(
     )
 
     # Carry over freshness metadata from known sources referenced in validated evidence.
+    known_source_urls = {
+        str(source.get('url') or '').strip()
+        for source in source_items_for_changes
+        if str(source.get('url') or '').strip()
+    }
     highlight_by_url = {
         str(item.get('source_url') or '').strip(): item
         for item in recent_activity_highlights
         if str(item.get('source_url') or '').strip()
     }
+    now_utc = datetime.now(timezone.utc)
+    min_recent_dt = now_utc - timedelta(days=max(1, _recent_change_max_days))
     for item in llm_change_signals:
         evidence_values = item.get('validated_sources')
         if not isinstance(evidence_values, list):
+            item['validated_sources'] = []
             continue
+        validated_recent: list[dict[str, object]] = []
         for evidence in evidence_values:
             if not isinstance(evidence, dict):
                 continue
             source_url = str(evidence.get('source_url') or '').strip()
             if not source_url:
                 continue
-            original = highlight_by_url.get(source_url)
-            if not original:
+            if source_url not in known_source_urls and source_url not in highlight_by_url:
                 continue
-            evidence.setdefault('freshness_label', str(original.get('freshness_label') or ''))
-            evidence.setdefault('freshness_class', str(original.get('freshness_class') or 'badge'))
-            evidence.setdefault('source_date', str(evidence.get('source_date') or original.get('date') or ''))
+            original = highlight_by_url.get(source_url)
+            evidence_date_raw = str(evidence.get('source_date') or (original.get('date') if original else '') or '').strip()
+            evidence_dt = _parse_published_datetime(evidence_date_raw)
+            if evidence_dt is None and original is not None:
+                evidence_dt = _parse_published_datetime(str(original.get('date') or ''))
+            if evidence_dt is None or evidence_dt < min_recent_dt:
+                continue
+            if original is not None:
+                evidence.setdefault('freshness_label', str(original.get('freshness_label') or ''))
+                evidence.setdefault('freshness_class', str(original.get('freshness_class') or 'badge'))
+                evidence.setdefault('source_date', str(evidence.get('source_date') or original.get('date') or ''))
+            validated_recent.append(evidence)
+        item['validated_sources'] = validated_recent
 
     top_change_signals = [
         item
@@ -1263,6 +1282,9 @@ def fetch_actor_notebook_core(
         for item in deterministic_signals:
             evidence_url = str(item.get('source_url') or '').strip()
             evidence_date = str(item.get('source_published_at') or item.get('date') or '').strip()
+            evidence_dt = _parse_published_datetime(evidence_date)
+            if evidence_dt is None or evidence_dt < min_recent_dt:
+                continue
             evidence_label = str(item.get('evidence_source_label') or item.get('source_name') or evidence_url).strip()
             proof = ' '.join(str(item.get('text') or '').split()).strip()[:220]
             corroboration = int(str(item.get('corroboration_sources') or '0') or '0')
