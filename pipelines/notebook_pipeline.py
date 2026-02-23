@@ -1154,7 +1154,18 @@ def fetch_actor_notebook_core(
             if expected_output:
                 card['expected_output'] = expected_output
     for card in priority_questions:
-        card['related_iocs'] = _relevant_iocs_for_quick_check(card, ioc_items, limit=4)
+        related = _relevant_iocs_for_quick_check(card, ioc_items, limit=4)
+        if not related and ioc_items:
+            related = [
+                {
+                    'ioc_type': str(item.get('ioc_type') or ''),
+                    'ioc_value': str(item.get('ioc_value') or ''),
+                    'source_ref': str(item.get('source_ref') or ''),
+                }
+                for item in ioc_items[:3]
+                if str(item.get('ioc_value') or '').strip()
+            ]
+        card['related_iocs'] = related
 
     phase_group_order: list[str] = []
     phase_groups_map: dict[str, list[dict[str, object]]] = {}
