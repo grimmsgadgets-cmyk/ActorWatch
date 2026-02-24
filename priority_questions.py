@@ -78,7 +78,7 @@ def fallback_priority_questions(actor_name: str, actor_categories: set[str]) -> 
     if 'initial_access' in actor_categories:
         catalog.append(
             {
-                'question_text': 'Which exposed internet-facing systems need emergency hardening in the next 24 hours?',
+                'question_text': f'Which exposed internet-facing systems linked to {actor_name} need emergency hardening in the next 24 hours?',
                 'priority': 'High',
                 'know_focus': f'{actor_name} activity frequently begins through exposed edge assets and weak external auth.',
                 'hunt_focus': 'Hunt exploit attempts on edge assets and unusual VPN authentication patterns.',
@@ -92,7 +92,7 @@ def fallback_priority_questions(actor_name: str, actor_categories: set[str]) -> 
     if 'impact' in actor_categories or 'exfiltration' in actor_categories:
         catalog.append(
             {
-                'question_text': 'Which critical systems show signs of ransomware staging or high-risk data theft right now?',
+                'question_text': f'Which critical systems show {actor_name}-aligned ransomware staging or high-risk data theft right now?',
                 'priority': 'High',
                 'know_focus': f'{actor_name} reporting includes high-impact disruption and/or data theft patterns.',
                 'hunt_focus': 'Hunt mass file changes, backup tampering, suspicious archiving, and large outbound transfers.',
@@ -106,7 +106,7 @@ def fallback_priority_questions(actor_name: str, actor_categories: set[str]) -> 
     if 'command_and_control' in actor_categories or 'lateral_movement' in actor_categories:
         catalog.append(
             {
-                'question_text': 'Which hosts are likely pivot points that should be segmented or isolated first?',
+                'question_text': f'Which hosts are likely {actor_name} pivot points that should be segmented or isolated first?',
                 'priority': 'Medium',
                 'know_focus': 'Recent signals suggest internal movement or remote control activity.',
                 'hunt_focus': 'Hunt beacon-like traffic and unusual remote-service authentication between hosts.',
@@ -120,7 +120,7 @@ def fallback_priority_questions(actor_name: str, actor_categories: set[str]) -> 
     if not catalog:
         catalog.append(
             {
-                'question_text': 'What changed in telemetry that increases confidence this actor is active in our environment?',
+                'question_text': f'What changed in telemetry that increases confidence {actor_name} is active in our environment?',
                 'priority': 'Medium',
                 'know_focus': f'{actor_name} reporting is limited, so confidence shifts should rely on concrete local evidence.',
                 'hunt_focus': 'Hunt for corroborating endpoint and network alerts tied to actor-reported techniques.',

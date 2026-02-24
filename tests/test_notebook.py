@@ -1996,6 +1996,131 @@ def test_fetch_notebook_ioc_items_excludes_unvalidated_revoked_and_expired(tmp_p
     assert 'expired.example' not in values
 
 
+def test_quick_checks_are_actor_specific_not_global_template(tmp_path):
+    _setup_db(tmp_path)
+    actor_a = app_module.create_actor_profile('Qilin', 'Actor A scope')
+    actor_b = app_module.create_actor_profile('Akira', 'Actor B scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        for actor_id, actor_name, ioc_value, thread_id, src_id in [
+            (actor_a['id'], 'Qilin', 'qilin-c2.example', 'thread-qilin', 'src-qilin'),
+            (actor_b['id'], 'Akira', 'akira-c2.example', 'thread-akira', 'src-akira'),
+        ]:
+            connection.execute(
+                '''
+                INSERT INTO sources (
+                    id, actor_id, source_name, url, published_at, retrieved_at, pasted_text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    src_id,
+                    actor_id,
+                    f'{actor_name} Report',
+                    f'https://intel.example/{actor_name.lower()}',
+                    '2026-02-22',
+                    '2026-02-22T00:00:00+00:00',
+                    f'{actor_name} beaconing and suspicious DNS activity observed.',
+                ),
+            )
+            connection.execute(
+                '''
+                INSERT INTO question_threads (
+                    id, actor_id, question_text, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    thread_id,
+                    actor_id,
+                    f'Is {actor_name} beaconing via suspicious DNS domains?',
+                    'open',
+                    '2026-02-22T00:00:00+00:00',
+                    '2026-02-22T01:00:00+00:00',
+                ),
+            )
+            connection.execute(
+                '''
+                INSERT INTO question_updates (
+                    id, thread_id, source_id, trigger_excerpt, update_note, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    f'upd-{thread_id}',
+                    thread_id,
+                    src_id,
+                    f'{actor_name} DNS beaconing observed.',
+                    '',
+                    '2026-02-22T01:00:00+00:00',
+                ),
+            )
+            connection.execute(
+                '''
+                INSERT INTO timeline_events (
+                    id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    f'evt-{thread_id}',
+                    actor_id,
+                    '2026-02-22T00:30:00+00:00',
+                    'command_and_control',
+                    f'{actor_name} beaconing update',
+                    f'Observed {actor_name} DNS beaconing patterns in recent reporting.',
+                    src_id,
+                    'Enterprise',
+                    '[]',
+                ),
+            )
+            connection.execute(
+                '''
+                INSERT INTO ioc_items (
+                    id, actor_id, ioc_type, ioc_value, normalized_value, validation_status,
+                    lifecycle_status, revoked, is_active, source_ref, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    f'ioc-{thread_id}',
+                    actor_id,
+                    'domain',
+                    ioc_value,
+                    ioc_value,
+                    'valid',
+                    'active',
+                    0,
+                    1,
+                    f'{actor_name} report',
+                    '2026-02-22T01:05:00+00:00',
+                ),
+            )
+        connection.commit()
+
+    notebook_a = app_module._fetch_actor_notebook(actor_a['id'])  # noqa: SLF001
+    notebook_b = app_module._fetch_actor_notebook(actor_b['id'])  # noqa: SLF001
+    card_a = next((item for item in notebook_a.get('priority_questions', []) if item.get('id') == 'thread-qilin'), None)
+    card_b = next((item for item in notebook_b.get('priority_questions', []) if item.get('id') == 'thread-akira'), None)
+    assert card_a is not None and card_b is not None
+
+    text_a = ' '.join(
+        [
+            str(card_a.get('quick_check_title') or ''),
+            str(card_a.get('first_step') or ''),
+            str(card_a.get('what_to_look_for') or ''),
+            str(card_a.get('query_hint') or ''),
+        ]
+    ).lower()
+    text_b = ' '.join(
+        [
+            str(card_b.get('quick_check_title') or ''),
+            str(card_b.get('first_step') or ''),
+            str(card_b.get('what_to_look_for') or ''),
+            str(card_b.get('query_hint') or ''),
+        ]
+    ).lower()
+    assert 'qilin' in text_a
+    assert 'akira' in text_b
+    assert 'qilin-c2.example' in text_a
+    assert 'akira-c2.example' in text_b
+
+
 def test_root_sidebar_shows_actor_last_updated_label(tmp_path, monkeypatch):
     _setup_db(tmp_path)
     actor = app_module.create_actor_profile('APT-Sidebar', 'Sidebar label scope')

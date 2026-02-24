@@ -1694,9 +1694,150 @@ def fetch_actor_notebook_core(
                 'confidence_score': int(item.get('confidence_score') or 0),
             }
         )
+    now_utc = datetime.now(timezone.utc)
+    cutoff_30 = now_utc - timedelta(days=30)
+    recent_30_timeline = [
+        item
+        for item in timeline_items
+        if (
+            (dt := _parse_published_datetime(str(item.get('occurred_at') or ''))) is not None
+            and dt >= cutoff_30
+        )
+    ]
+    category_counts_30: dict[str, int] = {}
+    for item in recent_30_timeline:
+        category = str(item.get('category') or '').strip().replace('_', ' ')
+        if not category:
+            continue
+        category_counts_30[category] = category_counts_30.get(category, 0) + 1
+    top_categories_30 = sorted(category_counts_30.items(), key=lambda row: row[1], reverse=True)[:3]
+    top_categories_label = ', '.join([f'{name} ({count})' for name, count in top_categories_30]) or 'general activity'
+    thread_by_id = {
+        str(thread.get('id') or ''): thread
+        for thread in thread_items
+        if isinstance(thread, dict) and str(thread.get('id') or '').strip()
+    }
+    event_id_pattern = re.compile(r'\b(?:1[0-9]{3}|2[0-9]{3}|3[0-9]{3}|4[0-9]{3}|5[0-9]{3})\b')
+
     for card in priority_questions:
         related = _relevant_iocs_for_quick_check(card, quick_check_ioc_pool, limit=4)
         card['related_iocs'] = related
+        card_id = str(card.get('id') or '').strip()
+        override = quick_check_overrides.get(card_id, {}) if isinstance(quick_check_overrides, dict) else {}
+        override_first_step = str(override.get('first_step') or '').strip() if isinstance(override, dict) else ''
+        override_what_to_look_for = str(override.get('what_to_look_for') or '').strip() if isinstance(override, dict) else ''
+        override_query_hint = str(override.get('query_hint') or '').strip() if isinstance(override, dict) else ''
+        actor_name = str(actor.get('display_name') or actor.get('id') or '').strip()
+        thread = thread_by_id.get(card_id, {})
+        updates_raw = thread.get('updates') if isinstance(thread, dict) else []
+        updates = updates_raw if isinstance(updates_raw, list) else []
+        recent_updates = []
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            evidence_dt = _priority_update_evidence_dt(update)
+            if evidence_dt is not None and evidence_dt >= cutoff_30:
+                recent_updates.append(update)
+        recent_source_count = len(
+            {
+                str(update.get('source_url') or update.get('source_name') or '').strip().lower()
+                for update in recent_updates
+                if isinstance(update, dict) and str(update.get('source_url') or update.get('source_name') or '').strip()
+            }
+        )
+        recent_source_labels = []
+        for update in recent_updates:
+            if not isinstance(update, dict):
+                continue
+            label = str(update.get('source_name') or update.get('source_url') or '').strip()
+            if label and label not in recent_source_labels:
+                recent_source_labels.append(label)
+        source_label_text = ', '.join(recent_source_labels[:3]) or 'recent actor reporting'
+        primary_category = top_categories_30[0][0] if top_categories_30 else 'general activity'
+        primary_category_count = int(top_categories_30[0][1]) if top_categories_30 else 0
+        context_blob = ' '.join(
+            [
+                str(card.get('question_text') or ''),
+                str(card.get('first_step') or ''),
+                str(card.get('what_to_look_for') or ''),
+                str(card.get('query_hint') or ''),
+            ]
+            + [str(update.get('trigger_excerpt') or '') for update in recent_updates[:5] if isinstance(update, dict)]
+        )
+        event_ids = []
+        for token in event_id_pattern.findall(context_blob):
+            if token not in event_ids:
+                event_ids.append(token)
+        if related:
+            top_iocs = [
+                str(item.get('ioc_value') or '').strip()
+                for item in related[:2]
+                if isinstance(item, dict) and str(item.get('ioc_value') or '').strip()
+            ]
+        else:
+            top_iocs = []
+        ioc_hint = ', '.join(top_iocs)
+        event_id_label = ', '.join(event_ids[:4]) if event_ids else ''
+
+        card['quick_check_title'] = (
+            f'{actor_name or "Actor"} | {primary_category.title()} hunt | last 30d context'
+        )
+        card['decision_trigger'] = (
+            f'Last 30 days show {len(recent_30_timeline)} actor-linked events with '
+            f'{primary_category_count} in {primary_category}; newest evidence from {source_label_text}.'
+        )
+        card['telemetry_anchor'] = str(card.get('telemetry_anchor') or 'Windows Event Logs').strip()
+        if not override_first_step:
+            if event_id_label:
+                first_step = (
+                    f'Start with Event IDs {event_id_label} for the last 24h and cluster repeated suspicious host/user pairs. '
+                    f'Prioritize {actor_name or "actor"} entities recurring in the last 30 days '
+                    f'({len(recent_30_timeline)} related events; {max(1, recent_source_count)} corroborating sources).'
+                )
+            else:
+                anchor = str(card.get('telemetry_anchor') or 'Windows Event Logs').strip()
+                first_step = (
+                    f'Start in {anchor} for the last 24h and list repeated suspicious host/user entities. '
+                    f'Prioritize entities tied to {actor_name or "actor"} patterns from the last 30 days '
+                    f'({len(recent_30_timeline)} related events).'
+                )
+            if ioc_hint:
+                first_step += f' IOC pivots: {ioc_hint}.'
+            card['first_step'] = first_step
+
+        if not override_what_to_look_for:
+            dynamic_watch = f'Repeated host/user entities tied to {primary_category} behaviors observed in last 30 days.'
+            if event_id_label:
+                dynamic_watch += f' Focus Event IDs: {event_id_label}.'
+            dynamic_watch += f' Evidence anchors: {source_label_text}.'
+            if ioc_hint:
+                dynamic_watch += f' IOC pivots: {ioc_hint}.'
+            card['what_to_look_for'] = dynamic_watch
+
+        if not override_query_hint:
+            dynamic_hint = (
+                'Build a 24h candidate set, then baseline against last-30-day repeats by host and user; '
+                'rank by repeat count and recency.'
+            )
+            if ioc_hint:
+                dynamic_hint += f' Add IOC joins on: {ioc_hint}.'
+            if event_id_label:
+                dynamic_hint += f' Restrict to Event IDs: {event_id_label}.'
+            card['query_hint'] = dynamic_hint
+
+        card['success_condition'] = (
+            f'Confirm if repeated suspicious host/user clusters align with last-30-day {primary_category} patterns '
+            f'and are supported by {source_label_text}.'
+        )
+        card['confidence_change_threshold'] = (
+            'Raise confidence only when at least two independent repeated host/user clusters are confirmed; '
+            'lower confidence if no repeats and no IOC-linked pivots are found.'
+        )
+        card['escalation_threshold'] = card['confidence_change_threshold']
+        card['expected_output'] = (
+            'Output table: host, user, event_id, repeat_count_24h, first_seen_30d, last_seen_24h, '
+            'matched_ioc, supporting_source.'
+        )
     strict_default_mode = (
         normalized_source_tier is None
         and normalized_min_confidence is None
