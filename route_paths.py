@@ -10,6 +10,7 @@ ACTOR_OBSERVATION_UPSERT = '/actors/{actor_id}/observations/{item_type}/{item_ke
 ACTOR_OBSERVATION_HISTORY = '/actors/{actor_id}/observations/{item_type}/{item_key}/history'
 ACTOR_OBSERVATIONS_AUTO_SNAPSHOT = '/actors/{actor_id}/observations/auto-snapshot'
 ACTOR_EXPORT_ANALYST_PACK = '/actors/{actor_id}/export/analyst-pack.json'
+ACTOR_EXPORT_ANALYST_PACK_PDF = '/actors/{actor_id}/export/analyst-pack.pdf'
 ACTOR_STATE_OBSERVATIONS = '/actors/{actor_id}/state/observations'
 ACTOR_STIX_EXPORT = '/actors/{actor_id}/stix/export'
 ACTOR_STIX_IMPORT = '/actors/{actor_id}/stix/import'

@@ -148,3 +148,26 @@ def test_generate_ioc_hunt_queries_applies_environment_personalization():
 
     query = result['items_by_card']['thread-1'][0]['query']
     assert 'earliest=-24h' in str(query)
+
+
+def test_generate_ioc_hunt_queries_ignores_non_actionable_domain_tokens():
+    cards = [
+        {
+            'id': 'thread-1',
+            'quick_check_title': 'PowerShell check',
+            'related_iocs': [{'ioc_type': 'domain', 'ioc_value': 'next.js'}],
+            'evidence': [{'id': 'src-1', 'source_url': 'https://example.com/r'}],
+        }
+    ]
+    result = ioc_hunt_service.generate_ioc_hunt_queries_core(
+        'Qilin',
+        cards,
+        deps={
+            'ollama_available': lambda: True,
+            'get_env': lambda key, default='': default,
+            'http_post': lambda *_args, **_kwargs: None,
+        },
+    )
+
+    assert result['available'] is False
+    assert 'IOC context' in str(result['reason'])

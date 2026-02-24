@@ -14,6 +14,8 @@
         const envProfileSave = document.getElementById("env-profile-save");
         const envProfileStatus = document.getElementById("env-profile-status");
         const questionFeedbackButtons = Array.from(document.querySelectorAll(".question-feedback-btn"));
+        const analystPackActorSelect = document.getElementById("analyst-pack-actor-select");
+        const analystPackExportPdfLink = document.getElementById("analyst-pack-export-pdf-link");
 
         async function fetchLiveState() {
           const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/ui/live", { headers: { "Accept": "application/json" } });
@@ -65,6 +67,17 @@
 
         setInterval(runLiveRefresh, 20000);
         runLiveRefresh();
+
+        function syncAnalystPackPdfLink() {
+          if (!analystPackActorSelect || !analystPackExportPdfLink) return;
+          const selectedActor = String(analystPackActorSelect.value || "").trim();
+          if (!selectedActor) return;
+          analystPackExportPdfLink.href = "/actors/" + encodeURIComponent(selectedActor) + "/export/analyst-pack.pdf";
+        }
+        if (analystPackActorSelect && analystPackExportPdfLink) {
+          analystPackActorSelect.addEventListener("change", syncAnalystPackPdfLink);
+          syncAnalystPackPdfLink();
+        }
 
         async function loadEnvironmentProfile() {
           if (!envQueryDialect || !envTimeWindow) return;

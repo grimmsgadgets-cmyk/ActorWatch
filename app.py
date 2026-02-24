@@ -1887,6 +1887,10 @@ def _upsert_ioc_item(
     lifecycle_status: str = 'active',
     handling_tlp: str = 'TLP:CLEAR',
     confidence_score_override: int | None = None,
+    observed_at: str | None = None,
+    valid_from: str | None = None,
+    valid_until: str | None = None,
+    revoked: bool = False,
 ) -> dict[str, object]:
     return ioc_store_service.upsert_ioc_item_core(
         connection,
@@ -1901,6 +1905,10 @@ def _upsert_ioc_item(
         lifecycle_status=lifecycle_status,
         handling_tlp=handling_tlp,
         confidence_score_override=confidence_score_override,
+        observed_at=observed_at,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        revoked=revoked,
         deps={
             'validate_ioc_candidate': _validate_ioc_candidate,
         },

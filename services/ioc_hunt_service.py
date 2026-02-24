@@ -1,7 +1,21 @@
 import json
+import re
 
 from services.llm_schema_service import parse_ollama_json_object
 from services.prompt_templates import with_template_header
+
+
+def _ioc_value_is_hunt_relevant(ioc_type: str, ioc_value: str) -> bool:
+    normalized_type = str(ioc_type or '').strip().lower()
+    normalized_value = str(ioc_value or '').strip().lower()
+    if not normalized_type or not normalized_value:
+        return False
+    if len(normalized_value) < 4:
+        return False
+    if normalized_type == 'domain':
+        if re.fullmatch(r'^[a-z0-9-]+\.(js|json|css|html|xml|yaml|yml|md|txt|jsx|tsx)$', normalized_value):
+            return False
+    return True
 
 
 def generate_ioc_hunt_queries_core(
@@ -36,6 +50,8 @@ def generate_ioc_hunt_queries_core(
             ioc_type = str(ioc.get('ioc_type') or '').strip().lower()
             ioc_value = str(ioc.get('ioc_value') or '').strip()
             if not ioc_type or not ioc_value:
+                continue
+            if not _ioc_value_is_hunt_relevant(ioc_type, ioc_value):
                 continue
             clean_iocs.append({'ioc_type': ioc_type, 'ioc_value': ioc_value})
         for evidence_item in evidence:

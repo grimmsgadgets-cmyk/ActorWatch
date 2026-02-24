@@ -285,6 +285,10 @@ def ensure_schema(connection) -> None:
             extraction_method TEXT NOT NULL DEFAULT 'manual',
             lifecycle_status TEXT NOT NULL DEFAULT 'active',
             handling_tlp TEXT NOT NULL DEFAULT 'TLP:CLEAR',
+            valid_from TEXT,
+            valid_until TEXT,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            revoked_at TEXT,
             first_seen_at TEXT,
             last_seen_at TEXT,
             seen_count INTEGER NOT NULL DEFAULT 1,
@@ -311,6 +315,14 @@ def ensure_schema(connection) -> None:
         connection.execute("ALTER TABLE ioc_items ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'")
     if not any(col[1] == 'handling_tlp' for col in ioc_cols):
         connection.execute("ALTER TABLE ioc_items ADD COLUMN handling_tlp TEXT NOT NULL DEFAULT 'TLP:CLEAR'")
+    if not any(col[1] == 'valid_from' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN valid_from TEXT")
+    if not any(col[1] == 'valid_until' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN valid_until TEXT")
+    if not any(col[1] == 'revoked' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0")
+    if not any(col[1] == 'revoked_at' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN revoked_at TEXT")
     if not any(col[1] == 'first_seen_at' for col in ioc_cols):
         connection.execute("ALTER TABLE ioc_items ADD COLUMN first_seen_at TEXT")
     if not any(col[1] == 'last_seen_at' for col in ioc_cols):
@@ -344,6 +356,17 @@ def ensure_schema(connection) -> None:
                 WHEN UPPER(TRIM(COALESCE(handling_tlp, ''))) IN ('TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED')
                     THEN UPPER(TRIM(handling_tlp))
                 ELSE 'TLP:CLEAR'
+            END,
+            valid_from = COALESCE(valid_from, first_seen_at, created_at),
+            revoked = CASE
+                WHEN LOWER(TRIM(COALESCE(lifecycle_status, ''))) IN ('revoked', 'false_positive') THEN 1
+                WHEN revoked IS NULL THEN 0
+                ELSE revoked
+            END,
+            revoked_at = CASE
+                WHEN LOWER(TRIM(COALESCE(lifecycle_status, ''))) IN ('revoked', 'false_positive') AND COALESCE(revoked_at, '') = ''
+                    THEN COALESCE(updated_at, created_at)
+                ELSE revoked_at
             END
         '''
     )
@@ -377,6 +400,10 @@ def ensure_schema(connection) -> None:
             extraction_method TEXT NOT NULL,
             lifecycle_status TEXT NOT NULL DEFAULT 'active',
             handling_tlp TEXT NOT NULL DEFAULT 'TLP:CLEAR',
+            valid_from TEXT,
+            valid_until TEXT,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            revoked_at TEXT,
             created_at TEXT NOT NULL
         )
         '''
@@ -386,6 +413,14 @@ def ensure_schema(connection) -> None:
         connection.execute("ALTER TABLE ioc_history ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'")
     if not any(col[1] == 'handling_tlp' for col in ioc_history_cols):
         connection.execute("ALTER TABLE ioc_history ADD COLUMN handling_tlp TEXT NOT NULL DEFAULT 'TLP:CLEAR'")
+    if not any(col[1] == 'valid_from' for col in ioc_history_cols):
+        connection.execute("ALTER TABLE ioc_history ADD COLUMN valid_from TEXT")
+    if not any(col[1] == 'valid_until' for col in ioc_history_cols):
+        connection.execute("ALTER TABLE ioc_history ADD COLUMN valid_until TEXT")
+    if not any(col[1] == 'revoked' for col in ioc_history_cols):
+        connection.execute("ALTER TABLE ioc_history ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0")
+    if not any(col[1] == 'revoked_at' for col in ioc_history_cols):
+        connection.execute("ALTER TABLE ioc_history ADD COLUMN revoked_at TEXT")
     connection.execute(
         '''
         CREATE INDEX IF NOT EXISTS idx_ioc_history_actor_created

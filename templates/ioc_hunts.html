@@ -73,6 +73,25 @@
       {% else %}
       <div class="card">No quick checks with IOC + evidence context are available yet.</div>
       {% endif %}
+
+      {% if misc_iocs_by_type %}
+      <div class="card">
+        <h3>Actor-related unmatched IOCs</h3>
+        <div class="muted">Valid actor-linked IOCs not currently attached to a specific quick check.</div>
+        {% for ioc_type, items in misc_iocs_by_type.items() %}
+        <h4>{{ ioc_type|upper }}</h4>
+        <ul>
+          {% for ioc in items %}
+          <li>
+            <span class="badge">{{ ioc.ioc_type }}</span>{{ ioc.ioc_value }}
+            {% if ioc.source_ref %}<span class="muted"> ({{ ioc.source_ref }})</span>{% endif %}
+            {% if ioc.confidence_score %}<span class="muted"> score={{ ioc.confidence_score }}</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% endfor %}
+      </div>
+      {% endif %}
     </div>
   </body>
 </html>

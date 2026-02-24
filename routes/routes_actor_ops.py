@@ -171,13 +171,23 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
             connection.execute(
                 '''
                 UPDATE ioc_items
-                SET lifecycle_status = ?, handling_tlp = ?, is_active = ?, updated_at = ?, validation_reason = ?
+                SET
+                    lifecycle_status = ?,
+                    handling_tlp = ?,
+                    is_active = ?,
+                    revoked = ?,
+                    revoked_at = CASE WHEN ? = 1 THEN COALESCE(revoked_at, ?) ELSE NULL END,
+                    updated_at = ?,
+                    validation_reason = ?
                 WHERE id = ? AND actor_id = ?
                 ''',
                 (
                     lifecycle_status,
                     handling_tlp,
                     is_active,
+                    1 if lifecycle_status in {'revoked', 'false_positive'} else 0,
+                    1 if lifecycle_status in {'revoked', 'false_positive'} else 0,
+                    updated_at,
                     updated_at,
                     status_reason or '',
                     ioc_id,
@@ -189,9 +199,9 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
                 INSERT INTO ioc_history (
                     id, ioc_item_id, actor_id, event_type, ioc_type, ioc_value, normalized_value,
                     validation_status, validation_reason, confidence_score, source_id, source_ref,
-                    extraction_method, lifecycle_status, handling_tlp, created_at
+                    extraction_method, lifecycle_status, handling_tlp, valid_from, valid_until, revoked, revoked_at, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     str(uuid.uuid4()),
@@ -209,6 +219,10 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
                     str(row[7] or ''),
                     lifecycle_status,
                     handling_tlp,
+                    None,
+                    None,
+                    1 if lifecycle_status in {'revoked', 'false_positive'} else 0,
+                    updated_at if lifecycle_status in {'revoked', 'false_positive'} else None,
                     updated_at,
                 ),
             )

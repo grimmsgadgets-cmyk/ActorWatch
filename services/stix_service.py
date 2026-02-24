@@ -213,6 +213,10 @@ def import_actor_bundle_core(
                 lifecycle_status='active',
                 handling_tlp='TLP:CLEAR',
                 confidence_score_override=confidence_score,
+                observed_at=str(item.get('valid_from') or now_iso),
+                valid_from=str(item.get('valid_from') or ''),
+                valid_until=str(item.get('valid_until') or ''),
+                revoked=bool(item.get('revoked')),
             )
             if bool(result.get('stored')):
                 imported_iocs += 1

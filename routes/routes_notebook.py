@@ -2,6 +2,8 @@ import io
 import sqlite3
 import uuid
 import csv
+import zlib
+import re
 
 import services.observation_service as observation_service
 import route_paths
@@ -29,6 +31,180 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
     _upsert_environment_profile = deps['upsert_environment_profile']
     _load_environment_profile = deps['load_environment_profile']
     _apply_feedback_to_source_domains = deps['apply_feedback_to_source_domains']
+
+    def _pdf_escape_text(value: str) -> str:
+        return str(value or '').replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+
+    def _render_simple_text_pdf(*, title: str, lines: list[str]) -> bytes:
+        safe_title = str(title or 'Analyst Pack')
+        safe_lines = [str(line or '')[:220] for line in lines if str(line or '').strip()]
+        pages: list[list[str]] = []
+        lines_per_page = 46
+        if not safe_lines:
+            safe_lines = ['(no content)']
+        for index in range(0, len(safe_lines), lines_per_page):
+            pages.append(safe_lines[index:index + lines_per_page])
+
+        objects: dict[int, bytes] = {}
+        objects[1] = b'<< /Type /Catalog /Pages 2 0 R >>'
+        font_obj_id = 3
+        objects[font_obj_id] = b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+
+        kids_refs: list[str] = []
+        page_obj_id = 4
+        for page_idx, page_lines in enumerate(pages, start=1):
+            content_rows: list[str] = [
+                'BT',
+                '/F1 11 Tf',
+                '72 760 Td',
+                f'({_pdf_escape_text(f"{safe_title} (page {page_idx}/{len(pages)})")}) Tj',
+                '0 -18 Td',
+            ]
+            for line in page_lines:
+                content_rows.append(f'({_pdf_escape_text(line)}) Tj')
+                content_rows.append('0 -14 Td')
+            content_rows.append('ET')
+            content_stream = '\n'.join(content_rows).encode('latin-1', 'replace')
+            compressed = zlib.compress(content_stream)
+            content_obj_id = page_obj_id + 1
+            objects[content_obj_id] = (
+                f'<< /Length {len(compressed)} /Filter /FlateDecode >>\nstream\n'.encode('ascii')
+                + compressed
+                + b'\nendstream'
+            )
+            objects[page_obj_id] = (
+                f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] '
+                f'/Resources << /Font << /F1 {font_obj_id} 0 R >> >> '
+                f'/Contents {content_obj_id} 0 R >>'
+            ).encode('ascii')
+            kids_refs.append(f'{page_obj_id} 0 R')
+            page_obj_id += 2
+
+        objects[2] = f'<< /Type /Pages /Count {len(kids_refs)} /Kids [{" ".join(kids_refs)}] >>'.encode('ascii')
+
+        output = bytearray()
+        output.extend(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
+        offsets: dict[int, int] = {}
+        max_id = max(objects.keys())
+        for obj_id in sorted(objects.keys()):
+            offsets[obj_id] = len(output)
+            output.extend(f'{obj_id} 0 obj\n'.encode('ascii'))
+            output.extend(objects[obj_id])
+            output.extend(b'\nendobj\n')
+
+        xref_start = len(output)
+        output.extend(f'xref\n0 {max_id + 1}\n'.encode('ascii'))
+        output.extend(b'0000000000 65535 f \n')
+        for obj_id in range(1, max_id + 1):
+            offset = offsets.get(obj_id, 0)
+            in_use = 'n' if obj_id in offsets else 'f'
+            output.extend(f'{offset:010d} 00000 {in_use} \n'.encode('ascii'))
+        output.extend(
+            (
+                'trailer\n'
+                f'<< /Size {max_id + 1} /Root 1 0 R >>\n'
+                f'startxref\n{xref_start}\n%%EOF\n'
+            ).encode('ascii')
+        )
+        return bytes(output)
+
+    def _build_analyst_pack_payload(
+        actor_id: str,
+        *,
+        source_tier: str | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
+        observations_limit: int = 1000,
+        history_limit: int = 1000,
+    ) -> dict[str, object]:
+        safe_observations_limit = max(1, min(5000, int(observations_limit)))
+        safe_history_limit = max(1, min(5000, int(history_limit)))
+        notebook = _fetch_actor_notebook(
+            actor_id,
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        )
+        observations = _fetch_analyst_observations(actor_id, limit=safe_observations_limit, offset=0)
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            history_rows = connection.execute(
+                '''
+                SELECT item_type, item_key, note, source_ref, confidence,
+                       source_reliability, information_credibility, updated_by, updated_at
+                FROM analyst_observation_history
+                WHERE actor_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                ''',
+                (actor_id, safe_history_limit),
+            ).fetchall()
+        history_items = [
+            {
+                'item_type': str(row[0] or ''),
+                'item_key': str(row[1] or ''),
+                'note': str(row[2] or ''),
+                'source_ref': str(row[3] or ''),
+                'confidence': str(row[4] or 'moderate'),
+                'source_reliability': str(row[5] or ''),
+                'information_credibility': str(row[6] or ''),
+                'updated_by': str(row[7] or ''),
+                'updated_at': str(row[8] or ''),
+            }
+            for row in history_rows
+        ]
+        quality_filters = notebook.get('source_quality_filters', {})
+        quality_filters_dict = quality_filters if isinstance(quality_filters, dict) else {}
+        source_scope_active = any(
+            str(quality_filters_dict.get(key) or '').strip()
+            for key in ('source_tier', 'min_confidence_weight', 'source_days')
+        )
+        if source_scope_active:
+            allowed_source_ids = {
+                str(item.get('id') or '').strip()
+                for item in (notebook.get('sources', []) if isinstance(notebook.get('sources', []), list) else [])
+                if isinstance(item, dict) and str(item.get('id') or '').strip()
+            }
+            observations = [
+                item
+                for item in observations
+                if str(item.get('item_type') or '').strip().lower() != 'source'
+                or str(item.get('item_key') or '').strip() in allowed_source_ids
+            ]
+            history_items = [
+                item
+                for item in history_items
+                if str(item.get('item_type') or '').strip().lower() != 'source'
+                or str(item.get('item_key') or '').strip() in allowed_source_ids
+            ]
+        return {
+            'actor_id': actor_id,
+            'exported_at': _utc_now_iso(),
+            'limits': {
+                'observations': safe_observations_limit,
+                'history': safe_history_limit,
+            },
+            'source_quality_filters': quality_filters_dict,
+            'actor': notebook.get('actor', {}),
+            'recent_change_summary': notebook.get('recent_change_summary', {}),
+            'priority_questions': notebook.get('priority_questions', [])[:3],
+            'ioc_items': notebook.get('ioc_items', []),
+            'observations': observations,
+            'observation_history': history_items,
+        }
+
+    def _ioc_value_is_hunt_relevant(ioc_type: str, ioc_value: str) -> bool:
+        value = str(ioc_value or '').strip().lower()
+        indicator_type = str(ioc_type or '').strip().lower()
+        if not value or not indicator_type:
+            return False
+        if len(value) < 4:
+            return False
+        if indicator_type == 'domain':
+            if re.fullmatch(r'^[a-z0-9-]+\.(js|json|css|html|xml|yaml|yml|md|txt|jsx|tsx)$', value):
+                return False
+        return True
 
     def _upsert_observation_with_history(
         connection: sqlite3.Connection,
@@ -335,6 +511,12 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         )
         actor_meta = notebook.get('actor', {}) if isinstance(notebook, dict) else {}
         actor_name = str(actor_meta.get('display_name') or actor_id)
+        actor_terms = {
+            token
+            for token in re.findall(r'[a-z0-9][a-z0-9._-]+', actor_name.lower())
+            if len(token) >= 3
+        }
+        actor_terms.add(actor_id.lower())
         cards_raw = notebook.get('priority_questions', []) if isinstance(notebook, dict) else []
         cards_list = cards_raw if isinstance(cards_raw, list) else []
         if thread_id:
@@ -405,6 +587,8 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         reason = str(hunt_payload.get('reason') or '') if isinstance(hunt_payload, dict) else ''
         ollama_status = _get_ollama_status()
         card_views: list[dict[str, object]] = []
+        used_ioc_pairs: set[tuple[str, str]] = set()
+        actor_context_chunks: list[str] = []
         for card in cards_for_hunts:
             card_id = str(card.get('id') or '')
             evidence_items_raw = card.get('evidence')
@@ -465,6 +649,78 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     'evidence': evidence_items,
                 }
             )
+            actor_context_chunks.append(str(card.get('quick_check_title') or ''))
+            actor_context_chunks.append(str(card.get('question_text') or ''))
+            for ioc in (card.get('related_iocs', []) if isinstance(card.get('related_iocs', []), list) else []):
+                if not isinstance(ioc, dict):
+                    continue
+                ioc_type = str(ioc.get('ioc_type') or '').strip().lower()
+                ioc_value = str(ioc.get('ioc_value') or '').strip().lower()
+                if ioc_type and ioc_value:
+                    used_ioc_pairs.add((ioc_type, ioc_value))
+            for evidence in evidence_items:
+                if not isinstance(evidence, dict):
+                    continue
+                actor_context_chunks.extend(
+                    [
+                        str(evidence.get('excerpt') or ''),
+                        str(evidence.get('source_title') or ''),
+                        str(evidence.get('source_url') or ''),
+                    ]
+                )
+
+        actor_context_text = ' '.join(actor_context_chunks).lower()
+
+        def _is_actor_related_unmatched(ioc_item: dict[str, object]) -> bool:
+            ioc_value = str(ioc_item.get('ioc_value') or '').strip().lower()
+            source_ref = str(ioc_item.get('source_ref') or '').strip().lower()
+            if not ioc_value:
+                return False
+            if ioc_value in actor_context_text:
+                return True
+            if source_ref and source_ref in actor_context_text:
+                return True
+            if any(term in ioc_value for term in actor_terms):
+                return True
+            if source_ref and any(term in source_ref for term in actor_terms):
+                return True
+            return False
+
+        misc_iocs_by_type: dict[str, list[dict[str, object]]] = {}
+        ioc_items_raw = notebook.get('ioc_items', []) if isinstance(notebook, dict) else []
+        ioc_items = ioc_items_raw if isinstance(ioc_items_raw, list) else []
+        for ioc in ioc_items:
+            if not isinstance(ioc, dict):
+                continue
+            ioc_type = str(ioc.get('ioc_type') or '').strip().lower()
+            ioc_value = str(ioc.get('ioc_value') or '').strip()
+            if not ioc_type or not ioc_value:
+                continue
+            if not _ioc_value_is_hunt_relevant(ioc_type, ioc_value):
+                continue
+            key = (ioc_type, ioc_value.lower())
+            if key in used_ioc_pairs:
+                continue
+            if not _is_actor_related_unmatched(ioc):
+                continue
+            misc_iocs_by_type.setdefault(ioc_type, []).append(
+                {
+                    'ioc_type': ioc_type,
+                    'ioc_value': ioc_value,
+                    'source_ref': str(ioc.get('source_ref') or ''),
+                    'last_seen_at': str(ioc.get('last_seen_at') or ioc.get('created_at') or ''),
+                    'confidence_score': int(ioc.get('confidence_score') or 0),
+                }
+            )
+        for ioc_type in list(misc_iocs_by_type.keys()):
+            misc_iocs_by_type[ioc_type] = sorted(
+                misc_iocs_by_type[ioc_type],
+                key=lambda item: (
+                    int(item.get('confidence_score') or 0),
+                    str(item.get('last_seen_at') or ''),
+                ),
+                reverse=True,
+            )[:25]
 
         return _templates.TemplateResponse(
             request,
@@ -477,6 +733,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 'reason': reason,
                 'ollama_status': ollama_status,
                 'environment_profile': environment_profile,
+                'misc_iocs_by_type': misc_iocs_by_type,
             },
         )
 
@@ -657,82 +914,82 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         observations_limit: int = 1000,
         history_limit: int = 1000,
     ) -> dict[str, object]:
-        safe_observations_limit = max(1, min(5000, int(observations_limit)))
-        safe_history_limit = max(1, min(5000, int(history_limit)))
-        notebook = _fetch_actor_notebook(
+        return _build_analyst_pack_payload(
             actor_id,
             source_tier=source_tier,
             min_confidence_weight=min_confidence_weight,
             source_days=source_days,
+            observations_limit=observations_limit,
+            history_limit=history_limit,
         )
-        observations = _fetch_analyst_observations(actor_id, limit=safe_observations_limit, offset=0)
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-            history_rows = connection.execute(
-                '''
-                SELECT item_type, item_key, note, source_ref, confidence,
-                       source_reliability, information_credibility, updated_by, updated_at
-                FROM analyst_observation_history
-                WHERE actor_id = ?
-                ORDER BY updated_at DESC
-                LIMIT ?
-                ''',
-                (actor_id, safe_history_limit),
-            ).fetchall()
-        history_items = [
-            {
-                'item_type': str(row[0] or ''),
-                'item_key': str(row[1] or ''),
-                'note': str(row[2] or ''),
-                'source_ref': str(row[3] or ''),
-                'confidence': str(row[4] or 'moderate'),
-                'source_reliability': str(row[5] or ''),
-                'information_credibility': str(row[6] or ''),
-                'updated_by': str(row[7] or ''),
-                'updated_at': str(row[8] or ''),
-            }
-            for row in history_rows
+
+    @router.get(route_paths.ACTOR_EXPORT_ANALYST_PACK_PDF)
+    def export_analyst_pack_pdf(
+        actor_id: str,
+        source_tier: str | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
+        observations_limit: int = 500,
+        history_limit: int = 500,
+    ) -> Response:
+        pack = _build_analyst_pack_payload(
+            actor_id,
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+            observations_limit=observations_limit,
+            history_limit=history_limit,
+        )
+        actor_meta = pack.get('actor', {}) if isinstance(pack.get('actor', {}), dict) else {}
+        actor_name = str(actor_meta.get('display_name') or actor_id).strip() or actor_id
+        summary = pack.get('recent_change_summary', {})
+        summary_dict = summary if isinstance(summary, dict) else {}
+        lines: list[str] = [
+            f'Actor ID: {actor_id}',
+            f'Actor: {actor_name}',
+            f'Exported At (UTC): {str(pack.get("exported_at") or "")}',
+            '',
+            'Recent Change Summary',
         ]
-        quality_filters = notebook.get('source_quality_filters', {})
-        quality_filters_dict = quality_filters if isinstance(quality_filters, dict) else {}
-        source_scope_active = any(
-            str(quality_filters_dict.get(key) or '').strip()
-            for key in ('source_tier', 'min_confidence_weight', 'source_days')
+        for key in ('new_reports', 'new_items', 'targets', 'damage', 'ransomware'):
+            lines.append(f'- {key}: {summary_dict.get(key, 0)}')
+
+        lines.append('')
+        lines.append('Priority Questions')
+        for card in (pack.get('priority_questions', []) if isinstance(pack.get('priority_questions', []), list) else [])[:10]:
+            if not isinstance(card, dict):
+                continue
+            lines.append(f"- {str(card.get('question_text') or '').strip()[:180]}")
+            lines.append(f"  First Step: {str(card.get('first_step') or '').strip()[:180]}")
+            lines.append(f"  Watch: {str(card.get('what_to_look_for') or '').strip()[:180]}")
+
+        lines.append('')
+        lines.append('Recent IOCs')
+        for ioc in (pack.get('ioc_items', []) if isinstance(pack.get('ioc_items', []), list) else [])[:25]:
+            if not isinstance(ioc, dict):
+                continue
+            ioc_type = str(ioc.get('ioc_type') or '').strip()
+            ioc_value = str(ioc.get('ioc_value') or '').strip()
+            source_ref = str(ioc.get('source_ref') or '').strip()
+            lines.append(f'- [{ioc_type}] {ioc_value} {f"({source_ref})" if source_ref else ""}'.strip())
+
+        lines.append('')
+        lines.append('Observations')
+        for obs in (pack.get('observations', []) if isinstance(pack.get('observations', []), list) else [])[:40]:
+            if not isinstance(obs, dict):
+                continue
+            updated_at = str(obs.get('updated_at') or '').strip()[:19]
+            updated_by = str(obs.get('updated_by') or '').strip()
+            note = str(obs.get('note') or '').strip().replace('\n', ' ')[:180]
+            lines.append(f'- {updated_at} {updated_by}: {note}')
+
+        pdf_bytes = _render_simple_text_pdf(title=f'Analyst Pack - {actor_name}', lines=lines)
+        safe_actor = ''.join(ch if ch.isalnum() or ch in {'-', '_'} else '-' for ch in actor_id).strip('-') or 'actor'
+        return Response(
+            content=pdf_bytes,
+            media_type='application/pdf',
+            headers={'Content-Disposition': f'attachment; filename="{safe_actor}-analyst-pack.pdf"'},
         )
-        if source_scope_active:
-            allowed_source_ids = {
-                str(item.get('id') or '').strip()
-                for item in (notebook.get('sources', []) if isinstance(notebook.get('sources', []), list) else [])
-                if isinstance(item, dict) and str(item.get('id') or '').strip()
-            }
-            observations = [
-                item
-                for item in observations
-                if str(item.get('item_type') or '').strip().lower() != 'source'
-                or str(item.get('item_key') or '').strip() in allowed_source_ids
-            ]
-            history_items = [
-                item
-                for item in history_items
-                if str(item.get('item_type') or '').strip().lower() != 'source'
-                or str(item.get('item_key') or '').strip() in allowed_source_ids
-            ]
-        return {
-            'actor_id': actor_id,
-            'exported_at': _utc_now_iso(),
-            'limits': {
-                'observations': safe_observations_limit,
-                'history': safe_history_limit,
-            },
-            'source_quality_filters': quality_filters_dict,
-            'actor': notebook.get('actor', {}),
-            'recent_change_summary': notebook.get('recent_change_summary', {}),
-            'priority_questions': notebook.get('priority_questions', [])[:3],
-            'ioc_items': notebook.get('ioc_items', []),
-            'observations': observations,
-            'observation_history': history_items,
-        }
 
     @router.get(route_paths.ACTOR_OBSERVATIONS_EXPORT_CSV)
     def export_observations_csv(

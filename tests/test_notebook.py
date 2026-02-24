@@ -236,8 +236,11 @@ def test_priority_questions_autopopulate_relevant_iocs(tmp_path):
         )
         connection.execute(
             '''
-            INSERT INTO ioc_items (id, actor_id, ioc_type, ioc_value, source_ref, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO ioc_items (
+                id, actor_id, ioc_type, ioc_value, source_ref, validation_status,
+                lifecycle_status, revoked, is_active, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 'ioc-domain-1',
@@ -245,13 +248,20 @@ def test_priority_questions_autopopulate_relevant_iocs(tmp_path):
                 'domain',
                 'malicious-example.net',
                 'CISA alert',
+                'valid',
+                'active',
+                0,
+                1,
                 '2026-02-22T01:05:00+00:00',
             ),
         )
         connection.execute(
             '''
-            INSERT INTO ioc_items (id, actor_id, ioc_type, ioc_value, source_ref, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO ioc_items (
+                id, actor_id, ioc_type, ioc_value, source_ref, validation_status,
+                lifecycle_status, revoked, is_active, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 'ioc-hash-1',
@@ -259,6 +269,10 @@ def test_priority_questions_autopopulate_relevant_iocs(tmp_path):
                 'hash',
                 '9f86d081884c7d659a2feaa0c55ad015',
                 'Sample feed',
+                'valid',
+                'active',
+                0,
+                1,
                 '2026-02-22T01:06:00+00:00',
             ),
         )
@@ -1738,6 +1752,249 @@ def test_auto_snapshot_and_export_analyst_pack(tmp_path, monkeypatch):
         assert 'observations' in payload
         assert 'observation_history' in payload
 
+        pdf_pack = client.get(
+            f"/actors/{actor['id']}/export/analyst-pack.pdf",
+            params={'source_tier': 'high', 'min_confidence_weight': '3', 'source_days': '90'},
+        )
+        assert pdf_pack.status_code == 200
+        assert 'application/pdf' in str(pdf_pack.headers.get('content-type') or '')
+        assert str(pdf_pack.headers.get('content-disposition') or '').endswith('-analyst-pack.pdf"')
+        assert pdf_pack.content.startswith(b'%PDF-1.4')
+
+
+def test_ioc_hunts_misc_only_includes_actor_related_unmatched_iocs(tmp_path, monkeypatch):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('Qilin', 'Misc IOC scope')
+    monkeypatch.setattr(app_module, 'run_actor_generation', lambda actor_id: None)
+    monkeypatch.setattr(
+        app_module,
+        'get_ollama_status',
+        lambda: {'available': False, 'base_url': 'http://offline', 'model': 'none'},
+    )
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, retrieved_at, pasted_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-hunt-1',
+                actor['id'],
+                'Qilin report',
+                'https://intel.example/qilin-update',
+                '2026-02-22',
+                '2026-02-22T00:00:00+00:00',
+                'Qilin infrastructure observed contacting beacon.qilin-test.net.',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO question_threads (
+                id, actor_id, question_text, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'thread-hunt-1',
+                actor['id'],
+                'Is Qilin beaconing via suspicious DNS domains?',
+                'open',
+                '2026-02-22T00:00:00+00:00',
+                '2026-02-22T01:00:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO question_updates (
+                id, thread_id, source_id, trigger_excerpt, update_note, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'update-hunt-1',
+                'thread-hunt-1',
+                'src-hunt-1',
+                'Beaconing to suspicious infrastructure observed for Qilin.',
+                '',
+                '2026-02-22T01:00:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO ioc_items (
+                id, actor_id, ioc_type, ioc_value, source_ref, is_active, validation_status, confidence_score, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ioc-used-1',
+                actor['id'],
+                'domain',
+                'beacon.qilin-test.net',
+                'Qilin report',
+                1,
+                'valid',
+                4,
+                '2026-02-22T01:05:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO ioc_items (
+                id, actor_id, ioc_type, ioc_value, source_ref, is_active, validation_status, confidence_score, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ioc-misc-related-1',
+                actor['id'],
+                'ip',
+                '185.88.1.45',
+                'Qilin malware note',
+                1,
+                'valid',
+                4,
+                '2026-02-22T01:06:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO ioc_items (
+                id, actor_id, ioc_type, ioc_value, source_ref, is_active, validation_status, confidence_score, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ioc-misc-unrelated-1',
+                actor['id'],
+                'ip',
+                '203.0.113.9',
+                'Unrelated campaign',
+                1,
+                'valid',
+                5,
+                '2026-02-22T01:07:00+00:00',
+            ),
+        )
+        connection.commit()
+
+    with TestClient(app_module.app) as client:
+        response = client.get(f"/actors/{actor['id']}/hunts/iocs")
+        assert response.status_code == 200
+        assert 'Actor-related unmatched IOCs' in response.text
+        assert '185.88.1.45' in response.text
+        assert '203.0.113.9' not in response.text
+
+
+def test_fetch_notebook_ioc_items_excludes_unvalidated_revoked_and_expired(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-IOC-Filter', 'IOC filter scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO ioc_items (
+                id, actor_id, ioc_type, ioc_value, normalized_value, validation_status,
+                confidence_score, lifecycle_status, revoked, valid_until, is_active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ioc-valid',
+                actor['id'],
+                'domain',
+                'active.example',
+                'active.example',
+                'valid',
+                4,
+                'active',
+                0,
+                '2099-01-01T00:00:00+00:00',
+                1,
+                '2026-02-22T00:00:00+00:00',
+                '2026-02-22T00:00:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO ioc_items (
+                id, actor_id, ioc_type, ioc_value, normalized_value, validation_status,
+                confidence_score, lifecycle_status, revoked, valid_until, is_active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ioc-unvalidated',
+                actor['id'],
+                'domain',
+                'unvalidated.example',
+                'unvalidated.example',
+                'unvalidated',
+                4,
+                'active',
+                0,
+                '2099-01-01T00:00:00+00:00',
+                1,
+                '2026-02-22T00:00:00+00:00',
+                '2026-02-22T00:00:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO ioc_items (
+                id, actor_id, ioc_type, ioc_value, normalized_value, validation_status,
+                confidence_score, lifecycle_status, revoked, valid_until, is_active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ioc-revoked',
+                actor['id'],
+                'domain',
+                'revoked.example',
+                'revoked.example',
+                'valid',
+                4,
+                'revoked',
+                1,
+                '2099-01-01T00:00:00+00:00',
+                0,
+                '2026-02-22T00:00:00+00:00',
+                '2026-02-22T00:00:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO ioc_items (
+                id, actor_id, ioc_type, ioc_value, normalized_value, validation_status,
+                confidence_score, lifecycle_status, revoked, valid_until, is_active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ioc-expired',
+                actor['id'],
+                'domain',
+                'expired.example',
+                'expired.example',
+                'valid',
+                4,
+                'active',
+                0,
+                '2020-01-01T00:00:00+00:00',
+                1,
+                '2026-02-22T00:00:00+00:00',
+                '2026-02-22T00:00:00+00:00',
+            ),
+        )
+        connection.commit()
+
+    notebook = app_module._fetch_actor_notebook(actor['id'])  # noqa: SLF001
+    values = {str(item.get('ioc_value') or '') for item in notebook.get('ioc_items', [])}
+    assert 'active.example' in values
+    assert 'unvalidated.example' not in values
+    assert 'revoked.example' not in values
+    assert 'expired.example' not in values
+
 
 def test_root_sidebar_shows_actor_last_updated_label(tmp_path, monkeypatch):
     _setup_db(tmp_path)
@@ -1763,6 +2020,8 @@ def test_root_sidebar_shows_actor_last_updated_label(tmp_path, monkeypatch):
         response = client.get(f'/?actor_id={actor["id"]}')
         assert response.status_code == 200
         assert 'Updated 2026-02-19' in response.text
+        assert 'analyst-pack-actor-select' in response.text
+        assert '/export/analyst-pack.pdf' in response.text
 
 
 def test_dashboard_and_observation_load_performance_guard(tmp_path, monkeypatch):

@@ -106,7 +106,7 @@
       .ataglance-value { font-size: 14px; font-weight: 700; color: #0f172a; margin-top: 3px; }
       .ataglance-value a { color: inherit; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
       .ataglance-value a:hover { text-decoration-thickness: 2px; }
-      .mini-trend-inline { display: flex; align-items: flex-end; gap: 2px; margin-top: 6px; height: 20px; }
+      .mini-trend-inline { display: flex; align-items: flex-end; gap: 2px; margin-top: 6px; height: 20px; overflow: hidden; }
       .mini-trend-bar { width: 6px; border-radius: 2px; background: #89a8d8; }
       .mini-trend-bar.peak { background: #c44f4f; }
       .mini-trend-meta { margin-top: 4px; font-size: 10px; color: #475569; line-height: 1.2; }
@@ -504,6 +504,17 @@
             </form>
             <a href="/actors/{{ notebook.actor.id }}/timeline/details">Open timeline details</a>
             <a href="/actors/{{ notebook.actor.id }}/export/analyst-pack.json" target="_blank" rel="noreferrer">Export analyst pack</a>
+            {% if actors %}
+            <div>
+              <label for="analyst-pack-actor-select">Actor PDF export</label>
+              <select id="analyst-pack-actor-select" aria-label="Select tracked actor for PDF export">
+                {% for actor in actors %}
+                <option value="{{ actor.id }}" {% if selected_actor_id == actor.id %}selected{% endif %}>{{ actor.display_name }}</option>
+                {% endfor %}
+              </select>
+              <a id="analyst-pack-export-pdf-link" href="/actors/{{ notebook.actor.id }}/export/analyst-pack.pdf" target="_blank" rel="noreferrer">Export actor PDF</a>
+            </div>
+            {% endif %}
           </div>
           <details class="compact secondary-action">
             <summary class="action-button">More actions</summary>
@@ -780,7 +791,7 @@
             {% if notebook.timeline_graph %}
             <div class="mini-trend-inline" aria-hidden="true">
               {% for bucket in trend_buckets %}
-              <span class="mini-trend-bar{% if loop.last %} peak{% endif %}" style="height: {{ [4, bucket.height_pct // 2]|max }}px;" title="{{ bucket.label }}: {{ bucket.total }} events"></span>
+              <span class="mini-trend-bar{% if loop.last %} peak{% endif %}" style="height: {{ [20, [4, bucket.height_pct // 2]|max]|min }}px;" title="{{ bucket.label }}: {{ bucket.total }} events"></span>
               {% endfor %}
             </div>
             <div class="mini-trend-labels"><span>Older</span><span>Latest</span></div>
