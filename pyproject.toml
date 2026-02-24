@@ -7,7 +7,7 @@ dependencies = [
   "uvicorn[standard]",
   "jinja2",
   "httpx",
-  "python-multipart",
+  "python-multipart>=0.0.22",
 ]
 
 [dependency-groups]
