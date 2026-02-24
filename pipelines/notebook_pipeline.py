@@ -2105,6 +2105,7 @@ def fetch_actor_notebook_core(
             observable_lines.append(f'behavior marker: `{marker}`')
         for ioc in top_iocs[:3]:
             observable_lines.append(f'ioc pivot: `{ioc}`')
+        data_gap = len(recent_updates) == 0 or (len(observable_lines) == 0 and len(top_iocs) == 0)
 
         if recent_updates:
             card['decision_trigger'] = (
@@ -2115,13 +2116,43 @@ def fetch_actor_notebook_core(
             card['decision_trigger'] = 'Last-30d evidence for this check is limited; run behavior baseline and confirm gaps.'
         card['telemetry_anchor'] = str(card.get('telemetry_anchor') or 'Windows Event Logs').strip()
         if not override_first_step:
-            base_event_scope = event_id_label or '4104, 4688, 4624, 4698'
-            first_step = (
-                f'Start with Event IDs {base_event_scope} for the last 24h and cluster repeated host/user pairs. '
-                f'Prioritize {actor_name or "actor"}-linked entities that recur in the last 30 days.'
-            )
-            if ioc_hint:
-                first_step += f' IOC pivots: {ioc_hint}.'
+            behavior_event_defaults = {
+                'impact': ['4688', '4104', '4698'],
+                'execution': ['4104', '4688', '4698'],
+                'lateral_movement': ['4624', '4648', '4672'],
+                'command_and_control': ['4104', '4688'],
+                'exfiltration': ['4688'],
+                'phishing': [],
+                'general_activity': ['4104', '4688', '4624', '4698'],
+            }
+            selected_event_ids = event_ids[:4] if event_ids else behavior_event_defaults.get(behavior_id, [])
+            observable_cmds = observables.get('commands', []) if isinstance(observables, dict) else []
+            if data_gap:
+                if selected_event_ids:
+                    first_step = (
+                        'Data gap: no thread-linked 30-day observables. '
+                        f'Baseline last 24h with Event IDs {", ".join(selected_event_ids)} and validate command-line/script logging coverage.'
+                    )
+                else:
+                    first_step = (
+                        'Data gap: no thread-linked 30-day observables. '
+                        'Start by validating telemetry coverage for this behavior and run a 24h baseline by host/user.'
+                    )
+            else:
+                if selected_event_ids:
+                    first_step = (
+                        f'Start with Event IDs {", ".join(selected_event_ids)} for the last 24h; '
+                        'cluster repeated host/user pairs, then pivot ±30 minutes around repeats.'
+                    )
+                else:
+                    first_step = (
+                        'Start with last-24h telemetry for this behavior; '
+                        'cluster repeated host/user pairs, then pivot ±30 minutes around repeats.'
+                    )
+                if observable_cmds:
+                    first_step += ' Prioritize command tokens: ' + ', '.join([f'`{cmd}`' for cmd in observable_cmds[:4]]) + '.'
+                if ioc_hint:
+                    first_step += f' IOC pivots: {ioc_hint}.'
             card['first_step'] = first_step
 
         card['behavior_to_hunt'] = behavior_to_hunt_map.get(behavior_id, behavior_to_hunt_map['general_activity'])
@@ -2153,7 +2184,6 @@ def fetch_actor_notebook_core(
             required_data.append('Actor-linked IOC values for pivoting in same 24h window.')
         card['required_data'] = required_data
 
-        data_gap = len(recent_updates) == 0 or (len(observable_lines) == 0 and len(top_iocs) == 0)
         card['data_gap'] = data_gap
         if data_gap:
             card['success_condition'] = (
