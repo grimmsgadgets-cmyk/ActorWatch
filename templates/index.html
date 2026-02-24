@@ -293,6 +293,9 @@
       }
       .quick-actions { display: grid; gap: 8px; margin-bottom: 10px; }
       .quick-actions form { margin: 0; }
+      .quick-actions details.quick-export-menu { margin: 0; }
+      .quick-actions details.quick-export-menu > summary { list-style: none; }
+      .quick-actions details.quick-export-menu > summary::-webkit-details-marker { display: none; }
       .quick-actions a, .quick-actions button {
         display: block;
         width: 100%;
@@ -308,6 +311,41 @@
         cursor: pointer;
       }
       .quick-actions a, .quick-actions button { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+      .quick-actions details.quick-export-menu > summary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 36px;
+        text-align: center;
+        border: 0;
+        border-radius: 8px;
+        padding: 8px;
+        font-size: 12px;
+        background: #4a7bd0;
+        color: #fff;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .quick-actions .quick-export-panel {
+        margin-top: 8px;
+        padding: 8px;
+        border: 1px solid #3d4658;
+        border-radius: 8px;
+        background: #2b3445;
+        display: grid;
+        gap: 8px;
+      }
+      .quick-actions .quick-export-panel label { font-size: 11px; color: #d6e3f5; }
+      .quick-actions .quick-export-panel select {
+        width: 100%;
+        background: #1f2735;
+        border: 1px solid #465268;
+        color: #fff;
+        border-radius: 6px;
+        padding: 8px;
+      }
       .sidebar .secondary-action button { min-height: 34px; font-size: 12px; }
       .sidebar .secondary-action[open] > summary { margin-bottom: 8px; }
       .sidebar .interactive-panel { background: #2b3445; border-color: #3d4658; color: #fff; }
@@ -503,18 +541,21 @@
               <button type="submit">Auto-note changes</button>
             </form>
             <a href="/actors/{{ notebook.actor.id }}/timeline/details">Open timeline details</a>
-            <a href="/actors/{{ notebook.actor.id }}/export/analyst-pack.json" target="_blank" rel="noreferrer">Export analyst pack</a>
-            {% if actors %}
-            <div>
-              <label for="analyst-pack-actor-select">Actor PDF export</label>
-              <select id="analyst-pack-actor-select" aria-label="Select tracked actor for PDF export">
-                {% for actor in actors %}
-                <option value="{{ actor.id }}" {% if selected_actor_id == actor.id %}selected{% endif %}>{{ actor.display_name }}</option>
-                {% endfor %}
-              </select>
-              <a id="analyst-pack-export-pdf-link" href="/actors/{{ notebook.actor.id }}/export/analyst-pack.pdf" target="_blank" rel="noreferrer">Export actor PDF</a>
-            </div>
-            {% endif %}
+            <details class="quick-export-menu" id="analyst-pack-menu">
+              <summary id="analyst-pack-menu-trigger">Export analyst pack</summary>
+              <div class="quick-export-panel">
+                {% if actors %}
+                <label for="analyst-pack-actor-select">Select actor</label>
+                <select id="analyst-pack-actor-select" aria-label="Select tracked actor for analyst pack export">
+                  {% for actor in actors %}
+                  <option value="{{ actor.id }}" {% if selected_actor_id == actor.id %}selected{% endif %}>{{ actor.display_name }}</option>
+                  {% endfor %}
+                </select>
+                {% endif %}
+                <a id="analyst-pack-export-json-link" href="/actors/{{ notebook.actor.id }}/export/analyst-pack.json" target="_blank" rel="noreferrer">Export JSON pack</a>
+                <a id="analyst-pack-export-pdf-link" href="/actors/{{ notebook.actor.id }}/export/analyst-pack.pdf" target="_blank" rel="noreferrer">Export PDF pack</a>
+              </div>
+            </details>
           </div>
           <details class="compact secondary-action">
             <summary class="action-button">More actions</summary>

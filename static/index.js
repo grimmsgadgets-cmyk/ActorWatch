@@ -15,6 +15,7 @@
         const envProfileStatus = document.getElementById("env-profile-status");
         const questionFeedbackButtons = Array.from(document.querySelectorAll(".question-feedback-btn"));
         const analystPackActorSelect = document.getElementById("analyst-pack-actor-select");
+        const analystPackExportJsonLink = document.getElementById("analyst-pack-export-json-link");
         const analystPackExportPdfLink = document.getElementById("analyst-pack-export-pdf-link");
 
         async function fetchLiveState() {
@@ -68,15 +69,21 @@
         setInterval(runLiveRefresh, 20000);
         runLiveRefresh();
 
-        function syncAnalystPackPdfLink() {
-          if (!analystPackActorSelect || !analystPackExportPdfLink) return;
-          const selectedActor = String(analystPackActorSelect.value || "").trim();
+        function syncAnalystPackLinks() {
+          const selectedActor = String((analystPackActorSelect && analystPackActorSelect.value) || actorId || "").trim();
           if (!selectedActor) return;
-          analystPackExportPdfLink.href = "/actors/" + encodeURIComponent(selectedActor) + "/export/analyst-pack.pdf";
+          if (analystPackExportJsonLink) {
+            analystPackExportJsonLink.href = "/actors/" + encodeURIComponent(selectedActor) + "/export/analyst-pack.json";
+          }
+          if (analystPackExportPdfLink) {
+            analystPackExportPdfLink.href = "/actors/" + encodeURIComponent(selectedActor) + "/export/analyst-pack.pdf";
+          }
         }
-        if (analystPackActorSelect && analystPackExportPdfLink) {
-          analystPackActorSelect.addEventListener("change", syncAnalystPackPdfLink);
-          syncAnalystPackPdfLink();
+        if (analystPackActorSelect) {
+          analystPackActorSelect.addEventListener("change", syncAnalystPackLinks);
+        }
+        if (analystPackExportJsonLink || analystPackExportPdfLink) {
+          syncAnalystPackLinks();
         }
 
         async function loadEnvironmentProfile() {
