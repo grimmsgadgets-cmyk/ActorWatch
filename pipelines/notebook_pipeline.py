@@ -131,11 +131,28 @@ def _extract_ioc_candidates_from_text(
     raw_without_urls = raw
     for value in url_matches:
         raw_without_urls = raw_without_urls.replace(value, ' ')
-    for value in re.findall(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b', raw_without_urls):
+    ioc_context_pattern = re.compile(
+        r'\b(ioc|indicator|artifact|domain|dns|beacon|c2|callback|malicious|suspicious|'
+        r'phish|ransom|payload|host|url|ip|hash)\b',
+        flags=re.IGNORECASE,
+    )
+    software_like_domain_pattern = re.compile(
+        r'^[a-z0-9-]+\.(js|json|css|html|xml|yaml|yml)$',
+        flags=re.IGNORECASE,
+    )
+    for match in re.finditer(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b', raw_without_urls):
+        value = str(match.group(0) or '')
         if value.lower().startswith('http'):
             continue
         normalized = value.lower()
         if normalized in ignored:
+            continue
+        if software_like_domain_pattern.fullmatch(normalized):
+            continue
+        window_start = max(0, match.start() - 90)
+        window_end = min(len(raw_without_urls), match.end() + 90)
+        context_window = raw_without_urls[window_start:window_end]
+        if not ioc_context_pattern.search(context_window):
             continue
         _add('domain', normalized)
     return found
