@@ -38,17 +38,19 @@
       {% for card in cards %}
       <div class="card">
         <h3>{{ card.title }}</h3>
+        {% if card.iocs %}
         <div>
           {% for ioc in card.iocs %}
           <span class="badge">{{ ioc.ioc_type }}</span>{{ ioc.ioc_value }}{% if ioc.source_ref %} ({{ ioc.source_ref }}){% endif %}{% if not loop.last %} | {% endif %}
           {% endfor %}
         </div>
+        {% endif %}
 
         {% if card.queries %}
           {% for query in card.queries %}
           <div class="query">
             <div><strong>Platform:</strong> {{ query.platform }}</div>
-            <div><strong>IOC:</strong> {{ query.ioc_value }}</div>
+            {% if query.ioc_value %}<div><strong>IOC:</strong> {{ query.ioc_value }}</div>{% endif %}
             {% if query.why_this_query %}<div><strong>Why:</strong> {{ query.why_this_query }}</div>{% endif %}
             <pre>{{ query.query }}</pre>
             <div class="muted">Query id: {{ query.query_id }} | Feedback score: {{ query.feedback_score }} ({{ query.feedback_votes }} votes)</div>

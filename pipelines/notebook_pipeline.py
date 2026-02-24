@@ -462,6 +462,242 @@ def latest_reporting_recency_label(
     return 'latest reporting in the last 90 days'
 
 
+def _behavior_id_from_context(context_text: str, primary_category: str) -> str:
+    text = f'{primary_category} {context_text}'.lower()
+    if any(token in text for token in ('phish', 'email', 'malspam', 'inbox', 'attachment')):
+        return 'phishing'
+    if any(token in text for token in ('ransom', 'encrypt', 'impact', 'vssadmin', 'wbadmin', 'bcdedit')):
+        return 'impact'
+    if any(token in text for token in ('exfil', 'data theft', 'archive', '7zip', 'rar', 'upload')):
+        return 'exfiltration'
+    if any(token in text for token in ('lateral', 'rdp', 'smb', 'wmic', 'psexec', 'pass the hash')):
+        return 'lateral_movement'
+    if any(token in text for token in ('powershell', 'script', 'cmd.exe', 'scheduled task', '4698', '4688', '4104')):
+        return 'execution'
+    if any(token in text for token in ('beacon', 'c2', 'dns', 'proxy', 'callback', 'command and control')):
+        return 'command_and_control'
+    return 'general_activity'
+
+
+def _behavior_query_pack(
+    *,
+    behavior_id: str,
+    ioc_values: list[str],
+    event_ids: list[str],
+) -> list[dict[str, str]]:
+    ioc_clause = ' or '.join([value for value in ioc_values if value]) if ioc_values else ''
+    event_id_clause = ', '.join(event_ids[:6]) if event_ids else '4104, 4688, 4624, 4698'
+
+    if behavior_id == 'impact':
+        return [
+            {
+                'platform': 'Splunk',
+                'why_this_query': 'Find likely impact preparation commands and cluster repeats by host/user.',
+                'query': (
+                    'index=* sourcetype=WinEventLog:Security EventCode=4688 '
+                    '| eval cmd=lower(coalesce(CommandLine, Process_Command_Line, NewProcessName)) '
+                    '| search cmd="*vssadmin*" OR cmd="*wbadmin*" OR cmd="*bcdedit*" OR cmd="*net stop*" '
+                    'OR cmd="*wmic*shadowcopy*delete*" '
+                    '| stats count min(_time) as first_seen max(_time) as last_seen values(cmd) as commands by host user '
+                    '| convert ctime(first_seen) ctime(last_seen) | sort - count'
+                ),
+            },
+            {
+                'platform': 'Sentinel (KQL)',
+                'why_this_query': 'Detect impact-aligned process execution with explicit recovery-inhibit tooling.',
+                'query': (
+                    'SecurityEvent | where TimeGenerated >= ago(24h) | where EventID == 4688 '
+                    '| extend cmd = tolower(coalesce(ProcessCommandLine, CommandLine, NewProcessName)) '
+                    '| where cmd has "vssadmin" or cmd has "wbadmin" or cmd has "bcdedit" '
+                    'or cmd has "net stop" or (cmd has "wmic" and cmd has "shadowcopy" and cmd has "delete") '
+                    '| summarize repeat_count_24h=count(), first_seen_24h=min(TimeGenerated), '
+                    'last_seen_24h=max(TimeGenerated), sample_cmds=make_set(cmd, 20) by Computer, Account '
+                    '| order by repeat_count_24h desc'
+                ),
+            },
+            {
+                'platform': 'Elastic',
+                'why_this_query': 'Fast filter for impact tooling commands in process creation telemetry.',
+                'query': (
+                    'event.code:4688 and process.command_line:(*vssadmin* or *wbadmin* or *bcdedit* '
+                    'or *"net stop"* or (*wmic* and *shadowcopy* and *delete*))'
+                ),
+            },
+        ]
+
+    if behavior_id == 'phishing':
+        return [
+            {
+                'platform': 'Splunk',
+                'why_this_query': 'Cluster suspicious sender/domain activity to identify campaign repetition.',
+                'query': (
+                    'index=* (sourcetype=o365:management:activity OR sourcetype=ms:defender:email) '
+                    '| eval sender=lower(coalesce(SenderFromAddress, SenderMailFromAddress, sender, user)) '
+                    '| eval subject=coalesce(Subject, subject, MessageSubject) '
+                    '| search sender="*@*" '
+                    '| stats count values(subject) as subjects values(RecipientEmailAddress) as recipients by sender '
+                    '| sort - count'
+                ),
+            },
+            {
+                'platform': 'Sentinel (KQL)',
+                'why_this_query': 'Detect repeated suspicious sender + subject patterns over 24h.',
+                'query': (
+                    'EmailEvents | where TimeGenerated >= ago(24h) '
+                    '| extend sender=tolower(SenderFromAddress), subject=tostring(Subject) '
+                    '| summarize repeat_count_24h=count(), subjects=make_set(subject, 20), '
+                    'first_seen_24h=min(TimeGenerated), last_seen_24h=max(TimeGenerated) '
+                    'by sender, RecipientEmailAddress '
+                    '| order by repeat_count_24h desc'
+                ),
+            },
+            {
+                'platform': 'Elastic',
+                'why_this_query': 'Quick filter for suspicious inbound sender and phishing markers.',
+                'query': (
+                    '(email.from.address:*@* and email.subject:(*invoice* or *urgent* or *payment* or *password*))'
+                ),
+            },
+        ]
+
+    if behavior_id == 'lateral_movement':
+        return [
+            {
+                'platform': 'Splunk',
+                'why_this_query': 'Identify repeated remote logon pivots by host/user pairs.',
+                'query': (
+                    'index=* sourcetype=WinEventLog:Security (EventCode=4624 OR EventCode=4648 OR EventCode=4672) '
+                    '| eval logon_type=coalesce(Logon_Type, LogonType) '
+                    '| search logon_type=3 OR logon_type=10 '
+                    '| stats count min(_time) as first_seen max(_time) as last_seen values(logon_type) as logon_types by host user src_ip '
+                    '| convert ctime(first_seen) ctime(last_seen) | sort - count'
+                ),
+            },
+            {
+                'platform': 'Sentinel (KQL)',
+                'why_this_query': 'Surface unusual privileged remote logons and host-to-host pivots.',
+                'query': (
+                    'SecurityEvent | where TimeGenerated >= ago(24h) '
+                    '| where EventID in (4624, 4648, 4672) '
+                    '| extend logonType=tostring(LogonType) '
+                    '| where logonType in ("3","10") '
+                    '| summarize repeat_count_24h=count(), first_seen_24h=min(TimeGenerated), '
+                    'last_seen_24h=max(TimeGenerated) by Computer, Account, IpAddress, EventID '
+                    '| order by repeat_count_24h desc'
+                ),
+            },
+            {
+                'platform': 'Elastic',
+                'why_this_query': 'Filter remote logon events tied to likely lateral movement.',
+                'query': 'event.code:(4624 or 4648 or 4672) and winlog.event_data.LogonType:(3 or 10)',
+            },
+        ]
+
+    if behavior_id == 'exfiltration':
+        return [
+            {
+                'platform': 'Splunk',
+                'why_this_query': 'Find suspicious archiving plus outbound transfer spikes.',
+                'query': (
+                    'index=* (sourcetype=WinEventLog:Security EventCode=4688 OR sourcetype=proxy*) '
+                    '| eval cmd=lower(coalesce(CommandLine, Process_Command_Line, NewProcessName)) '
+                    '| eval host_key=coalesce(host, ComputerName, dvc) '
+                    '| search cmd="*7z*" OR cmd="*rar*" OR cmd="*winrar*" OR cmd="*tar*" OR uri_path="*upload*" '
+                    '| stats count min(_time) as first_seen max(_time) as last_seen values(cmd) as indicators by host_key user dest '
+                    '| convert ctime(first_seen) ctime(last_seen) | sort - count'
+                ),
+            },
+            {
+                'platform': 'Sentinel (KQL)',
+                'why_this_query': 'Correlate archive tooling with network egress indicators in 24h.',
+                'query': (
+                    'union isfuzzy=true SecurityEvent, DeviceNetworkEvents '
+                    '| where TimeGenerated >= ago(24h) '
+                    '| extend cmd=tolower(tostring(ProcessCommandLine)), dest=tostring(RemoteUrl) '
+                    '| where cmd has "7z" or cmd has "rar" or cmd has "winrar" or cmd has "tar" or dest has "upload" '
+                    '| summarize repeat_count_24h=count(), first_seen_24h=min(TimeGenerated), '
+                    'last_seen_24h=max(TimeGenerated), indicators=make_set(coalesce(cmd,dest), 30) by Computer, Account '
+                    '| order by repeat_count_24h desc'
+                ),
+            },
+            {
+                'platform': 'Elastic',
+                'why_this_query': 'Quick filter for compression tooling and likely upload behavior.',
+                'query': 'process.command_line:(*7z* or *rar* or *winrar* or *tar*) or url.path:*upload*',
+            },
+        ]
+
+    if behavior_id == 'execution':
+        return [
+            {
+                'platform': 'Splunk',
+                'why_this_query': 'Detect encoded/scripted execution and suspicious task creation patterns.',
+                'query': (
+                    'index=* sourcetype=WinEventLog:Security (EventCode=4104 OR EventCode=4688 OR EventCode=4698) '
+                    '| eval cmd=lower(coalesce(CommandLine, ScriptBlockText, Process_Command_Line, NewProcessName)) '
+                    '| search cmd="*-enc*" OR cmd="*frombase64string*" OR cmd="*iex*" OR cmd="*schtasks*" '
+                    '| stats count min(_time) as first_seen max(_time) as last_seen values(cmd) as commands by host user EventCode '
+                    '| convert ctime(first_seen) ctime(last_seen) | sort - count'
+                ),
+            },
+            {
+                'platform': 'Sentinel (KQL)',
+                'why_this_query': 'Find encoded PowerShell and scheduled task abuse linked to execution.',
+                'query': (
+                    'SecurityEvent | where TimeGenerated >= ago(24h) | where EventID in (4104, 4688, 4698) '
+                    '| extend cmd=tolower(coalesce(ProcessCommandLine, CommandLine, NewProcessName, ScriptBlockText)) '
+                    '| where cmd has "-enc" or cmd has "frombase64string" or cmd has "iex" or cmd has "schtasks" '
+                    '| summarize repeat_count_24h=count(), first_seen_24h=min(TimeGenerated), '
+                    'last_seen_24h=max(TimeGenerated), sample_cmds=make_set(cmd, 20) by Computer, Account, EventID '
+                    '| order by repeat_count_24h desc'
+                ),
+            },
+            {
+                'platform': 'Elastic',
+                'why_this_query': 'Filter encoded/script-host execution for analyst review.',
+                'query': (
+                    'event.code:(4104 or 4688 or 4698) and process.command_line:(*-enc* or *frombase64string* or *iex* or *schtasks*)'
+                ),
+            },
+        ]
+
+    query_hint = f'Event ID scope: {event_id_clause}.'
+    if ioc_clause:
+        query_hint += f' IOC pivots: {ioc_clause}.'
+    return [
+        {
+            'platform': 'Splunk',
+            'why_this_query': 'Baseline suspicious repeated host/user activity in Windows logs.',
+            'query': (
+                'index=* sourcetype=WinEventLog:Security '
+                f'({" OR ".join([f"EventCode={event_id}" for event_id in (event_ids or ["4104", "4688", "4624", "4698"])[:4]])}) '
+                '| stats count min(_time) as first_seen max(_time) as last_seen by host user EventCode '
+                '| convert ctime(first_seen) ctime(last_seen) | sort - count'
+            ),
+        },
+        {
+            'platform': 'Sentinel (KQL)',
+            'why_this_query': 'Baseline repeated account/host patterns across key event IDs.',
+            'query': (
+                'SecurityEvent | where TimeGenerated >= ago(24h) '
+                f'| where EventID in ({", ".join((event_ids or ["4104", "4688", "4624", "4698"])[:4])}) '
+                '| summarize repeat_count_24h=count(), first_seen_24h=min(TimeGenerated), '
+                'last_seen_24h=max(TimeGenerated) by Computer, Account, EventID '
+                '| order by repeat_count_24h desc'
+            ),
+        },
+        {
+            'platform': 'Elastic',
+            'why_this_query': query_hint,
+            'query': (
+                'event.code:('
+                + ' or '.join((event_ids or ['4104', '4688', '4624', '4698'])[:4])
+                + ')'
+            ),
+        },
+    ]
+
+
 def build_environment_checks(
     timeline_recent_items: list[dict[str, object]],
     recent_activity_highlights: list[dict[str, object]],
@@ -1779,64 +2015,72 @@ def fetch_actor_notebook_core(
         ioc_hint = ', '.join(top_iocs)
         event_id_label = ', '.join(event_ids[:4]) if event_ids else ''
 
+        behavior_id = _behavior_id_from_context(context_blob, primary_category)
+        behavior_title_map = {
+            'phishing': 'Phishing',
+            'impact': 'Impact',
+            'exfiltration': 'Exfiltration',
+            'lateral_movement': 'Lateral Movement',
+            'execution': 'Execution',
+            'command_and_control': 'Command and Control',
+            'general_activity': 'General Activity',
+        }
+        behavior_watch_map = {
+            'phishing': 'Repeated suspicious sender domains, lookalike addresses, and clustered subjects targeting same teams.',
+            'impact': 'Recovery-inhibit commands, service-stop bursts, and rapid host-level disruption behavior.',
+            'exfiltration': 'Archive/staging commands plus unusual outbound transfer indicators by repeated host/user pairs.',
+            'lateral_movement': 'Repeated remote logon pivots (type 3/10), privileged auth chains, and new host-to-host admin paths.',
+            'execution': 'Encoded/scripted command execution (-enc, frombase64string, iex) and suspicious task creation.',
+            'command_and_control': 'Repeated beacon-like outbound patterns, rare destination recurrence, and host-user clustering.',
+            'general_activity': 'Repeated suspicious host/user entities across core Windows telemetry.',
+        }
+
         card['quick_check_title'] = (
-            f'{actor_name or "Actor"} | {primary_category.title()} hunt | last 30d context'
+            f'{actor_name or "Actor"} | {behavior_title_map.get(behavior_id, "General Activity")} behavior check | last 30d'
         )
         card['decision_trigger'] = (
-            f'Last 30 days show {len(recent_30_timeline)} actor-linked events with '
-            f'{primary_category_count} in {primary_category}; newest evidence from {source_label_text}.'
+            f'Last-30d actor context: {len(recent_30_timeline)} related events; '
+            f'{primary_category_count} mapped to {primary_category}; corroborated by {max(1, recent_source_count)} sources.'
         )
         card['telemetry_anchor'] = str(card.get('telemetry_anchor') or 'Windows Event Logs').strip()
         if not override_first_step:
-            if event_id_label:
-                first_step = (
-                    f'Start with Event IDs {event_id_label} for the last 24h and cluster repeated suspicious host/user pairs. '
-                    f'Prioritize {actor_name or "actor"} entities recurring in the last 30 days '
-                    f'({len(recent_30_timeline)} related events; {max(1, recent_source_count)} corroborating sources).'
-                )
-            else:
-                anchor = str(card.get('telemetry_anchor') or 'Windows Event Logs').strip()
-                first_step = (
-                    f'Start in {anchor} for the last 24h and list repeated suspicious host/user entities. '
-                    f'Prioritize entities tied to {actor_name or "actor"} patterns from the last 30 days '
-                    f'({len(recent_30_timeline)} related events).'
-                )
+            base_event_scope = event_id_label or '4104, 4688, 4624, 4698'
+            first_step = (
+                f'Start with Event IDs {base_event_scope} for the last 24h and cluster repeated host/user pairs. '
+                f'Prioritize {actor_name or "actor"}-linked entities that recur in the last 30 days.'
+            )
             if ioc_hint:
                 first_step += f' IOC pivots: {ioc_hint}.'
             card['first_step'] = first_step
 
         if not override_what_to_look_for:
-            dynamic_watch = f'Repeated host/user entities tied to {primary_category} behaviors observed in last 30 days.'
-            if event_id_label:
-                dynamic_watch += f' Focus Event IDs: {event_id_label}.'
-            dynamic_watch += f' Evidence anchors: {source_label_text}.'
+            watch_line = behavior_watch_map.get(behavior_id, behavior_watch_map['general_activity'])
             if ioc_hint:
-                dynamic_watch += f' IOC pivots: {ioc_hint}.'
-            card['what_to_look_for'] = dynamic_watch
+                watch_line += f' IOC pivots: {ioc_hint}.'
+            watch_line += f' Evidence anchors: {source_label_text}.'
+            card['what_to_look_for'] = watch_line
+
+        behavior_queries = _behavior_query_pack(
+            behavior_id=behavior_id,
+            ioc_values=top_iocs,
+            event_ids=event_ids,
+        )
+        card['behavior_queries'] = behavior_queries
 
         if not override_query_hint:
-            dynamic_hint = (
-                'Build a 24h candidate set, then baseline against last-30-day repeats by host and user; '
-                'rank by repeat count and recency.'
+            card['query_hint'] = (
+                'Run the behavior queries, cluster repeat_count_24h by host/user, and pivot into adjacent events within ±30 minutes.'
             )
-            if ioc_hint:
-                dynamic_hint += f' Add IOC joins on: {ioc_hint}.'
-            if event_id_label:
-                dynamic_hint += f' Restrict to Event IDs: {event_id_label}.'
-            card['query_hint'] = dynamic_hint
 
         card['success_condition'] = (
-            f'Confirm if repeated suspicious host/user clusters align with last-30-day {primary_category} patterns '
-            f'and are supported by {source_label_text}.'
+            'Escalate when at least two independent behavior-aligned repeats are confirmed on the same host/user pair in 24h.'
         )
         card['confidence_change_threshold'] = (
-            'Raise confidence only when at least two independent repeated host/user clusters are confirmed; '
-            'lower confidence if no repeats and no IOC-linked pivots are found.'
+            'Increase confidence when repeated behavior patterns match actor-linked 30-day context; decrease when no repeats are found.'
         )
         card['escalation_threshold'] = card['confidence_change_threshold']
         card['expected_output'] = (
-            'Output table: host, user, event_id, repeat_count_24h, first_seen_30d, last_seen_24h, '
-            'matched_ioc, supporting_source.'
+            'Output table: host_or_system, user_or_sid, event_id, timestamp, behavior_tag, evidence_note, source_reference.'
         )
     strict_default_mode = (
         normalized_source_tier is None

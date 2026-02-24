@@ -523,6 +523,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             cards_list = [card for card in cards_list if str(card.get('id') or '').strip() == thread_id]
 
         cards_for_hunts: list[dict[str, object]] = []
+        card_behavior_queries: dict[str, list[dict[str, str]]] = {}
         environment_profile: dict[str, object] = {}
         with sqlite3.connect(_db_path()) as connection:
             environment_profile = _load_environment_profile(connection, actor_id=actor_id)
@@ -532,10 +533,28 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 card_id = str(card.get('id') or '').strip()
                 if not card_id:
                     continue
+                behavior_queries_raw = card.get('behavior_queries')
+                behavior_queries_list = behavior_queries_raw if isinstance(behavior_queries_raw, list) else []
+                clean_behavior_queries: list[dict[str, str]] = []
+                for query_item in behavior_queries_list:
+                    if not isinstance(query_item, dict):
+                        continue
+                    platform = str(query_item.get('platform') or '').strip()
+                    query = str(query_item.get('query') or '').strip()
+                    why_this_query = str(query_item.get('why_this_query') or '').strip()
+                    if not platform or not query:
+                        continue
+                    clean_behavior_queries.append(
+                        {
+                            'platform': platform[:80],
+                            'query': query[:1200],
+                            'why_this_query': why_this_query[:220],
+                        }
+                    )
+                if clean_behavior_queries:
+                    card_behavior_queries[card_id] = clean_behavior_queries[:6]
                 related_iocs_raw = card.get('related_iocs')
                 related_iocs = related_iocs_raw if isinstance(related_iocs_raw, list) else []
-                if not related_iocs:
-                    continue
                 evidence_rows = connection.execute(
                     '''
                     SELECT qu.source_id, qu.trigger_excerpt, s.url, s.title, s.headline, s.og_title, s.html_title, s.published_at
@@ -565,7 +584,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                         }
                     )
 
-                if not evidence_items:
+                if not related_iocs or not evidence_items:
                     continue
 
                 cards_for_hunts.append(
@@ -589,9 +608,28 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         card_views: list[dict[str, object]] = []
         used_ioc_pairs: set[tuple[str, str]] = set()
         actor_context_chunks: list[str] = []
-        for card in cards_for_hunts:
-            card_id = str(card.get('id') or '')
-            evidence_items_raw = card.get('evidence')
+        card_titles: dict[str, str] = {}
+        for card in cards_list:
+            if not isinstance(card, dict):
+                continue
+            card_id = str(card.get('id') or '').strip()
+            if not card_id:
+                continue
+            card_titles[card_id] = str(card.get('quick_check_title') or card.get('question_text') or '')
+        all_card_ids = list({*card_titles.keys(), *card_behavior_queries.keys(), *(hunt_by_card.keys() if isinstance(hunt_by_card, dict) else [])})
+        evidence_map_by_card: dict[str, list[dict[str, object]]] = {
+            str(card.get('id') or ''): (card.get('evidence') if isinstance(card.get('evidence'), list) else [])
+            for card in cards_for_hunts
+            if isinstance(card, dict) and str(card.get('id') or '').strip()
+        }
+        ioc_map_by_card: dict[str, list[dict[str, object]]] = {
+            str(card.get('id') or ''): (card.get('related_iocs') if isinstance(card.get('related_iocs'), list) else [])
+            for card in cards_for_hunts
+            if isinstance(card, dict) and str(card.get('id') or '').strip()
+        }
+
+        for card_id in all_card_ids:
+            evidence_items_raw = evidence_map_by_card.get(card_id, [])
             evidence_items = evidence_items_raw if isinstance(evidence_items_raw, list) else []
             evidence_lookup = {
                 str(item.get('id') or ''): item
@@ -600,6 +638,8 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             }
             query_items_raw = hunt_by_card.get(card_id, []) if isinstance(hunt_by_card, dict) else []
             query_items = query_items_raw if isinstance(query_items_raw, list) else []
+            behavior_query_items_raw = card_behavior_queries.get(card_id, [])
+            behavior_query_items = behavior_query_items_raw if isinstance(behavior_query_items_raw, list) else []
             query_feedback_map: dict[str, dict[str, object]] = {}
             with sqlite3.connect(_db_path()) as connection:
                 feedback_rows = connection.execute(
@@ -632,6 +672,27 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     evidence_lookup.get(str(ref_id), {'id': str(ref_id), 'source_title': str(ref_id), 'source_url': '', 'source_date': ''})
                     for ref_id in refs
                 ]
+            for behavior_query in behavior_query_items:
+                if not isinstance(behavior_query, dict):
+                    continue
+                query_value = str(behavior_query.get('query') or '').strip()
+                if not query_value:
+                    continue
+                query_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{card_id}:behavior:{query_value}"))
+                feedback = query_feedback_map.get(query_id, {'votes': 0, 'score': 0})
+                query_items.append(
+                    {
+                        'platform': str(behavior_query.get('platform') or 'SIEM'),
+                        'ioc_value': '',
+                        'query': query_value,
+                        'why_this_query': str(behavior_query.get('why_this_query') or ''),
+                        'evidence_source_ids': [],
+                        'evidence_sources': [],
+                        'query_id': query_id,
+                        'feedback_votes': int(feedback.get('votes') or 0),
+                        'feedback_score': int(feedback.get('score') or 0),
+                    }
+                )
             query_items = sorted(
                 query_items,
                 key=lambda item: (
@@ -643,15 +704,14 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             card_views.append(
                 {
                     'id': card_id,
-                    'title': str(card.get('quick_check_title') or card.get('question_text') or ''),
-                    'iocs': card.get('related_iocs', []),
+                    'title': str(card_titles.get(card_id) or card_id),
+                    'iocs': ioc_map_by_card.get(card_id, []),
                     'queries': query_items,
                     'evidence': evidence_items,
                 }
             )
-            actor_context_chunks.append(str(card.get('quick_check_title') or ''))
-            actor_context_chunks.append(str(card.get('question_text') or ''))
-            for ioc in (card.get('related_iocs', []) if isinstance(card.get('related_iocs', []), list) else []):
+            actor_context_chunks.append(str(card_titles.get(card_id) or ''))
+            for ioc in (ioc_map_by_card.get(card_id, []) if isinstance(ioc_map_by_card.get(card_id, []), list) else []):
                 if not isinstance(ioc, dict):
                     continue
                 ioc_type = str(ioc.get('ioc_type') or '').strip().lower()
