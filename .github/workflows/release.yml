@@ -1,0 +1,87 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v prefix (example: 0.2.1)"
+        required: true
+        type: string
+
+jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve release version
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+            TAG="v${VERSION}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate version in pyproject
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release_meta.outputs.version }}"
+          CURRENT="$(python - <<'PY'
+from pathlib import Path
+import re
+text = Path("pyproject.toml").read_text(encoding="utf-8")
+m = re.search(r'^version\s*=\s*"([^"]+)"', text, flags=re.MULTILINE)
+print(m.group(1) if m else "")
+PY
+)"
+          if [[ -z "${CURRENT}" ]]; then
+            echo "pyproject version not found"
+            exit 1
+          fi
+          if [[ "${CURRENT}" != "${VERSION}" ]]; then
+            echo "pyproject version (${CURRENT}) does not match release version (${VERSION})"
+            exit 1
+          fi
+
+      - name: Validate changelog contains release heading
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release_meta.outputs.version }}"
+          if ! grep -q "^## ${VERSION} -" docs/CHANGELOG.md; then
+            echo "docs/CHANGELOG.md is missing heading: ## ${VERSION} - YYYY-MM-DD"
+            exit 1
+          fi
+
+      - name: Install project deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest ruff
+
+      - name: Compile and lint
+        run: |
+          python -m compileall -q app.py tests
+          ruff check --select F,E9 app.py tests
+
+      - name: Run tests
+        run: |
+          pytest -q

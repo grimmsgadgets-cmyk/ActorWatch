@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1 - 2026-02-24
+
+### Added
+- Dependabot configuration in `.github/dependabot.yml` for pip and GitHub Actions updates.
+- CODEOWNERS baseline in `.github/CODEOWNERS`.
+- Maintainer setup guide in `docs/maintainer_setup.md` for branch protection and trust guardrails.
+- Release validation workflow in `.github/workflows/release.yml`.
+- Version bump helper script `scripts/bump_version.sh`.
+
+### Changed
+- README now links maintainer setup and release/dependency maintenance paths.
+
 ## 0.2.0 - 2026-02-24
 
 ### Added

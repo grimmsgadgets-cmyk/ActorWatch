@@ -234,11 +234,19 @@ Expect iterative improvements and UI changes.
 See:
 
 - `docs/community_edition_ops.md`
+- `docs/maintainer_setup.md`
 - `SECURITY.md`
 - `scripts/migrate_sqlite.sh`
 - `scripts/community_smoke.sh`
 - `scripts/prune_data.sh`
 - `docs/samples/stix_bundle_minimal.json`
+
+## Release and Dependency Maintenance
+
+- Configure trust guardrails once: `docs/maintainer_setup.md`
+- Dependabot config: `.github/dependabot.yml`
+- Version bump helper: `scripts/bump_version.sh`
+- Release workflow (tag + validation): `.github/workflows/release.yml`
 
 ## Learning Features (Community)
 
