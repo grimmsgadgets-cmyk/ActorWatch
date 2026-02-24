@@ -479,6 +479,53 @@ def _behavior_id_from_context(context_text: str, primary_category: str) -> str:
     return 'general_activity'
 
 
+def _extract_behavior_observables(text: str) -> dict[str, list[str]]:
+    normalized = str(text or '').lower()
+    event_ids: list[str] = []
+    for token in re.findall(r'\b(?:1[0-9]{3}|2[0-9]{3}|3[0-9]{3}|4[0-9]{3}|5[0-9]{3})\b', normalized):
+        if token not in event_ids:
+            event_ids.append(token)
+
+    command_patterns: list[tuple[str, str]] = [
+        (r'\bvssadmin\b', 'vssadmin'),
+        (r'\bwbadmin\b', 'wbadmin'),
+        (r'\bbcdedit\b', 'bcdedit'),
+        (r'\bwmic\b.*\bshadowcopy\b.*\bdelete\b', 'wmic shadowcopy delete'),
+        (r'\bnet\s+stop\b', 'net stop'),
+        (r'\bfrombase64string\b', 'frombase64string'),
+        (r'\b-enc\b', '-enc'),
+        (r'\biex\b', 'iex'),
+        (r'\bschtasks\b', 'schtasks'),
+        (r'\bpsexec\b', 'psexec'),
+        (r'\brdp\b', 'rdp'),
+        (r'\bsmb\b', 'smb'),
+    ]
+    commands: list[str] = []
+    for pattern, label in command_patterns:
+        if re.search(pattern, normalized):
+            commands.append(label)
+
+    behavior_markers: list[str] = []
+    for marker in (
+        'recovery inhibition',
+        'service stop burst',
+        'encoded execution',
+        'remote logon pivot',
+        'beacon recurrence',
+        'archive staging',
+        'outbound upload',
+    ):
+        lookup = marker.replace(' ', r'\s+')
+        if re.search(lookup, normalized):
+            behavior_markers.append(marker)
+
+    return {
+        'event_ids': event_ids[:8],
+        'commands': commands[:10],
+        'markers': behavior_markers[:6],
+    }
+
+
 def _behavior_query_pack(
     *,
     behavior_id: str,
@@ -1989,8 +2036,6 @@ def fetch_actor_notebook_core(
             if label and label not in recent_source_labels:
                 recent_source_labels.append(label)
         source_label_text = ', '.join(recent_source_labels[:3]) or 'recent actor reporting'
-        primary_category = top_categories_30[0][0] if top_categories_30 else 'general activity'
-        primary_category_count = int(top_categories_30[0][1]) if top_categories_30 else 0
         context_blob = ' '.join(
             [
                 str(card.get('question_text') or ''),
@@ -2015,16 +2060,17 @@ def fetch_actor_notebook_core(
         ioc_hint = ', '.join(top_iocs)
         event_id_label = ', '.join(event_ids[:4]) if event_ids else ''
 
-        behavior_id = _behavior_id_from_context(context_blob, primary_category)
-        behavior_title_map = {
-            'phishing': 'Phishing',
-            'impact': 'Impact',
-            'exfiltration': 'Exfiltration',
-            'lateral_movement': 'Lateral Movement',
-            'execution': 'Execution',
-            'command_and_control': 'Command and Control',
-            'general_activity': 'General Activity',
+        phase_hint = str(card.get('phase_label') or '').strip().lower()
+        phase_behavior_map = {
+            'initial access': 'phishing',
+            'execution': 'execution',
+            'persistence': 'execution',
+            'lateral movement': 'lateral_movement',
+            'command and control': 'command_and_control',
+            'exfiltration': 'exfiltration',
+            'impact': 'impact',
         }
+        behavior_id = phase_behavior_map.get(phase_hint) or _behavior_id_from_context(context_blob, phase_hint)
         behavior_watch_map = {
             'phishing': 'Repeated suspicious sender domains, lookalike addresses, and clustered subjects targeting same teams.',
             'impact': 'Recovery-inhibit commands, service-stop bursts, and rapid host-level disruption behavior.',
@@ -2034,14 +2080,39 @@ def fetch_actor_notebook_core(
             'command_and_control': 'Repeated beacon-like outbound patterns, rare destination recurrence, and host-user clustering.',
             'general_activity': 'Repeated suspicious host/user entities across core Windows telemetry.',
         }
+        behavior_to_hunt_map = {
+            'phishing': 'Repeated sender-driven delivery activity consistent with phishing operations.',
+            'impact': 'Recovery-inhibit and disruptive host actions preceding ransomware impact.',
+            'exfiltration': 'Archive-and-transfer behavior consistent with staged data exfiltration.',
+            'lateral_movement': 'Repeated remote-auth pivots suggesting internal host-to-host spread.',
+            'execution': 'Scripted/encoded execution behavior tied to suspicious task/process launch chains.',
+            'command_and_control': 'Recurring beacon/callback patterns indicating command-and-control activity.',
+            'general_activity': 'Repeated suspicious host/user activity requiring triage and scoping.',
+        }
 
-        card['quick_check_title'] = (
-            f'{actor_name or "Actor"} | {behavior_title_map.get(behavior_id, "General Activity")} behavior check | last 30d'
+        observables = _extract_behavior_observables(
+            ' '.join(
+                [context_blob]
+                + [str(update.get('trigger_excerpt') or '') for update in recent_updates if isinstance(update, dict)]
+            )
         )
-        card['decision_trigger'] = (
-            f'Last-30d actor context: {len(recent_30_timeline)} related events; '
-            f'{primary_category_count} mapped to {primary_category}; corroborated by {max(1, recent_source_count)} sources.'
-        )
+        observable_lines: list[str] = []
+        for cmd in observables.get('commands', [])[:5]:
+            observable_lines.append(f'command token: `{cmd}`')
+        for event_id in observables.get('event_ids', [])[:4]:
+            observable_lines.append(f'event id: `{event_id}`')
+        for marker in observables.get('markers', [])[:3]:
+            observable_lines.append(f'behavior marker: `{marker}`')
+        for ioc in top_iocs[:3]:
+            observable_lines.append(f'ioc pivot: `{ioc}`')
+
+        if recent_updates:
+            card['decision_trigger'] = (
+                f'Last-30d evidence for this check: {len(recent_updates)} linked updates from '
+                f'{max(1, recent_source_count)} corroborating sources.'
+            )
+        else:
+            card['decision_trigger'] = 'Last-30d evidence for this check is limited; run behavior baseline and confirm gaps.'
         card['telemetry_anchor'] = str(card.get('telemetry_anchor') or 'Windows Event Logs').strip()
         if not override_first_step:
             base_event_scope = event_id_label or '4104, 4688, 4624, 4698'
@@ -2053,11 +2124,12 @@ def fetch_actor_notebook_core(
                 first_step += f' IOC pivots: {ioc_hint}.'
             card['first_step'] = first_step
 
+        card['behavior_to_hunt'] = behavior_to_hunt_map.get(behavior_id, behavior_to_hunt_map['general_activity'])
+
         if not override_what_to_look_for:
             watch_line = behavior_watch_map.get(behavior_id, behavior_watch_map['general_activity'])
-            if ioc_hint:
-                watch_line += f' IOC pivots: {ioc_hint}.'
-            watch_line += f' Evidence anchors: {source_label_text}.'
+            if observable_lines:
+                watch_line = f'{watch_line} Observables: ' + '; '.join(observable_lines[:8]) + '.'
             card['what_to_look_for'] = watch_line
 
         behavior_queries = _behavior_query_pack(
@@ -2072,16 +2144,42 @@ def fetch_actor_notebook_core(
                 'Run the behavior queries, cluster repeat_count_24h by host/user, and pivot into adjacent events within ±30 minutes.'
             )
 
-        card['success_condition'] = (
-            'Escalate when at least two independent behavior-aligned repeats are confirmed on the same host/user pair in 24h.'
-        )
+        required_data = [
+            'Windows Security event logs (process + authentication + task events).',
+            'PowerShell script logging if enabled.',
+            'Host and user identifiers present in event records.',
+        ]
+        if top_iocs:
+            required_data.append('Actor-linked IOC values for pivoting in same 24h window.')
+        card['required_data'] = required_data
+
+        data_gap = len(recent_updates) == 0 or (len(observable_lines) == 0 and len(top_iocs) == 0)
+        card['data_gap'] = data_gap
+        if data_gap:
+            card['success_condition'] = (
+                'Data gap: insufficient thread-linked 30-day evidence to assert actor-specific behavior. Run baseline hunt and collect evidence.'
+            )
+        else:
+            card['success_condition'] = (
+                'Escalate when at least two independent behavior-aligned repeats are confirmed on the same host/user pair in 24h.'
+            )
         card['confidence_change_threshold'] = (
             'Increase confidence when repeated behavior patterns match actor-linked 30-day context; decrease when no repeats are found.'
         )
         card['escalation_threshold'] = card['confidence_change_threshold']
-        card['expected_output'] = (
+        card['decision_rule'] = card['success_condition']
+        card['analyst_output'] = (
             'Output table: host_or_system, user_or_sid, event_id, timestamp, behavior_tag, evidence_note, source_reference.'
         )
+        card['expected_output'] = card['analyst_output']
+        evidence_used: list[str] = []
+        for label in recent_source_labels[:5]:
+            evidence_used.append(label)
+        if top_iocs:
+            evidence_used.append('IOC pivots: ' + ', '.join(top_iocs[:3]))
+        if not evidence_used:
+            evidence_used.append('No thread-linked evidence in last 30 days.')
+        card['evidence_used'] = evidence_used
     strict_default_mode = (
         normalized_source_tier is None
         and normalized_min_confidence is None

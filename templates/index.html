@@ -880,9 +880,25 @@
                 <span class="pbadge {{ question.priority.lower() }}">{{ question.priority }}</span>
               </summary>
               <div class="dq-detail">
+                <div class="dq-line"><strong>Behavior to hunt:</strong> {{ question.behavior_to_hunt or question.decision_trigger }}</div>
                 <div class="dq-line"><strong>Where to start:</strong> {{ question.first_step or question.telemetry_anchor }}</div>
                 <div class="dq-line"><strong>What to watch:</strong> {{ question.what_to_look_for or question.success_condition or question.decision_trigger }}</div>
-                <div class="dq-line"><strong>Decision outcome:</strong> {{ question.expected_output }}</div>
+                <div class="dq-line"><strong>Required data:</strong>
+                  {% if question.required_data %}
+                    {{ question.required_data | join(' | ') }}
+                  {% else %}
+                    Windows Event Logs with host/user context.
+                  {% endif %}
+                </div>
+                <div class="dq-line"><strong>Decision rule:</strong> {{ question.decision_rule or question.success_condition }}</div>
+                <div class="dq-line"><strong>Analyst output:</strong> {{ question.analyst_output or question.expected_output }}</div>
+                <div class="dq-line"><strong>Evidence used:</strong>
+                  {% if question.evidence_used %}
+                    {{ question.evidence_used | join(' | ') }}
+                  {% else %}
+                    No thread-linked evidence in last 30 days.
+                  {% endif %}
+                </div>
                 <div class="dq-line"><a href="/actors/{{ notebook.actor.id }}/hunts/iocs?thread_id={{ question.id }}">Open IOC hunt queries for this check</a></div>
                 <div class="feedback-actions">
                   <button type="button" class="question-feedback-btn positive" data-thread-id="{{ question.id }}" data-feedback="useful">Useful</button>
