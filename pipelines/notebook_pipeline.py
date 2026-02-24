@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from fastapi import HTTPException
+import services.ioc_store_service as ioc_store_service
+import services.ioc_validation_service as ioc_validation_service
 
 
 def _quick_check_ioc_type_hints(text: str) -> set[str]:
@@ -81,6 +83,169 @@ def _relevant_iocs_for_quick_check(
         return []
     ranked = sorted(relevant, key=lambda row: int(row[0]), reverse=True)
     return [row[1] for row in ranked[:limit]]
+
+
+def _extract_ioc_candidates_from_text(
+    text: str,
+    *,
+    ignored_domains: set[str] | None = None,
+) -> list[tuple[str, str]]:
+    raw = str(text or '')
+    if not raw.strip():
+        return []
+    ignored = {str(item).lower().strip() for item in (ignored_domains or set()) if str(item).strip()}
+    found: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(ioc_type: str, value: str) -> None:
+        normalized_type = str(ioc_type or '').strip().lower()
+        normalized_value = str(value or '').strip()
+        if not normalized_type or not normalized_value:
+            return
+        key = (normalized_type, normalized_value.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        found.append((normalized_type, normalized_value))
+
+    url_matches = re.findall(r'https?://[^\s<>"\')]+', raw, flags=re.IGNORECASE)
+    for value in url_matches:
+        clean = value.rstrip('.,;:)')
+        host_match = re.match(r'^https?://([^/:?#]+)', clean, flags=re.IGNORECASE)
+        host = str(host_match.group(1) if host_match else '').strip().lower()
+        if host and host in ignored:
+            continue
+        _add('url', clean)
+    for value in re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', raw):
+        _add('email', value)
+    for value in re.findall(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', raw):
+        octets = value.split('.')
+        if len(octets) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in octets):
+            _add('ip', value)
+    for value in re.findall(r'\b[a-fA-F0-9]{64}\b', raw):
+        _add('hash', value.lower())
+    for value in re.findall(r'\b[a-fA-F0-9]{40}\b', raw):
+        _add('hash', value.lower())
+    for value in re.findall(r'\b[a-fA-F0-9]{32}\b', raw):
+        _add('hash', value.lower())
+    raw_without_urls = raw
+    for value in url_matches:
+        raw_without_urls = raw_without_urls.replace(value, ' ')
+    for value in re.findall(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b', raw_without_urls):
+        if value.lower().startswith('http'):
+            continue
+        normalized = value.lower()
+        if normalized in ignored:
+            continue
+        _add('domain', normalized)
+    return found
+
+
+def _derived_ioc_items_from_sources(
+    source_items: list[dict[str, object]],
+    *,
+    max_items: int = 40,
+) -> list[dict[str, str]]:
+    if not source_items:
+        return []
+    context_only_domains = {
+        'ransomware.live',
+        'api.ransomware.live',
+        'therecord.media',
+        'bleepingcomputer.com',
+        'thehackernews.com',
+        'darkreading.com',
+        'krebsonsecurity.com',
+        'isc.sans.edu',
+    }
+
+    def _host_from_url(raw_url: str) -> str:
+        match = re.match(r'^https?://([^/:?#]+)', str(raw_url or '').strip(), flags=re.IGNORECASE)
+        host = str(match.group(1) if match else '').strip().lower()
+        if host.startswith('www.') and len(host) > 4:
+            host = host[4:]
+        return host
+
+    def _looks_ioc_capable(source: dict[str, object]) -> bool:
+        source_url = str(source.get('url') or '').strip()
+        source_name = str(source.get('source_name') or '').strip().lower()
+        source_tier = str(source.get('source_tier') or '').strip().lower()
+        host = _host_from_url(source_url)
+        if host in context_only_domains:
+            return False
+        text = str(source.get('pasted_text') or '')
+        if len(text.strip()) < 80:
+            return False
+        has_strong_ioc_pattern = bool(
+            re.search(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', text)
+            or re.search(r'https?://[^\s<>"\')]+', text, flags=re.IGNORECASE)
+            or re.search(r'\b[a-fA-F0-9]{32}\b', text)
+            or re.search(r'\b[a-fA-F0-9]{40}\b', text)
+            or re.search(r'\b[a-fA-F0-9]{64}\b', text)
+            or re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', text)
+        )
+        if has_strong_ioc_pattern:
+            return True
+        if source_tier in {'high', 'medium'}:
+            return True
+        ioc_likely_name_markers = (
+            'advisory',
+            'psirt',
+            'cert',
+            'security',
+            'threat',
+            'research',
+            'intel',
+            'mandiant',
+            'talos',
+            'unit 42',
+            'crowdstrike',
+            'sentinelone',
+            'proofpoint',
+            'rapid7',
+        )
+        return any(marker in source_name for marker in ioc_likely_name_markers)
+
+    ignored_domains: set[str] = set()
+    for source in source_items:
+        source_url = str(source.get('url') or '').strip()
+        match = re.match(r'^https?://([^/:?#]+)', source_url, flags=re.IGNORECASE)
+        host = str(match.group(1) if match else '').strip().lower()
+        if host:
+            ignored_domains.add(host)
+            if host.startswith('www.') and len(host) > 4:
+                ignored_domains.add(host[4:])
+    derived: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in source_items:
+        if not _looks_ioc_capable(source):
+            continue
+        source_name = str(source.get('source_name') or '').strip()
+        source_url = str(source.get('url') or '').strip()
+        source_ref = source_name or source_url
+        source_text = str(source.get('pasted_text') or '')
+        if not source_text.strip():
+            continue
+        for ioc_type, ioc_value in _extract_ioc_candidates_from_text(
+            source_text,
+            ignored_domains=ignored_domains,
+        ):
+            key = (ioc_type, ioc_value.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            derived.append(
+                {
+                    'ioc_type': ioc_type,
+                    'ioc_value': ioc_value,
+                    'source_ref': source_ref,
+                    'source_id': str(source.get('id') or ''),
+                    'source_tier': str(source.get('source_tier') or ''),
+                }
+            )
+            if len(derived) >= max_items:
+                return derived
+    return derived
 
 
 def latest_reporting_recency_label(
@@ -774,8 +939,16 @@ def fetch_actor_notebook_core(
     _format_date_or_unknown = deps['format_date_or_unknown']
     _recent_change_max_days = int(deps.get('recent_change_max_days', 45))
     _load_quick_check_overrides = deps.get('load_quick_check_overrides')
+    _load_source_reliability_map = deps.get(
+        'load_source_reliability_map',
+        lambda _connection, *, actor_id: {},
+    )
+    _domain_from_url = deps.get('domain_from_url', lambda _url: '')
+    _confidence_weight_adjustment = deps.get('confidence_weight_adjustment', lambda _score: 0)
 
     quick_check_overrides: dict[str, dict[str, str]] = {}
+    question_feedback: dict[str, dict[str, int]] = {}
+    source_reliability_map: dict[str, dict[str, object]] = {}
     with sqlite3.connect(db_path) as connection:
         actor_row = connection.execute(
             '''
@@ -803,6 +976,43 @@ def fetch_actor_notebook_core(
             ''',
             (actor_id,),
         ).fetchall()
+        source_items_for_ioc = [
+            {
+                'id': row[0],
+                'source_name': row[1],
+                'url': row[2],
+                'published_at': row[3],
+                'retrieved_at': row[4],
+                'pasted_text': row[5],
+                'title': row[6],
+                'headline': row[7],
+                'og_title': row[8],
+                'html_title': row[9],
+                'publisher': row[10],
+                'site_name': row[11],
+                'source_tier': row[12],
+                'confidence_weight': row[13],
+            }
+            for row in sources
+        ]
+        derived_ioc_candidates = _derived_ioc_items_from_sources(source_items_for_ioc, max_items=80)
+        if derived_ioc_candidates:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            for candidate in derived_ioc_candidates:
+                ioc_store_service.upsert_ioc_item_core(
+                    connection,
+                    actor_id=actor_id,
+                    raw_ioc_type=str(candidate.get('ioc_type') or 'indicator'),
+                    raw_ioc_value=str(candidate.get('ioc_value') or ''),
+                    source_ref=str(candidate.get('source_ref') or '') or None,
+                    source_id=str(candidate.get('source_id') or '') or None,
+                    source_tier=str(candidate.get('source_tier') or '') or None,
+                    extraction_method='auto_source_regex',
+                    now_iso=now_iso,
+                    deps={
+                        'validate_ioc_candidate': ioc_validation_service.validate_ioc_candidate_core,
+                    },
+                )
 
         timeline_rows = connection.execute(
             '''
@@ -868,10 +1078,12 @@ def fetch_actor_notebook_core(
         ).fetchall()
         ioc_rows = connection.execute(
             '''
-            SELECT id, ioc_type, ioc_value, source_ref, created_at
+            SELECT
+                id, ioc_type, ioc_value, source_ref, created_at,
+                lifecycle_status, handling_tlp, seen_count, last_seen_at, confidence_score
             FROM ioc_items
-            WHERE actor_id = ?
-            ORDER BY created_at DESC
+            WHERE actor_id = ? AND is_active = 1 AND validation_status IN ('valid', 'unvalidated', 'legacy')
+            ORDER BY last_seen_at DESC, created_at DESC
             ''',
             (actor_id,),
         ).fetchall()
@@ -882,6 +1094,11 @@ def fetch_actor_notebook_core(
                 'ioc_value': row[2],
                 'source_ref': row[3],
                 'created_at': row[4],
+                'lifecycle_status': row[5],
+                'handling_tlp': row[6],
+                'seen_count': row[7],
+                'last_seen_at': row[8],
+                'confidence_score': row[9],
             }
             for row in ioc_rows
         ]
@@ -929,6 +1146,29 @@ def fetch_actor_notebook_core(
                     }
             except Exception:
                 quick_check_overrides = {}
+        feedback_rows = connection.execute(
+            '''
+            SELECT item_id, COUNT(*), SUM(rating_score)
+            FROM analyst_feedback_events
+            WHERE actor_id = ? AND item_type = 'priority_question'
+            GROUP BY item_id
+            ''',
+            (actor_id,),
+        ).fetchall()
+        question_feedback = {
+            str(row[0]): {
+                'votes': int(row[1] or 0),
+                'score': int(row[2] or 0),
+            }
+            for row in feedback_rows
+            if str(row[0] or '').strip()
+        }
+        try:
+            loaded_reliability = _load_source_reliability_map(connection, actor_id=actor_id)
+            if isinstance(loaded_reliability, dict):
+                source_reliability_map = loaded_reliability
+        except Exception:
+            source_reliability_map = {}
 
     actor = {
         'id': actor_row[0],
@@ -1026,6 +1266,9 @@ def fetch_actor_notebook_core(
             corroborating_sources,
             org_alignment,
         )
+        feedback = question_feedback.get(str(thread.get('id') or ''), {'score': 0, 'votes': 0})
+        feedback_score = int(feedback.get('score') or 0)
+        rank_score += max(-3, min(3, feedback_score))
         scored_threads.append(
             {
                 'thread': thread,
@@ -1034,6 +1277,8 @@ def fetch_actor_notebook_core(
                 'latest_evidence_dt': latest_evidence_dt,
                 'corroborating_sources': corroborating_sources,
                 'org_alignment': org_alignment,
+                'feedback_score': feedback_score,
+                'feedback_votes': int(feedback.get('votes') or 0),
             }
         )
 
@@ -1090,6 +1335,8 @@ def fetch_actor_notebook_core(
                 ),
                 'corroborating_sources': int(scored['corroborating_sources']),
                 'org_alignment': _org_alignment_label(int(scored.get('org_alignment') or 0)),
+                'analyst_feedback_score': int(scored.get('feedback_score') or 0),
+                'analyst_feedback_votes': int(scored.get('feedback_votes') or 0),
                 'updates_count': updates_count,
                 'updated_at': thread['updated_at'],
             }
@@ -1153,20 +1400,6 @@ def fetch_actor_notebook_core(
                 card['what_to_look_for'] = what_to_look_for
             if expected_output:
                 card['expected_output'] = expected_output
-    for card in priority_questions:
-        related = _relevant_iocs_for_quick_check(card, ioc_items, limit=4)
-        if not related and ioc_items:
-            related = [
-                {
-                    'ioc_type': str(item.get('ioc_type') or ''),
-                    'ioc_value': str(item.get('ioc_value') or ''),
-                    'source_ref': str(item.get('source_ref') or ''),
-                }
-                for item in ioc_items[:3]
-                if str(item.get('ioc_value') or '').strip()
-            ]
-        card['related_iocs'] = related
-
     phase_group_order: list[str] = []
     phase_groups_map: dict[str, list[dict[str, object]]] = {}
     for card in priority_questions:
@@ -1196,6 +1429,42 @@ def fetch_actor_notebook_core(
         }
         for row in sources
     ]
+    for source in source_items:
+        source_url = str(source.get('url') or '').strip()
+        domain = _domain_from_url(source_url)
+        reliability = source_reliability_map.get(domain, {}) if domain else {}
+        reliability_score = float(reliability.get('reliability_score') or 0.5)
+        weight_adjust = int(_confidence_weight_adjustment(reliability_score))
+        try:
+            base_weight = int(source.get('confidence_weight') or 0)
+        except Exception:
+            base_weight = 0
+        source['confidence_weight'] = max(0, min(4, base_weight + weight_adjust))
+        source['source_reliability_score'] = reliability_score
+        source['source_reliability_votes'] = int(reliability.get('helpful_count') or 0) + int(
+            reliability.get('unhelpful_count') or 0
+        )
+    quick_check_ioc_pool: list[dict[str, str]] = []
+    seen_ioc_pairs: set[tuple[str, str]] = set()
+    for item in ioc_items:
+        ioc_type = str(item.get('ioc_type') or '').strip().lower()
+        ioc_value = str(item.get('ioc_value') or '').strip()
+        if not ioc_type or not ioc_value:
+            continue
+        key = (ioc_type, ioc_value.lower())
+        if key in seen_ioc_pairs:
+            continue
+        seen_ioc_pairs.add(key)
+        quick_check_ioc_pool.append(
+            {
+                'ioc_type': ioc_type,
+                'ioc_value': ioc_value,
+                'source_ref': str(item.get('source_ref') or ''),
+            }
+        )
+    for card in priority_questions:
+        related = _relevant_iocs_for_quick_check(card, quick_check_ioc_pool, limit=4)
+        card['related_iocs'] = related
     allowed_tiers = {'high', 'medium', 'trusted', 'context', 'unrated'}
     normalized_source_tier = str(source_tier or '').strip().lower() or None
     if normalized_source_tier not in allowed_tiers:

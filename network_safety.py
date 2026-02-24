@@ -31,11 +31,15 @@ def validate_outbound_url(
     allowed_domains: set[str] | None,
     resolve_host: Callable[..., object],
     ipproto_tcp: int,
+    allow_http: bool = False,
 ) -> str:
     normalized = source_url.strip()
     parsed = urlparse(normalized)
-    if parsed.scheme.lower() not in {'http', 'https'}:
+    scheme = parsed.scheme.lower()
+    if scheme not in {'http', 'https'}:
         raise HTTPException(status_code=400, detail='source_url must use http or https')
+    if scheme == 'http' and not allow_http:
+        raise HTTPException(status_code=400, detail='source_url must use https')
     if parsed.username or parsed.password:
         raise HTTPException(status_code=400, detail='source_url must not include credentials')
 

@@ -4,11 +4,6 @@ on:
   push:
   pull_request:
   workflow_dispatch:
-    inputs:
-      run_pytest:
-        description: "Run pytest lane (optional)"
-        required: false
-        default: "false"
 
 jobs:
   quality:
@@ -25,17 +20,17 @@ jobs:
       - name: Install project deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pytest ruff
+          python -m pip install -r requirements.txt pytest ruff bandit pip-audit
 
       - name: Compile check
         run: |
           python -m compileall -q app.py tests
 
-      - name: Lint (minimal, deterministic)
+      - name: Lint
         run: |
-          ruff check --select F,E9 app.py tests
-
-      - name: Optional pytest
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_pytest == 'true' }}
+          ruff check --select E9,F63,F7,F82 app.py services pipelines routes tests
+          bandit -q -r app.py services pipelines routes
+          pip-audit -r requirements.txt
+      - name: Test
         run: |
           pytest -q

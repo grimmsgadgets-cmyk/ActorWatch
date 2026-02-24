@@ -279,6 +279,91 @@ def test_priority_questions_autopopulate_relevant_iocs(tmp_path):
     assert not any(str(ioc.get('ioc_type') or '').lower() == 'hash' for ioc in related_iocs)
 
 
+def test_priority_questions_use_source_derived_iocs_when_manual_iocs_missing(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('Qilin', 'Derived IOC scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, retrieved_at, pasted_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-derived-1',
+                actor['id'],
+                'IntelBlog',
+                'https://intel.example/qilin-update',
+                '2026-02-22',
+                '2026-02-22T00:00:00+00:00',
+                'Qilin infrastructure observed contacting beacon.qilin-test.net and 185.88.1.45 over HTTPS.',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO question_threads (
+                id, actor_id, question_text, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'thread-derived-1',
+                actor['id'],
+                'Is Qilin beaconing via suspicious DNS domains?',
+                'open',
+                '2026-02-22T00:00:00+00:00',
+                '2026-02-22T01:00:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO timeline_events (
+                id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'evt-derived-1',
+                actor['id'],
+                '2026-02-22T00:30:00+00:00',
+                'command_and_control',
+                'Beaconing update',
+                'Beaconing and suspicious domain lookups observed for Qilin.',
+                'src-derived-1',
+                'Enterprise',
+                '[]',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO question_updates (
+                id, thread_id, source_id, trigger_excerpt, update_note, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'update-derived-1',
+                'thread-derived-1',
+                'src-derived-1',
+                'Suspicious beacon domain and IP linked to Qilin activity.',
+                '',
+                '2026-02-22T01:00:00+00:00',
+            ),
+        )
+        connection.commit()
+
+    notebook = app_module._fetch_actor_notebook(actor['id'])  # noqa: SLF001
+    cards = notebook.get('priority_questions', [])
+    assert cards
+    card = next((item for item in cards if str(item.get('id') or '') == 'thread-derived-1'), None)
+    assert card is not None
+    related_iocs = card.get('related_iocs', [])
+    assert any(str(ioc.get('ioc_type') or '').lower() == 'domain' for ioc in related_iocs)
+    assert any('qilin-test.net' in str(ioc.get('ioc_value') or '').lower() for ioc in related_iocs)
+
+
 def test_fetch_actor_notebook_payload_shape_regression(tmp_path):
     _setup_db(tmp_path)
     actor = app_module.create_actor_profile('APT-Payload', 'Payload shape scope')

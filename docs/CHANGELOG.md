@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.0 - 2026-02-24
+
+### Added
+- `SECURITY.md` with local-first deployment guidance and vulnerability reporting expectations.
+- Contributor workflow templates:
+  - `.github/ISSUE_TEMPLATE/bug_report.yml`
+  - `.github/ISSUE_TEMPLATE/feature_request.yml`
+  - `.github/pull_request_template.md`
+- API contract regression tests in `tests/test_api_contracts.py`.
+- Data retention service in `services/data_retention_service.py`.
+- Data pruning script `scripts/prune_data.sh`.
+
+### Changed
+- README now references contributor and security guidance.
+- Release/smoke scripts include stronger baseline checks.
+- SQLite schema now records a schema version in `schema_meta`.
+
+### Notes
+- Community Edition remains local-first by default.
+
 ## 0.1.1 - 2026-02-16
 
 ### Added

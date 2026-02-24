@@ -24,7 +24,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
-    { name = "python-multipart" },
+    { name = "python-multipart", specifier = ">=0.0.22" },
     { name = "uvicorn", extras = ["standard"] },
 ]
 

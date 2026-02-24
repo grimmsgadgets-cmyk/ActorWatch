@@ -365,7 +365,7 @@ def priority_next_best_action(question_text: str, where_to_check: str) -> str:
                 'identify unusual host-to-host admin logons and account pivots.'
             )
         return (
-            'Query the last 24h of key security events and isolate repeated suspicious patterns tied to the current actor cue.'
+            'Start with Event IDs 4104, 4688, 4624, and 4698 for the last 24h and list any repeated suspicious activity by host and user.'
         )
 
     return (
@@ -452,13 +452,24 @@ def telemetry_anchor_line(
 
 
 def guidance_line(guidance_items: list[dict[str, object]], key: str) -> str:
+    def _simplify(text: str) -> str:
+        normalized = str(text or '').strip()
+        lowered = normalized.lower()
+        if lowered == 'powershell script block activity and encoded commands.':
+            return 'PowerShell commands with -enc / encoded text, especially from Office or script hosts (Event ID 4104).'
+        if 'confidence shift' in lowered:
+            return normalized.replace('confidence shift', 'what changed from last check')
+        if 'delta' in lowered:
+            return normalized.replace('delta', 'change')
+        return normalized
+
     for item in guidance_items:
         value = str(item.get(key) or '').strip()
         if not value:
             continue
         first = value.splitlines()[0].strip().lstrip('-').strip()
         if first:
-            return first
+            return _simplify(first)
     return ''
 
 
@@ -597,18 +608,18 @@ def confidence_change_threshold_line(question_text: str) -> str:
 def expected_output_line(question_text: str) -> str:
     lowered = question_text.lower()
     if any(token in lowered for token in ('cve', 'vpn', 'edge', 'exploit', 'initial access')):
-        return 'Record edge exposure delta, affected assets, and confidence shift with source links.'
+        return 'Outcome: confirm compromised vs benign edge activity and identify which assets need immediate blocking or patching.'
     if any(token in lowered for token in ('powershell', 'wmi', 'scheduled task', 'execution')):
-        return 'Record execution pattern delta, impacted hosts, and confidence shift with source links.'
+        return 'Outcome: confirm malicious execution vs admin activity and identify hosts that need isolation.'
     if any(token in lowered for token in ('lateral', 'rdp', 'smb', 'pivot')):
-        return 'Record lateral movement delta, host relationships, and confidence shift with source links.'
+        return 'Outcome: confirm true lateral movement vs normal admin behavior and identify accounts/hosts to contain.'
     if any(token in lowered for token in ('dns', 'domain', 'c2', 'beacon', 'command-and-control')):
-        return 'Record outbound beacon/domain delta, cadence, and confidence shift with source links.'
+        return 'Outcome: confirm active beaconing vs benign lookups and identify endpoints to block or isolate.'
     if any(token in lowered for token in ('exfiltrat', 'stolen data', 'collection')):
-        return 'Record staging or exfiltration delta, data scope, and confidence shift with source links.'
+        return 'Outcome: confirm data staging/transfer behavior and identify systems needing immediate containment.'
     if any(token in lowered for token in ('encrypt', 'ransom', 'impact', 'disrupt')):
-        return 'Record impact behavior delta, business effect, and confidence shift with source links.'
-    return 'Record the observed delta versus prior review, confidence shift, and source links.'
+        return 'Outcome: confirm ransomware impact behavior and identify systems requiring urgent response actions.'
+    return 'Outcome: decide if activity is benign or malicious and choose contain, monitor, or close.'
 
 
 def escalation_threshold_line(question_text: str) -> str:
@@ -629,5 +640,5 @@ def quick_check_title(question_text: str, phase_label: str) -> str:
     if any(token in lowered for token in ('exfiltrat', 'stolen data', 'collection')):
         return 'Check for signs of data staging or theft'
     if any(token in lowered for token in ('encrypt', 'ransom', 'impact', 'disrupt')):
-        return 'Check for disruptive impact behavior'
+        return 'Check for ransomware impact signs'
     return f'Quick check for {phase_label.lower()} activity'

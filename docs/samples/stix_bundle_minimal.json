@@ -1,0 +1,31 @@
+{
+  "type": "bundle",
+  "id": "bundle--11111111-1111-1111-1111-111111111111",
+  "spec_version": "2.1",
+  "objects": [
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--22222222-2222-2222-2222-222222222222",
+      "created": "2026-01-01T00:00:00Z",
+      "modified": "2026-01-01T00:00:00Z",
+      "name": "Example malicious domain",
+      "indicator_types": [
+        "malicious-activity"
+      ],
+      "pattern_type": "stix",
+      "pattern": "[domain-name:value = 'evil.example']",
+      "valid_from": "2026-01-01T00:00:00Z",
+      "confidence": 70
+    },
+    {
+      "type": "note",
+      "spec_version": "2.1",
+      "id": "note--33333333-3333-3333-3333-333333333333",
+      "created": "2026-01-01T00:00:00Z",
+      "modified": "2026-01-01T00:00:00Z",
+      "content": "Analyst observation from external CTI feed.",
+      "abstract": "external-observation"
+    }
+  ]
+}

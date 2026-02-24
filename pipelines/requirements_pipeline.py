@@ -7,6 +7,9 @@ from typing import Callable
 import httpx
 from fastapi import HTTPException
 
+from services.llm_schema_service import parse_ollama_json_object
+from services.prompt_templates import with_template_header
+
 
 def ollama_generate_requirements(
     actor_name: str,
@@ -30,7 +33,7 @@ def ollama_generate_requirements(
         }
         for row in evidence_rows[:10]
     ]
-    prompt = (
+    prompt = with_template_header(
         'You generate cybersecurity intelligence requirements for analysts. '
         'Return ONLY strict JSON: {"requirements":[{'
         '"req_type":"PIR|GIR|IR","requirement_text":"...","rationale":"...",'
@@ -49,8 +52,7 @@ def ollama_generate_requirements(
     try:
         response = httpx.post(f'{base_url}/api/generate', json=payload, timeout=30.0)
         response.raise_for_status()
-        content = response.json().get('response', '{}')
-        parsed = json.loads(content)
+        parsed = parse_ollama_json_object(response.json())
         reqs = parsed.get('requirements', []) if isinstance(parsed, dict) else []
         cleaned: list[dict[str, str]] = []
         for item in reqs:

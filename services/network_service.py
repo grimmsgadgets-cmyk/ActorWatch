@@ -14,6 +14,7 @@ def validate_outbound_url_core(
     _outbound_allowed_domains = deps['outbound_allowed_domains']
     _resolve_host = deps.get('resolve_host', socket.getaddrinfo)
     _ipproto_tcp = int(deps.get('ipproto_tcp', socket.IPPROTO_TCP))
+    _allow_http = bool(deps.get('allow_http', False))
 
     effective_allowlist = _outbound_allowed_domains if allowed_domains is None else allowed_domains
     return validate_outbound_url(
@@ -21,6 +22,7 @@ def validate_outbound_url_core(
         allowed_domains=effective_allowlist,
         resolve_host=_resolve_host,
         ipproto_tcp=_ipproto_tcp,
+        allow_http=_allow_http,
     )
 
 

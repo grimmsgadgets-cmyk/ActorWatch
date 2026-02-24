@@ -29,6 +29,7 @@ pip-wheel-metadata/
 *.tmp
 *.swp
 *.swo
+actor_notebook.db
 
 # IDE/editor files
 .vscode/
@@ -38,3 +39,12 @@ pip-wheel-metadata/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local Codex skills/workflow helpers
+skills/
+
+# Private strategy/legal drafts pending human review
+docs/drafts/edition-boundary-charter.md
+docs/drafts/edition-matrix.md
+docs/drafts/contributing-commercial-use-policy.md
+docs/drafts/trust-rationale.md

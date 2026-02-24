@@ -18,14 +18,14 @@ def test_expected_output_line_for_lateral_movement():
     text = priority_questions.expected_output_line(
         'Are RDP and SMB pivots increasing between internal hosts?'
     )
-    assert 'Record lateral movement delta' in text
-    assert 'confidence shift' in text
+    assert text.startswith('Outcome: confirm true lateral movement')
+    assert 'identify accounts/hosts to contain' in text
 
 
 def test_expected_output_line_default_shape():
     text = priority_questions.expected_output_line('General anomaly check question')
-    assert text.startswith('Record the observed delta versus prior review')
-    assert 'source links' in text
+    assert text.startswith('Outcome: decide if activity is benign or malicious')
+    assert 'contain, monitor, or close' in text
 
 
 def test_priority_next_best_action_windows_execution_is_specific():

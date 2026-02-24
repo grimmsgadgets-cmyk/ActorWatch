@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IOC Hunt Queries</title>
+    <style>
+      body { margin: 0; padding: 16px; font-family: Arial, sans-serif; background: #f7f7f7; color: #111; }
+      .wrap { max-width: 1080px; margin: 0 auto; }
+      .top { margin-bottom: 12px; }
+      .muted { color: #475569; font-size: 12px; }
+      .notice { background: #fff7d6; border: 1px solid #ead48f; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+      .card { background: #fff; border: 1px solid #d9e2ef; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+      .badge { display: inline-block; border: 1px solid #9db2d3; border-radius: 999px; font-size: 11px; padding: 2px 8px; margin-right: 6px; background: #eef4ff; }
+      .query { background: #f8fbff; border: 1px solid #d8e1ef; border-radius: 8px; padding: 10px; margin: 8px 0; }
+      pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px; }
+      a { color: #2255aa; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <a href="/?actor_id={{ actor_id }}">← Back to dashboard</a>
+        <h1>IOC Hunt Queries: {{ actor_name }}</h1>
+        <div class="muted">Queries are generated from actor evidence and IOC context only.</div>
+        <div class="muted">Dialect: {{ environment_profile.query_dialect }} | Time window: {{ environment_profile.default_time_window_hours }}h</div>
+      </div>
+
+      {% if reason %}
+      <div class="notice">{{ reason }}</div>
+      {% endif %}
+      {% if not ollama_status.available %}
+      <div class="notice">Ollama is offline. Bring it online to generate evidence-backed hunt queries.</div>
+      {% endif %}
+
+      {% if cards %}
+      {% for card in cards %}
+      <div class="card">
+        <h3>{{ card.title }}</h3>
+        <div>
+          {% for ioc in card.iocs %}
+          <span class="badge">{{ ioc.ioc_type }}</span>{{ ioc.ioc_value }}{% if ioc.source_ref %} ({{ ioc.source_ref }}){% endif %}{% if not loop.last %} | {% endif %}
+          {% endfor %}
+        </div>
+
+        {% if card.queries %}
+          {% for query in card.queries %}
+          <div class="query">
+            <div><strong>Platform:</strong> {{ query.platform }}</div>
+            <div><strong>IOC:</strong> {{ query.ioc_value }}</div>
+            {% if query.why_this_query %}<div><strong>Why:</strong> {{ query.why_this_query }}</div>{% endif %}
+            <pre>{{ query.query }}</pre>
+            <div class="muted">Query id: {{ query.query_id }} | Feedback score: {{ query.feedback_score }} ({{ query.feedback_votes }} votes)</div>
+            {% if query.evidence_sources %}
+            <div class="muted" style="margin-top:8px;"><strong>Evidence refs:</strong></div>
+            <ul>
+              {% for ref in query.evidence_sources %}
+              <li>
+                {% if ref.source_url %}<a href="{{ ref.source_url }}" target="_blank" rel="noreferrer">{{ ref.source_title or ref.id }}</a>{% else %}{{ ref.source_title or ref.id }}{% endif %}
+                {% if ref.source_date %}<span class="muted"> ({{ ref.source_date }})</span>{% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+          {% endfor %}
+        {% else %}
+        <p class="muted">No validated IOC hunt queries were generated for this check.</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+      {% else %}
+      <div class="card">No quick checks with IOC + evidence context are available yet.</div>
+      {% endif %}
+    </div>
+  </body>
+</html>

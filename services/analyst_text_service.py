@@ -1,6 +1,9 @@
 import json
 from datetime import datetime, timezone
 
+from services.llm_schema_service import normalize_string_list, parse_ollama_json_object
+from services.prompt_templates import with_template_header
+
 
 def sentence_mentions_actor_core(sentence: str, actor_name: str, *, deps: dict[str, object]) -> bool:
     _re_findall = deps['re_findall']
@@ -84,12 +87,25 @@ def ollama_generate_questions_core(
     _http_post = deps['http_post']
     _sanitize_question_text = deps['sanitize_question_text']
 
+    def _fallback_questions() -> list[str]:
+        fallback: list[str] = []
+        for excerpt in excerpts[:6]:
+            cleaned = ' '.join(str(excerpt).split()).strip()
+            if not cleaned:
+                continue
+            candidate = _sanitize_question_text(f'What should we verify next based on: {cleaned[:120]}?')
+            if candidate and candidate not in fallback:
+                fallback.append(candidate)
+            if len(fallback) >= 4:
+                break
+        return fallback
+
     if not excerpts or not _ollama_available():
-        return []
+        return _fallback_questions()
 
     model = _get_env('OLLAMA_MODEL', 'llama3.1:8b')
     base_url = _get_env('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
-    prompt = (
+    prompt = with_template_header(
         'You are helping a cybersecurity analyst write practical intelligence questions. '
         'Return ONLY valid JSON with key "questions" as an array of short plain-language strings. '
         'Avoid military and intelligence-jargon phrasing. '
@@ -108,18 +124,17 @@ def ollama_generate_questions_core(
     try:
         response = _http_post(f'{base_url}/api/generate', json=payload, timeout=20.0)
         response.raise_for_status()
-        content = response.json().get('response', '{}')
-        parsed = json.loads(content)
+        parsed = parse_ollama_json_object(response.json())
         questions = parsed.get('questions', []) if isinstance(parsed, dict) else []
+        strict_questions = normalize_string_list(questions, max_items=6, max_len=220)
         clean = [
-            _sanitize_question_text(str(item))
-            for item in questions
-            if isinstance(item, str) and str(item).strip()
+            _sanitize_question_text(item)
+            for item in strict_questions
         ]
         clean = [item for item in clean if item]
-        return clean[:6]
+        return clean[:6] if clean else _fallback_questions()
     except Exception:
-        return []
+        return _fallback_questions()
 
 
 def ollama_review_change_signals_core(
@@ -215,7 +230,7 @@ def ollama_review_change_signals_core(
     model = _get_env('OLLAMA_MODEL', 'llama3.1:8b')
     base_url = _get_env('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
 
-    prompt = (
+    prompt = with_template_header(
         'You are a CTI analyst assistant. Identify ONLY genuinely new changes for this actor. '
         'A "change" means new technique/tactic, target shift, tooling/infrastructure shift, '
         'or material operational shift vs older baseline. '
@@ -244,8 +259,7 @@ def ollama_review_change_signals_core(
     try:
         response = _http_post(f'{base_url}/api/generate', json=payload, timeout=25.0)
         response.raise_for_status()
-        content = response.json().get('response', '{}')
-        parsed = json.loads(content)
+        parsed = parse_ollama_json_object(response.json())
     except Exception:
         return []
 

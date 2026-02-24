@@ -82,6 +82,9 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
             'build_environment_checks': deps['build_environment_checks'],
             'build_notebook_kpis': deps['build_notebook_kpis'],
             'format_date_or_unknown': deps['format_date_or_unknown'],
+            'load_source_reliability_map': deps.get('load_source_reliability_map'),
+            'domain_from_url': deps.get('domain_from_url'),
+            'confidence_weight_adjustment': deps.get('confidence_weight_adjustment'),
             'load_quick_check_overrides': deps.get('load_quick_check_overrides'),
         },
     )

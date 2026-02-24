@@ -1,4 +1,24 @@
 def ensure_schema(connection) -> None:
+    schema_version = '2026-02-24.1'
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        INSERT INTO schema_meta (key, value, updated_at)
+        VALUES ('schema_version', ?, datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        ''',
+        (schema_version,),
+    )
     connection.execute(
         '''
         CREATE TABLE IF NOT EXISTS actor_profiles (
@@ -256,9 +276,120 @@ def ensure_schema(connection) -> None:
             actor_id TEXT NOT NULL,
             ioc_type TEXT NOT NULL,
             ioc_value TEXT NOT NULL,
+            normalized_value TEXT,
+            validation_status TEXT NOT NULL DEFAULT 'unvalidated',
+            validation_reason TEXT NOT NULL DEFAULT '',
+            confidence_score INTEGER NOT NULL DEFAULT 0,
+            source_id TEXT,
             source_ref TEXT,
+            extraction_method TEXT NOT NULL DEFAULT 'manual',
+            lifecycle_status TEXT NOT NULL DEFAULT 'active',
+            handling_tlp TEXT NOT NULL DEFAULT 'TLP:CLEAR',
+            first_seen_at TEXT,
+            last_seen_at TEXT,
+            seen_count INTEGER NOT NULL DEFAULT 1,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT,
             created_at TEXT NOT NULL
         )
+        '''
+    )
+    ioc_cols = connection.execute('PRAGMA table_info(ioc_items)').fetchall()
+    if not any(col[1] == 'normalized_value' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN normalized_value TEXT")
+    if not any(col[1] == 'validation_status' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN validation_status TEXT NOT NULL DEFAULT 'unvalidated'")
+    if not any(col[1] == 'validation_reason' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN validation_reason TEXT NOT NULL DEFAULT ''")
+    if not any(col[1] == 'confidence_score' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN confidence_score INTEGER NOT NULL DEFAULT 0")
+    if not any(col[1] == 'source_id' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN source_id TEXT")
+    if not any(col[1] == 'extraction_method' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN extraction_method TEXT NOT NULL DEFAULT 'manual'")
+    if not any(col[1] == 'lifecycle_status' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'")
+    if not any(col[1] == 'handling_tlp' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN handling_tlp TEXT NOT NULL DEFAULT 'TLP:CLEAR'")
+    if not any(col[1] == 'first_seen_at' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN first_seen_at TEXT")
+    if not any(col[1] == 'last_seen_at' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN last_seen_at TEXT")
+    if not any(col[1] == 'seen_count' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 1")
+    if not any(col[1] == 'is_active' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+    if not any(col[1] == 'updated_at' for col in ioc_cols):
+        connection.execute("ALTER TABLE ioc_items ADD COLUMN updated_at TEXT")
+    connection.execute(
+        '''
+        UPDATE ioc_items
+        SET
+            ioc_type = LOWER(TRIM(ioc_type)),
+            normalized_value = COALESCE(NULLIF(normalized_value, ''), LOWER(TRIM(ioc_value))),
+            validation_status = CASE
+                WHEN TRIM(COALESCE(validation_status, '')) = '' THEN 'unvalidated'
+                ELSE validation_status
+            END,
+            first_seen_at = COALESCE(first_seen_at, created_at),
+            last_seen_at = COALESCE(last_seen_at, created_at),
+            updated_at = COALESCE(updated_at, created_at),
+            seen_count = CASE WHEN seen_count IS NULL OR seen_count < 1 THEN 1 ELSE seen_count END,
+            lifecycle_status = CASE
+                WHEN LOWER(TRIM(COALESCE(lifecycle_status, ''))) IN ('active', 'monitor', 'superseded', 'revoked', 'false_positive')
+                    THEN LOWER(TRIM(lifecycle_status))
+                ELSE 'active'
+            END,
+            handling_tlp = CASE
+                WHEN UPPER(TRIM(COALESCE(handling_tlp, ''))) IN ('TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED')
+                    THEN UPPER(TRIM(handling_tlp))
+                ELSE 'TLP:CLEAR'
+            END
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ioc_items_actor_type_normalized
+        ON ioc_items(actor_id, ioc_type, normalized_value)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_ioc_items_actor_last_seen
+        ON ioc_items(actor_id, last_seen_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS ioc_history (
+            id TEXT PRIMARY KEY,
+            ioc_item_id TEXT NOT NULL,
+            actor_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            ioc_type TEXT NOT NULL,
+            ioc_value TEXT NOT NULL,
+            normalized_value TEXT NOT NULL,
+            validation_status TEXT NOT NULL,
+            validation_reason TEXT NOT NULL DEFAULT '',
+            confidence_score INTEGER NOT NULL DEFAULT 0,
+            source_id TEXT,
+            source_ref TEXT,
+            extraction_method TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL DEFAULT 'active',
+            handling_tlp TEXT NOT NULL DEFAULT 'TLP:CLEAR',
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    ioc_history_cols = connection.execute('PRAGMA table_info(ioc_history)').fetchall()
+    if not any(col[1] == 'lifecycle_status' for col in ioc_history_cols):
+        connection.execute("ALTER TABLE ioc_history ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'")
+    if not any(col[1] == 'handling_tlp' for col in ioc_history_cols):
+        connection.execute("ALTER TABLE ioc_history ADD COLUMN handling_tlp TEXT NOT NULL DEFAULT 'TLP:CLEAR'")
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_ioc_history_actor_created
+        ON ioc_history(actor_id, created_at DESC)
         '''
     )
     connection.execute(
@@ -338,6 +469,58 @@ def ensure_schema(connection) -> None:
         '''
         CREATE INDEX IF NOT EXISTS idx_observation_history_actor_item_updated
         ON analyst_observation_history(actor_id, item_type, item_key, updated_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS analyst_feedback_events (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            feedback_label TEXT NOT NULL,
+            rating_score INTEGER NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            source_id TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_feedback_actor_type_item_created
+        ON analyst_feedback_events(actor_id, item_type, item_id, created_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_environment_profiles (
+            actor_id TEXT PRIMARY KEY,
+            query_dialect TEXT NOT NULL DEFAULT 'generic',
+            field_mapping_json TEXT NOT NULL DEFAULT '{}',
+            default_time_window_hours INTEGER NOT NULL DEFAULT 24,
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS source_reliability (
+            actor_id TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            helpful_count INTEGER NOT NULL DEFAULT 0,
+            unhelpful_count INTEGER NOT NULL DEFAULT 0,
+            reliability_score REAL NOT NULL DEFAULT 0.5,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (actor_id, domain)
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_source_reliability_actor_score
+        ON source_reliability(actor_id, reliability_score DESC)
         '''
     )
     connection.commit()

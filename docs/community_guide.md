@@ -48,3 +48,18 @@
 5. Export analyst pack:
    - UI quick action: `Export analyst pack`
    - API endpoint uses same backend payload
+
+6. STIX interoperability:
+   - Export actor STIX bundle: `GET /actors/{actor_id}/stix/export`
+   - Import STIX bundle: `POST /actors/{actor_id}/stix/import`
+
+7. Learning controls:
+   - Environment profile: `GET/POST /actors/{actor_id}/environment-profile`
+   - Feedback capture: `POST /actors/{actor_id}/feedback`
+   - Feedback summary: `GET /actors/{actor_id}/feedback/summary`
+
+## Security Note
+
+- Community Edition is local-first.
+- If deploying beyond localhost, add external access controls (for example VPN or reverse-proxy auth).
+- See `SECURITY.md` for security and disclosure guidance.

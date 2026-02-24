@@ -1,5 +1,8 @@
 import json
 
+from services.llm_schema_service import parse_ollama_json_object
+from services.prompt_templates import with_template_header
+
 
 def generate_quick_check_overrides_core(
     actor_name: str,
@@ -34,16 +37,17 @@ def generate_quick_check_overrides_core(
     model = _get_env('OLLAMA_MODEL', 'llama3.1:8b')
     base_url = _get_env('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
     timeout_seconds = max(2.0, float(_get_env('QUICK_CHECK_OLLAMA_TIMEOUT_SECONDS', '6')))
-    prompt = (
+    prompt = with_template_header(
         'You are writing SOC quick-check cards for junior analysts. '
         'Return ONLY valid JSON with schema: '
         '{"items":[{"id":"...","first_step":"...","what_to_look_for":"...","expected_output":"..."}]}. '
         'Rules: '
         '1) Keep each field short and operational (<= 180 chars). '
         '2) first_step must be concrete and tool-specific (what to open, time window, and filter focus). '
-        '3) what_to_look_for must list the exact signal pattern. '
-        '4) expected_output must specify what to record and include confidence shift. '
+        '3) what_to_look_for must list exact observable patterns (event IDs, command flags, domains, IPs, process names). '
+        '4) expected_output must define the decision outcome (confirm malicious, contain now, monitor, or close). '
         '5) Use only ids provided in input. '
+        '6) Avoid senior CTI terms like "delta", "confidence shift", "tradecraft", or "business effect". '
         f'Actor: {actor_name}. '
         f'Cards: {json.dumps(prepared_cards)}.'
     )
@@ -57,8 +61,7 @@ def generate_quick_check_overrides_core(
     try:
         response = _http_post(f'{base_url}/api/generate', json=payload, timeout=timeout_seconds)
         response.raise_for_status()
-        content = response.json().get('response', '{}')
-        parsed = json.loads(content)
+        parsed = parse_ollama_json_object(response.json())
     except Exception:
         return {}
 
