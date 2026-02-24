@@ -38,6 +38,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
                 'run_actor_generation': deps['run_actor_generation'],
                 'enqueue_actor_generation': deps['enqueue_actor_generation'],
+                'metrics_snapshot': deps.get('metrics_snapshot'),
             }
         )
     )
@@ -68,6 +69,10 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'upsert_source_for_actor': deps['upsert_source_for_actor'],
                 'import_default_feeds_for_actor': deps['import_default_feeds_for_actor'],
                 'parse_ioc_values': deps['parse_ioc_values'],
+                'validate_ioc_candidate': deps['validate_ioc_candidate'],
+                'upsert_ioc_item': deps['upsert_ioc_item'],
+                'export_actor_stix_bundle': deps['export_actor_stix_bundle'],
+                'import_actor_stix_bundle': deps['import_actor_stix_bundle'],
                 'utc_now_iso': deps['utc_now_iso'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
                 'get_actor_refresh_stats': deps['get_actor_refresh_stats'],
@@ -89,6 +94,14 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'fetch_actor_notebook': deps['fetch_actor_notebook'],
                 'templates': deps['templates'],
                 'actor_exists': deps['actor_exists'],
+                'generate_ioc_hunt_queries': deps['generate_ioc_hunt_queries'],
+                'get_ollama_status': deps['get_ollama_status'],
+                'store_feedback_event': deps['store_feedback_event'],
+                'feedback_summary_for_actor': deps['feedback_summary_for_actor'],
+                'normalize_environment_profile': deps['normalize_environment_profile'],
+                'upsert_environment_profile': deps['upsert_environment_profile'],
+                'load_environment_profile': deps['load_environment_profile'],
+                'apply_feedback_to_source_domains': deps['apply_feedback_to_source_domains'],
             }
         )
     )

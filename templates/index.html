@@ -265,6 +265,14 @@
       .sidebar-card { margin-top: 12px; }
       .sidebar-card h3 { margin: 0 0 8px; }
       .sidebar-card small { display: block; opacity: 0.9; margin-bottom: 8px; line-height: 1.35; }
+      .learning-grid { display: grid; gap: 6px; }
+      .learning-grid label { font-size: 12px; opacity: 0.95; }
+      .learning-status { font-size: 11px; color: #c6d4ea; min-height: 14px; }
+      .feedback-actions { display: flex; gap: 6px; margin-top: 6px; }
+      .feedback-actions button { padding: 4px 8px; font-size: 12px; border-radius: 6px; border: 1px solid #cdd8ea; cursor: pointer; }
+      .feedback-actions .positive { background: #eaf9ef; border-color: #9fd2ac; }
+      .feedback-actions .negative { background: #fff2ef; border-color: #e3b0a7; }
+      .feedback-status { font-size: 11px; color: #475569; margin-left: 6px; }
       .sidebar details.compact { background: #2b3445; border: 1px solid #3d4658; color: #fff; }
       .sidebar details.compact > summary { list-style: none; }
       .sidebar details.compact > summary::-webkit-details-marker { display: none; }
@@ -394,14 +402,6 @@
       .review-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
       .review-actions button { background: #fff; }
       .review-meta { font-size: 11px; color: #475569; }
-      .cmdk-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.35); display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; z-index: 60; }
-      .cmdk-overlay.open { display: flex; }
-      .cmdk-panel { width: min(640px, 92vw); border: 1px solid #b9cae7; border-radius: 10px; background: #fff; box-shadow: 0 16px 48px rgba(15, 23, 42, 0.2); overflow: hidden; }
-      .cmdk-input { width: 100%; box-sizing: border-box; border: 0; border-bottom: 1px solid #e4ebf7; padding: 12px; font-size: 14px; }
-      .cmdk-list { max-height: 320px; overflow-y: auto; }
-      .cmdk-item { width: 100%; text-align: left; border: 0; background: #fff; border-bottom: 1px solid #eef3fb; padding: 10px 12px; cursor: pointer; font-size: 13px; color: #1f2937; }
-      .cmdk-item.active, .cmdk-item:hover { background: #f2f7ff; }
-      .cmdk-empty { padding: 12px; font-size: 12px; color: #64748b; }
       .live-controls { display: inline-flex; gap: 6px; align-items: center; }
       .live-controls button { border: 1px solid #c7d4ea; background: #fff; border-radius: 999px; font-size: 11px; padding: 4px 8px; cursor: pointer; }
       .ops-health { border: 1px solid #d9e7fb; border-radius: 8px; background: #f7fbff; padding: 8px; margin-top: 8px; }
@@ -534,6 +534,13 @@
                 <option value="email">Email</option>
                 <option value="indicator" selected>Indicator</option>
               </select>
+              <select name="handling_tlp">
+                <option value="TLP:CLEAR" selected>TLP:CLEAR</option>
+                <option value="TLP:GREEN">TLP:GREEN</option>
+                <option value="TLP:AMBER">TLP:AMBER</option>
+                <option value="TLP:AMBER+STRICT">TLP:AMBER+STRICT</option>
+                <option value="TLP:RED">TLP:RED</option>
+              </select>
               <input type="text" name="source_ref" placeholder="Source reference (optional)" />
               <textarea name="ioc_values" rows="4" placeholder="One IOC per line or comma-separated" required></textarea>
               <button type="submit">Save IOCs</button>
@@ -558,9 +565,37 @@
           {% endif %}
         </div>
 
+        <div class="sidebar-card" id="section-learning">
+          <h3>Learning controls</h3>
+          <small>Tune hunt query style to your environment and rate quick checks.</small>
+          <div class="learning-grid">
+            <label for="env-query-dialect">Query dialect</label>
+            <select id="env-query-dialect">
+              <option value="generic">Generic</option>
+              <option value="kql">KQL</option>
+              <option value="spl">SPL</option>
+              <option value="eql">EQL</option>
+            </select>
+            <label for="env-time-window">Default time window (hours)</label>
+            <input id="env-time-window" type="number" min="1" max="720" value="24" />
+            <button type="button" id="env-profile-save">Save learning profile</button>
+            <div id="env-profile-status" class="learning-status"></div>
+          </div>
+        </div>
+
         <div class="sidebar-card" id="section-history-left">
           <h3>Notes and history</h3>
           <small>Keep one short running note, then review/export changes over time.</small>
+          <details class="compact" style="margin-top:8px;">
+            <summary>Analyst note best practices</summary>
+            <div class="section-body">
+              <div><strong>Use this format:</strong> observation -> evidence -> action.</div>
+              <div><strong>Observation:</strong> what you saw (specific event, host, user, IOC).</div>
+              <div><strong>Evidence:</strong> one source link or log reference that supports it.</div>
+              <div><strong>Action:</strong> contain, monitor, escalate, or close.</div>
+              <div><strong>Avoid:</strong> long narratives, assumptions without evidence, and duplicate notes.</div>
+            </div>
+          </details>
           <div class="interactive-panel" data-observation-item-type="actor" data-observation-item-key="summary">
             <div class="obs-row">
               <div>
@@ -779,7 +814,11 @@
         <section class="card span-2 decision-queue" data-step="action" id="section-nextchecks">
           <div class="decision-header">
             <h2 class="section-title" style="margin:0;">Quick checks<span class="role-chip">Do next</span></h2>
-            <a href="/actors/{{ notebook.actor.id }}/questions">Open workspace</a>
+            <div>
+              <a href="/actors/{{ notebook.actor.id }}/questions">Open workspace</a>
+              <span> | </span>
+              <a href="/actors/{{ notebook.actor.id }}/hunts/iocs">IOC hunt queries</a>
+            </div>
           </div>
           <div class="dq-list">
             {% for question in notebook.priority_questions[:3] %}
@@ -791,7 +830,13 @@
               <div class="dq-detail">
                 <div class="dq-line"><strong>Where to start:</strong> {{ question.first_step or question.telemetry_anchor }}</div>
                 <div class="dq-line"><strong>What to watch:</strong> {{ question.what_to_look_for or question.success_condition or question.decision_trigger }}</div>
-                <div class="dq-line"><strong>What to note:</strong> {{ question.expected_output }}</div>
+                <div class="dq-line"><strong>Decision outcome:</strong> {{ question.expected_output }}</div>
+                <div class="dq-line"><a href="/actors/{{ notebook.actor.id }}/hunts/iocs?thread_id={{ question.id }}">Open IOC hunt queries for this check</a></div>
+                <div class="feedback-actions">
+                  <button type="button" class="question-feedback-btn positive" data-thread-id="{{ question.id }}" data-feedback="useful">Useful</button>
+                  <button type="button" class="question-feedback-btn negative" data-thread-id="{{ question.id }}" data-feedback="not_useful">Not useful</button>
+                  <span class="feedback-status" id="feedback-status-{{ question.id }}"></span>
+                </div>
                 {% if question.related_iocs %}
                 <div class="dq-line">
                   <strong>Relevant IOCs:</strong>
@@ -971,7 +1016,28 @@
             <summary>Recent IOCs</summary>
             <div class="section-body">
               {% for ioc in notebook.ioc_items[:20] %}
-              <div><span class="badge">{{ ioc.ioc_type }}</span> {{ ioc.ioc_value }}{% if ioc.source_ref %} ({{ ioc.source_ref }}){% endif %}</div>
+              <div style="margin-bottom:6px;">
+                <div><span class="badge">{{ ioc.ioc_type }}</span> {{ ioc.ioc_value }}{% if ioc.source_ref %} ({{ ioc.source_ref }}){% endif %}</div>
+                <div><small>Status: {{ ioc.lifecycle_status or 'active' }} | TLP: {{ ioc.handling_tlp or 'TLP:CLEAR' }} | Seen: {{ ioc.seen_count or 1 }} | Last seen: {{ ioc.last_seen_at or ioc.created_at or 'unknown' }}</small></div>
+                <form method="post" action="/actors/{{ notebook.actor.id }}/iocs/{{ ioc.id }}/status" style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
+                  <select name="lifecycle_status">
+                    <option value="active" {% if (ioc.lifecycle_status or '') == 'active' %}selected{% endif %}>active</option>
+                    <option value="monitor" {% if (ioc.lifecycle_status or '') == 'monitor' %}selected{% endif %}>monitor</option>
+                    <option value="superseded" {% if (ioc.lifecycle_status or '') == 'superseded' %}selected{% endif %}>superseded</option>
+                    <option value="revoked" {% if (ioc.lifecycle_status or '') == 'revoked' %}selected{% endif %}>revoked</option>
+                    <option value="false_positive" {% if (ioc.lifecycle_status or '') == 'false_positive' %}selected{% endif %}>false_positive</option>
+                  </select>
+                  <select name="handling_tlp">
+                    <option value="TLP:CLEAR" {% if (ioc.handling_tlp or 'TLP:CLEAR') == 'TLP:CLEAR' %}selected{% endif %}>TLP:CLEAR</option>
+                    <option value="TLP:GREEN" {% if (ioc.handling_tlp or '') == 'TLP:GREEN' %}selected{% endif %}>TLP:GREEN</option>
+                    <option value="TLP:AMBER" {% if (ioc.handling_tlp or '') == 'TLP:AMBER' %}selected{% endif %}>TLP:AMBER</option>
+                    <option value="TLP:AMBER+STRICT" {% if (ioc.handling_tlp or '') == 'TLP:AMBER+STRICT' %}selected{% endif %}>TLP:AMBER+STRICT</option>
+                    <option value="TLP:RED" {% if (ioc.handling_tlp or '') == 'TLP:RED' %}selected{% endif %}>TLP:RED</option>
+                  </select>
+                  <input type="text" name="status_reason" placeholder="reason (optional)" />
+                  <button type="submit">Update</button>
+                </form>
+              </div>
               {% endfor %}
             </div>
           </details>
@@ -980,12 +1046,6 @@
         </div>
         {% endif %}
       </main>
-    </div>
-    <div id="cmdk-overlay" class="cmdk-overlay" aria-hidden="true">
-      <div class="cmdk-panel">
-        <input id="cmdk-input" class="cmdk-input" type="text" placeholder="Jump to section or run action..." />
-        <div id="cmdk-list" class="cmdk-list"></div>
-      </div>
     </div>
     <script src="/static/actor_autocomplete.js" defer></script>
     {% if notebook %}

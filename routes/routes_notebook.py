@@ -1,4 +1,3 @@
-import html
 import io
 import sqlite3
 import uuid
@@ -22,6 +21,14 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
     _fetch_actor_notebook = deps['fetch_actor_notebook']
     _templates = deps['templates']
     _actor_exists = deps['actor_exists']
+    _generate_ioc_hunt_queries = deps['generate_ioc_hunt_queries']
+    _get_ollama_status = deps['get_ollama_status']
+    _store_feedback_event = deps['store_feedback_event']
+    _feedback_summary_for_actor = deps['feedback_summary_for_actor']
+    _normalize_environment_profile = deps['normalize_environment_profile']
+    _upsert_environment_profile = deps['upsert_environment_profile']
+    _load_environment_profile = deps['load_environment_profile']
+    _apply_feedback_to_source_domains = deps['apply_feedback_to_source_domains']
 
     def _upsert_observation_with_history(
         connection: sqlite3.Connection,
@@ -226,7 +233,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         return RedirectResponse(url=f'/?actor_id={actor_id or db_actor_id}', status_code=303)
 
     @router.get(route_paths.ACTOR_TIMELINE_DETAILS, response_class=HTMLResponse)
-    def actor_timeline_details(actor_id: str) -> HTMLResponse:
+    def actor_timeline_details(request: Request, actor_id: str, limit: int = 300, offset: int = 0) -> HTMLResponse:
+        safe_limit = max(1, min(1000, int(limit)))
+        safe_offset = max(0, int(offset))
         with sqlite3.connect(_db_path()) as connection:
             actor_row = connection.execute(
                 'SELECT id, display_name FROM actor_profiles WHERE id = ?',
@@ -244,17 +253,27 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 LEFT JOIN sources s ON s.id = te.source_id
                 WHERE te.actor_id = ?
                 ORDER BY te.occurred_at DESC
+                LIMIT ? OFFSET ?
                 ''',
-                (actor_id,),
+                (actor_id, safe_limit, safe_offset),
             ).fetchall()
 
         detail_rows: list[dict[str, object]] = []
         for row in rows:
+            event_title = str(row[2] or row[9] or row[3] or '').strip()
+            if event_title.startswith(('http://', 'https://')):
+                event_title = str(row[3] or row[2] or 'Untitled report').strip()
+            if 'who/what/when/where/how' in event_title.lower():
+                fallback_title = str(row[2] or '').strip()
+                if fallback_title and 'who/what/when/where/how' not in fallback_title.lower():
+                    event_title = fallback_title
+                else:
+                    event_title = 'Ransomware disclosure and targeting update'
             detail_rows.append(
                 {
                     'occurred_at': row[0],
                     'category': str(row[1]).replace('_', ' '),
-                    'title': row[2],
+                    'title': event_title,
                     'summary': row[3],
                     'target_text': row[4] or '',
                     'ttp_ids': _safe_json_string_list(row[5]),
@@ -264,68 +283,17 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     'source_title': row[9] or row[10] or row[11] or row[12] or '',
                 }
             )
-
-        content = ['<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">']
-        content.append('<title>Timeline Details</title>')
-        content.append(
-            '<style>'
-            'body{font-family:Arial,sans-serif;background:#f7f7f7;color:#111;margin:0;padding:16px;}'
-            '.wrap{max-width:980px;margin:0 auto;}'
-            '.top{margin-bottom:12px;}'
-            '.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:10px;margin-bottom:10px;}'
-            '.meta{font-size:12px;color:#334155;margin:4px 0 8px;}'
-            '.summary{white-space:pre-line;}'
-            '.badge{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #888;font-size:12px;}'
-            '.muted{color:#4b5563;font-size:12px;}'
-            'a{color:#2255aa;text-decoration:none;}a:hover{text-decoration:underline;}'
-            '</style>'
+        return _templates.TemplateResponse(
+            request,
+            'timeline_details.html',
+            {
+                'actor_id': actor_id,
+                'actor_name': str(actor_row[1]),
+                'detail_rows': detail_rows,
+                'limit': safe_limit,
+                'offset': safe_offset,
+            },
         )
-        content.append('</head><body><div class="wrap">')
-        content.append(
-            f'<div class="top"><a href="/?actor_id={actor_id}">← Back to dashboard</a>'
-            f'<h1>Timeline Details: {html.escape(str(actor_row[1]))}</h1>'
-            f'<div class="muted">Full activity evidence view for this actor.</div></div>'
-        )
-
-        if not detail_rows:
-            content.append('<div class="card">No timeline entries yet.</div>')
-        else:
-            for item in detail_rows:
-                ttp_text = ', '.join(item['ttp_ids']) if item['ttp_ids'] else ''
-                source_block = ''
-                event_title = str(item.get('title') or item.get('source_title') or item.get('summary') or '').strip()
-                if event_title.startswith(('http://', 'https://')):
-                    event_title = str(item.get('summary') or item.get('title') or 'Untitled report').strip()
-                if 'who/what/when/where/how' in event_title.lower():
-                    fallback_title = str(item.get('title') or '').strip()
-                    if fallback_title and 'who/what/when/where/how' not in fallback_title.lower():
-                        event_title = fallback_title
-                    else:
-                        event_title = 'Ransomware disclosure and targeting update'
-                if item['source_url']:
-                    source_name = html.escape(str(item['source_name']) or str(item['source_url']))
-                    source_url = html.escape(str(item['source_url']))
-                    source_pub = html.escape(str(item['source_published_at'] or 'unknown'))
-                    source_block = (
-                        f'<div class="meta">Source: <a href="{source_url}" target="_blank" rel="noreferrer">{source_name}</a> '
-                        f'| Published: {source_pub}</div>'
-                    )
-                content.append('<div class="card">')
-                content.append(
-                    f'<div><span class="badge">{html.escape(str(item["category"]))}</span> '
-                    f'<span class="muted">{html.escape(str(item["occurred_at"]))}</span></div>'
-                )
-                content.append(f'<h3>{html.escape(event_title)}</h3>')
-                content.append(f'<div class="summary">{html.escape(str(item["summary"]))}</div>')
-                if item['target_text']:
-                    content.append(f'<div class="meta"><strong>Target:</strong> {html.escape(str(item["target_text"]))}</div>')
-                if ttp_text:
-                    content.append(f'<div class="meta"><strong>Techniques:</strong> {html.escape(ttp_text)}</div>')
-                content.append(source_block)
-                content.append('</div>')
-
-        content.append('</div></body></html>')
-        return HTMLResponse(''.join(content))
 
     @router.get(route_paths.ACTOR_QUESTIONS_WORKSPACE, response_class=HTMLResponse)
     def actor_questions_workspace(
@@ -349,6 +317,251 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 'notebook': notebook,
             },
         )
+
+    @router.get(route_paths.ACTOR_IOC_HUNT_QUERIES, response_class=HTMLResponse)
+    def actor_ioc_hunt_queries(
+        request: Request,
+        actor_id: str,
+        thread_id: str | None = None,
+        source_tier: str | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
+    ) -> HTMLResponse:
+        notebook = _fetch_actor_notebook(
+            actor_id,
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        )
+        actor_meta = notebook.get('actor', {}) if isinstance(notebook, dict) else {}
+        actor_name = str(actor_meta.get('display_name') or actor_id)
+        cards_raw = notebook.get('priority_questions', []) if isinstance(notebook, dict) else []
+        cards_list = cards_raw if isinstance(cards_raw, list) else []
+        if thread_id:
+            cards_list = [card for card in cards_list if str(card.get('id') or '').strip() == thread_id]
+
+        cards_for_hunts: list[dict[str, object]] = []
+        environment_profile: dict[str, object] = {}
+        with sqlite3.connect(_db_path()) as connection:
+            environment_profile = _load_environment_profile(connection, actor_id=actor_id)
+            for card in cards_list:
+                if not isinstance(card, dict):
+                    continue
+                card_id = str(card.get('id') or '').strip()
+                if not card_id:
+                    continue
+                related_iocs_raw = card.get('related_iocs')
+                related_iocs = related_iocs_raw if isinstance(related_iocs_raw, list) else []
+                if not related_iocs:
+                    continue
+                evidence_rows = connection.execute(
+                    '''
+                    SELECT qu.source_id, qu.trigger_excerpt, s.url, s.title, s.headline, s.og_title, s.html_title, s.published_at
+                    FROM question_updates qu
+                    JOIN sources s ON s.id = qu.source_id
+                    WHERE qu.thread_id = ?
+                    ORDER BY qu.created_at DESC
+                    LIMIT 8
+                    ''',
+                    (card_id,),
+                ).fetchall()
+                evidence_items: list[dict[str, str]] = []
+                seen_evidence_ids: set[str] = set()
+                for row in evidence_rows:
+                    evidence_id = str(row[0] or '').strip()
+                    source_url = str(row[2] or '').strip()
+                    if not evidence_id or not source_url or evidence_id in seen_evidence_ids:
+                        continue
+                    seen_evidence_ids.add(evidence_id)
+                    evidence_items.append(
+                        {
+                            'id': evidence_id,
+                            'source_url': source_url,
+                            'source_title': str(row[3] or row[4] or row[5] or row[6] or source_url),
+                            'source_date': str(row[7] or ''),
+                            'excerpt': str(row[1] or '')[:320],
+                        }
+                    )
+
+                if not evidence_items:
+                    continue
+
+                cards_for_hunts.append(
+                    {
+                        'id': card_id,
+                        'quick_check_title': str(card.get('quick_check_title') or card.get('question_text') or ''),
+                        'question_text': str(card.get('question_text') or ''),
+                        'related_iocs': related_iocs[:8],
+                        'evidence': evidence_items[:10],
+                    }
+                )
+
+        hunt_payload = _generate_ioc_hunt_queries(
+            actor_name,
+            cards_for_hunts,
+            environment_profile=environment_profile,
+        )
+        hunt_by_card = hunt_payload.get('items_by_card', {}) if isinstance(hunt_payload, dict) else {}
+        reason = str(hunt_payload.get('reason') or '') if isinstance(hunt_payload, dict) else ''
+        ollama_status = _get_ollama_status()
+        card_views: list[dict[str, object]] = []
+        for card in cards_for_hunts:
+            card_id = str(card.get('id') or '')
+            evidence_items_raw = card.get('evidence')
+            evidence_items = evidence_items_raw if isinstance(evidence_items_raw, list) else []
+            evidence_lookup = {
+                str(item.get('id') or ''): item
+                for item in evidence_items
+                if isinstance(item, dict) and str(item.get('id') or '').strip()
+            }
+            query_items_raw = hunt_by_card.get(card_id, []) if isinstance(hunt_by_card, dict) else []
+            query_items = query_items_raw if isinstance(query_items_raw, list) else []
+            query_feedback_map: dict[str, dict[str, object]] = {}
+            with sqlite3.connect(_db_path()) as connection:
+                feedback_rows = connection.execute(
+                    '''
+                    SELECT item_id, COUNT(*), SUM(rating_score)
+                    FROM analyst_feedback_events
+                    WHERE actor_id = ? AND item_type = 'hunt_query'
+                    GROUP BY item_id
+                    ''',
+                    (actor_id,),
+                ).fetchall()
+                query_feedback_map = {
+                    str(row[0]): {
+                        'votes': int(row[1] or 0),
+                        'score': int(row[2] or 0),
+                    }
+                    for row in feedback_rows
+                }
+            for query_item in query_items:
+                if not isinstance(query_item, dict):
+                    continue
+                query_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{card_id}:{str(query_item.get('query') or '')}"))
+                query_item['query_id'] = query_id
+                query_feedback = query_feedback_map.get(query_id, {'votes': 0, 'score': 0})
+                query_item['feedback_votes'] = int(query_feedback.get('votes') or 0)
+                query_item['feedback_score'] = int(query_feedback.get('score') or 0)
+                refs_raw = query_item.get('evidence_source_ids')
+                refs = refs_raw if isinstance(refs_raw, list) else []
+                query_item['evidence_sources'] = [
+                    evidence_lookup.get(str(ref_id), {'id': str(ref_id), 'source_title': str(ref_id), 'source_url': '', 'source_date': ''})
+                    for ref_id in refs
+                ]
+            query_items = sorted(
+                query_items,
+                key=lambda item: (
+                    int(item.get('feedback_score') or 0),
+                    int(item.get('feedback_votes') or 0),
+                ),
+                reverse=True,
+            )
+            card_views.append(
+                {
+                    'id': card_id,
+                    'title': str(card.get('quick_check_title') or card.get('question_text') or ''),
+                    'iocs': card.get('related_iocs', []),
+                    'queries': query_items,
+                    'evidence': evidence_items,
+                }
+            )
+
+        return _templates.TemplateResponse(
+            request,
+            'ioc_hunts.html',
+            {
+                'actor_id': actor_id,
+                'actor_name': actor_name,
+                'cards': card_views,
+                'thread_id': thread_id or '',
+                'reason': reason,
+                'ollama_status': ollama_status,
+                'environment_profile': environment_profile,
+            },
+        )
+
+    @router.get(route_paths.ACTOR_ENVIRONMENT_PROFILE, response_class=JSONResponse)
+    def actor_environment_profile(actor_id: str) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            return _load_environment_profile(connection, actor_id=actor_id)
+
+    @router.post(route_paths.ACTOR_ENVIRONMENT_PROFILE, response_class=JSONResponse)
+    async def upsert_actor_environment_profile(actor_id: str, request: Request) -> dict[str, object]:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail='invalid profile payload')
+        profile = _normalize_environment_profile(payload)
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            response = _upsert_environment_profile(connection, actor_id=actor_id, profile=profile)
+            connection.commit()
+        return response
+
+    @router.post(route_paths.ACTOR_FEEDBACK, response_class=JSONResponse)
+    async def submit_feedback(actor_id: str, request: Request) -> dict[str, object]:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail='invalid feedback payload')
+        item_type = str(payload.get('item_type') or '').strip()
+        item_id = str(payload.get('item_id') or '').strip()
+        feedback_label = str(payload.get('feedback') or payload.get('feedback_label') or 'partial').strip()
+        reason = str(payload.get('reason') or '').strip()
+        source_id = str(payload.get('source_id') or '').strip() or None
+        metadata_raw = payload.get('metadata')
+        metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+        source_reliability_updates = 0
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            stored = _store_feedback_event(
+                connection,
+                actor_id=actor_id,
+                item_type=item_type,
+                item_id=item_id,
+                feedback_label=feedback_label,
+                reason=reason,
+                source_id=source_id,
+                metadata=metadata,
+            )
+            if not bool(stored.get('stored')):
+                raise HTTPException(status_code=400, detail=str(stored.get('reason') or 'failed to store feedback'))
+            evidence_ids_raw = metadata.get('evidence_source_ids')
+            evidence_ids = [str(item).strip() for item in evidence_ids_raw if str(item).strip()] if isinstance(evidence_ids_raw, list) else []
+            if evidence_ids:
+                placeholders = ','.join('?' for _ in evidence_ids)
+                rows = connection.execute(
+                    f'''
+                    SELECT url
+                    FROM sources
+                    WHERE actor_id = ? AND id IN ({placeholders})
+                    ''',
+                    (actor_id, *evidence_ids),
+                ).fetchall()
+                urls = [str(row[0] or '').strip() for row in rows if str(row[0] or '').strip()]
+                source_reliability_updates = _apply_feedback_to_source_domains(
+                    connection,
+                    actor_id=actor_id,
+                    source_urls=urls,
+                    rating_score=int(stored.get('rating_score') or 0),
+                )
+            connection.commit()
+        return {
+            'actor_id': actor_id,
+            **stored,
+            'source_reliability_updates': source_reliability_updates,
+        }
+
+    @router.get(route_paths.ACTOR_FEEDBACK_SUMMARY, response_class=JSONResponse)
+    def feedback_summary(actor_id: str, item_type: str | None = None) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            return _feedback_summary_for_actor(connection, actor_id=actor_id, item_type=item_type)
 
     @router.get(route_paths.ACTOR_UI_LIVE, response_class=JSONResponse)
     def actor_live_state(
@@ -407,19 +620,25 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         confidence: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
     ) -> dict[str, object]:
+        safe_limit = max(1, min(5000, int(limit)))
+        safe_offset = max(0, int(offset))
         items = _fetch_analyst_observations(
             actor_id,
             analyst=analyst,
             confidence=confidence,
             updated_from=updated_from,
             updated_to=updated_to,
-            limit=None,
-            offset=0,
+            limit=safe_limit,
+            offset=safe_offset,
         )
         return {
             'actor_id': actor_id,
             'count': len(items),
+            'limit': safe_limit,
+            'offset': safe_offset,
             'filters': {
                 'analyst': analyst or '',
                 'confidence': confidence or '',
@@ -435,14 +654,18 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         source_tier: str | None = None,
         min_confidence_weight: str | None = None,
         source_days: str | None = None,
+        observations_limit: int = 1000,
+        history_limit: int = 1000,
     ) -> dict[str, object]:
+        safe_observations_limit = max(1, min(5000, int(observations_limit)))
+        safe_history_limit = max(1, min(5000, int(history_limit)))
         notebook = _fetch_actor_notebook(
             actor_id,
             source_tier=source_tier,
             min_confidence_weight=min_confidence_weight,
             source_days=source_days,
         )
-        observations = _fetch_analyst_observations(actor_id, limit=None, offset=0)
+        observations = _fetch_analyst_observations(actor_id, limit=safe_observations_limit, offset=0)
         with sqlite3.connect(_db_path()) as connection:
             if not _actor_exists(connection, actor_id):
                 raise HTTPException(status_code=404, detail='actor not found')
@@ -453,9 +676,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 FROM analyst_observation_history
                 WHERE actor_id = ?
                 ORDER BY updated_at DESC
-                LIMIT 1000
+                LIMIT ?
                 ''',
-                (actor_id,),
+                (actor_id, safe_history_limit),
             ).fetchall()
         history_items = [
             {
@@ -498,10 +721,15 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         return {
             'actor_id': actor_id,
             'exported_at': _utc_now_iso(),
+            'limits': {
+                'observations': safe_observations_limit,
+                'history': safe_history_limit,
+            },
             'source_quality_filters': quality_filters_dict,
             'actor': notebook.get('actor', {}),
             'recent_change_summary': notebook.get('recent_change_summary', {}),
             'priority_questions': notebook.get('priority_questions', [])[:3],
+            'ioc_items': notebook.get('ioc_items', []),
             'observations': observations,
             'observation_history': history_items,
         }

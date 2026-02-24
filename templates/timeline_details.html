@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Timeline Details</title>
+    <style>
+      body { font-family: Arial, sans-serif; background: #f7f7f7; color: #111; margin: 0; padding: 16px; }
+      .wrap { max-width: 980px; margin: 0 auto; }
+      .top { margin-bottom: 12px; }
+      .card { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+      .meta { font-size: 12px; color: #334155; margin: 4px 0 8px; }
+      .summary { white-space: pre-line; }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid #888; font-size: 12px; }
+      .muted { color: #4b5563; font-size: 12px; }
+      a { color: #2255aa; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <a href="/?actor_id={{ actor_id }}">← Back to dashboard</a>
+        <h1>Timeline Details: {{ actor_name }}</h1>
+        <div class="muted">Showing {{ detail_rows | length }} events (limit {{ limit }}, offset {{ offset }}).</div>
+      </div>
+
+      {% if not detail_rows %}
+      <div class="card">No timeline entries yet.</div>
+      {% else %}
+      {% for item in detail_rows %}
+      <div class="card">
+        <div>
+          <span class="badge">{{ item.category }}</span>
+          <span class="muted">{{ item.occurred_at }}</span>
+        </div>
+        <h3>{{ item.title }}</h3>
+        <div class="summary">{{ item.summary }}</div>
+        {% if item.target_text %}
+        <div class="meta"><strong>Target:</strong> {{ item.target_text }}</div>
+        {% endif %}
+        {% if item.ttp_ids %}
+        <div class="meta"><strong>Techniques:</strong> {{ item.ttp_ids | join(', ') }}</div>
+        {% endif %}
+        {% if item.source_url %}
+        <div class="meta">
+          Source:
+          <a href="{{ item.source_url }}" target="_blank" rel="noreferrer">
+            {{ item.source_name or item.source_url }}
+          </a>
+          | Published: {{ item.source_published_at or 'unknown' }}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+  </body>
+</html>

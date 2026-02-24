@@ -9,6 +9,11 @@
         const reportNode = document.getElementById("recent-reports");
         const targetsNode = document.getElementById("recent-targets");
         const impactNode = document.getElementById("recent-impact");
+        const envQueryDialect = document.getElementById("env-query-dialect");
+        const envTimeWindow = document.getElementById("env-time-window");
+        const envProfileSave = document.getElementById("env-profile-save");
+        const envProfileStatus = document.getElementById("env-profile-status");
+        const questionFeedbackButtons = Array.from(document.querySelectorAll(".question-feedback-btn"));
 
         async function fetchLiveState() {
           const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/ui/live", { headers: { "Accept": "application/json" } });
@@ -61,6 +66,67 @@
         setInterval(runLiveRefresh, 20000);
         runLiveRefresh();
 
+        async function loadEnvironmentProfile() {
+          if (!envQueryDialect || !envTimeWindow) return;
+          try {
+            const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/environment-profile", { headers: { "Accept": "application/json" } });
+            if (!response.ok) return;
+            const profile = await response.json();
+            if (profile.query_dialect) envQueryDialect.value = String(profile.query_dialect);
+            if (profile.default_time_window_hours) envTimeWindow.value = String(profile.default_time_window_hours);
+          } catch (error) {
+            // Keep page usable even if learning profile endpoint is unavailable.
+          }
+        }
+
+        async function saveEnvironmentProfile() {
+          if (!envQueryDialect || !envTimeWindow) return;
+          const payload = {
+            query_dialect: String(envQueryDialect.value || "generic"),
+            field_mapping: {},
+            default_time_window_hours: Math.max(1, parseInt(String(envTimeWindow.value || "24"), 10) || 24)
+          };
+          if (envProfileStatus) envProfileStatus.textContent = "Saving...";
+          try {
+            const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/environment-profile", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Accept": "application/json" },
+              body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+              if (envProfileStatus) envProfileStatus.textContent = "Save failed";
+              return;
+            }
+            if (envProfileStatus) envProfileStatus.textContent = "Saved";
+          } catch (error) {
+            if (envProfileStatus) envProfileStatus.textContent = "Save failed";
+          }
+        }
+
+        async function submitQuestionFeedback(threadId, feedbackValue, statusNode) {
+          const payload = {
+            item_type: "priority_question",
+            item_id: String(threadId || ""),
+            feedback: String(feedbackValue || "partial"),
+            reason: ""
+          };
+          if (statusNode) statusNode.textContent = "Saving...";
+          try {
+            const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/feedback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Accept": "application/json" },
+              body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+              if (statusNode) statusNode.textContent = "Failed";
+              return;
+            }
+            if (statusNode) statusNode.textContent = "Recorded";
+          } catch (error) {
+            if (statusNode) statusNode.textContent = "Failed";
+          }
+        }
+
         const severitySelect = document.getElementById("timeline-severity");
         const categorySelect = document.getElementById("timeline-category");
         const searchInput = document.getElementById("timeline-search");
@@ -82,9 +148,6 @@
         const ledgerClear = document.getElementById("ledger-clear");
         const ledgerExportJson = document.getElementById("ledger-export-json");
         const ledgerExportCsv = document.getElementById("ledger-export-csv");
-        const cmdkOverlay = document.getElementById("cmdk-overlay");
-        const cmdkInput = document.getElementById("cmdk-input");
-        const cmdkList = document.getElementById("cmdk-list");
         const sinceReviewDate = document.getElementById("since-review-date");
         const sinceReviewObservations = document.getElementById("since-review-observations");
         const sinceReviewSources = document.getElementById("since-review-sources");
@@ -410,100 +473,6 @@
           });
         }
 
-        function scrollToStep(selector) {
-          const node = document.querySelector(selector);
-          if (!node) return;
-          node.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-
-        const commandActions = [
-          { label: "Go to Who section", run: () => scrollToStep("#section-who") },
-          { label: "Go to Recent section", run: () => scrollToStep("#section-recent") },
-          { label: "Go to Interpretation section", run: () => scrollToStep("#section-history") },
-          { label: "Go to Timeline section", run: () => scrollToStep("#section-timeline") },
-          { label: "Refresh live now", run: () => runLiveRefresh() },
-          { label: "Open timeline details", run: () => window.open("/actors/" + encodeURIComponent(actorId) + "/timeline/details", "_blank", "noopener,noreferrer") },
-          { label: "Export observations CSV", run: () => window.open("/actors/" + encodeURIComponent(actorId) + "/observations/export.csv", "_blank", "noopener,noreferrer") },
-          { label: "Export observations JSON", run: () => window.open("/actors/" + encodeURIComponent(actorId) + "/observations/export.json", "_blank", "noopener,noreferrer") },
-        ];
-        let commandCursor = 0;
-        let visibleCommands = commandActions.slice();
-
-        function renderCommandPalette() {
-          if (!cmdkList || !cmdkInput) return;
-          const query = String(cmdkInput.value || "").trim().toLowerCase();
-          visibleCommands = commandActions.filter((item) => item.label.toLowerCase().includes(query));
-          if (!visibleCommands.length) {
-            cmdkList.innerHTML = '<div class="cmdk-empty">No matching actions.</div>';
-            commandCursor = 0;
-            return;
-          }
-          if (commandCursor >= visibleCommands.length) commandCursor = 0;
-          cmdkList.innerHTML = "";
-          visibleCommands.forEach((item, idx) => {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "cmdk-item" + (idx === commandCursor ? " active" : "");
-            button.textContent = item.label;
-            button.addEventListener("click", () => {
-              closeCommandPalette();
-              item.run();
-            });
-            cmdkList.appendChild(button);
-          });
-        }
-
-        function openCommandPalette() {
-          if (!cmdkOverlay || !cmdkInput) return;
-          cmdkOverlay.classList.add("open");
-          cmdkOverlay.setAttribute("aria-hidden", "false");
-          cmdkInput.value = "";
-          commandCursor = 0;
-          renderCommandPalette();
-          cmdkInput.focus();
-        }
-
-        function closeCommandPalette() {
-          if (!cmdkOverlay) return;
-          cmdkOverlay.classList.remove("open");
-          cmdkOverlay.setAttribute("aria-hidden", "true");
-        }
-
-        document.addEventListener("keydown", (event) => {
-          const isCommandK = (event.key.toLowerCase() === "k") && (event.metaKey || event.ctrlKey);
-          if (isCommandK) {
-            event.preventDefault();
-            if (cmdkOverlay && cmdkOverlay.classList.contains("open")) closeCommandPalette();
-            else openCommandPalette();
-            return;
-          }
-          if (!cmdkOverlay || !cmdkOverlay.classList.contains("open")) return;
-          if (event.key === "Escape") {
-            event.preventDefault();
-            closeCommandPalette();
-            return;
-          }
-          if (event.key === "ArrowDown") {
-            event.preventDefault();
-            commandCursor = Math.min(commandCursor + 1, Math.max(visibleCommands.length - 1, 0));
-            renderCommandPalette();
-            return;
-          }
-          if (event.key === "ArrowUp") {
-            event.preventDefault();
-            commandCursor = Math.max(commandCursor - 1, 0);
-            renderCommandPalette();
-            return;
-          }
-          if (event.key === "Enter" && visibleCommands[commandCursor]) {
-            event.preventDefault();
-            closeCommandPalette();
-            visibleCommands[commandCursor].run();
-          }
-        });
-        if (cmdkInput) cmdkInput.addEventListener("input", () => { commandCursor = 0; renderCommandPalette(); });
-        if (cmdkOverlay) cmdkOverlay.addEventListener("click", (event) => { if (event.target === cmdkOverlay) closeCommandPalette(); });
-
         async function loadObservations() {
           try {
             const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/observations?limit=500", { headers: { "Accept": "application/json" } });
@@ -602,7 +571,19 @@
           });
         }
 
+        if (envProfileSave) envProfileSave.addEventListener("click", saveEnvironmentProfile);
+        questionFeedbackButtons.forEach((button) => {
+          button.addEventListener("click", () => {
+            const threadId = String(button.getAttribute("data-thread-id") || "");
+            const feedbackValue = String(button.getAttribute("data-feedback") || "partial");
+            const statusNode = document.getElementById("feedback-status-" + threadId);
+            if (!threadId) return;
+            submitQuestionFeedback(threadId, feedbackValue, statusNode);
+          });
+        });
+
         loadObservations();
+        loadEnvironmentProfile();
         if (timelineRows.length) renderTimelineChips();
         renderSinceReview();
 

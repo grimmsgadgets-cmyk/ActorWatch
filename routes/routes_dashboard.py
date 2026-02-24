@@ -1,6 +1,7 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse
-from datetime import datetime, timedelta, timezone
 
 
 def render_dashboard_root(
@@ -16,8 +17,6 @@ def render_dashboard_root(
 ) -> HTMLResponse:
     _list_actor_profiles = deps['list_actor_profiles']
     _fetch_actor_notebook = deps['fetch_actor_notebook']
-    _set_actor_notebook_status = deps['set_actor_notebook_status']
-    _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
     _get_ollama_status = deps['get_ollama_status']
     _get_actor_refresh_stats = deps.get('get_actor_refresh_stats')
     _page_refresh_auto_trigger_minutes = int(deps.get('page_refresh_auto_trigger_minutes', 30))
@@ -124,16 +123,8 @@ def render_dashboard_root(
             source_count = int(notebook.get('counts', {}).get('sources', 0)) if isinstance(notebook, dict) else 0
             needs_bootstrap = source_count == 0
             if is_tracked and needs_bootstrap and status != 'running':
-                _set_actor_notebook_status(
-                    selected_actor_id,
-                    'running',
-                    'Collecting actor-specific sources and rebuilding recent activity...',
-                )
-                _enqueue_actor_generation(selected_actor_id)
-                actor_meta['notebook_status'] = 'running'
-                actor_meta['notebook_message'] = 'Collecting actor-specific sources and rebuilding recent activity...'
                 if not notice:
-                    notice = 'Collecting actor-specific sources in the background...'
+                    notice = 'Notebook has no sources yet. Start refresh to collect sources.'
             elif is_tracked and status == 'running':
                 running_since_raw = str(actor_meta.get('notebook_updated_at') or actor_meta.get('created_at') or '').strip()
                 running_stale = False
@@ -149,16 +140,8 @@ def render_dashboard_root(
                 else:
                     running_stale = True
                 if running_stale:
-                    _set_actor_notebook_status(
-                        selected_actor_id,
-                        'running',
-                        'Detected stale running state. Re-queuing refresh...',
-                    )
-                    _enqueue_actor_generation(selected_actor_id)
-                    actor_meta['notebook_status'] = 'running'
-                    actor_meta['notebook_message'] = 'Detected stale running state. Re-queuing refresh...'
                     if not notice:
-                        notice = 'Detected a stalled refresh and re-queued automatically.'
+                        notice = 'Detected a stalled refresh state. Trigger a manual refresh.'
             elif is_tracked and status != 'running':
                 last_run_raw = str(actor_meta.get('notebook_updated_at') or actor_meta.get('created_at') or '').strip()
                 should_trigger = False
@@ -174,16 +157,8 @@ def render_dashboard_root(
                     except Exception:
                         should_trigger = True
                 if should_trigger:
-                    _set_actor_notebook_status(
-                        selected_actor_id,
-                        'running',
-                        'Refreshing sources from page open...',
-                    )
-                    _enqueue_actor_generation(selected_actor_id)
-                    actor_meta['notebook_status'] = 'running'
-                    actor_meta['notebook_message'] = 'Refreshing sources from page open...'
                     if not notice:
-                        notice = 'Refresh started automatically from page load.'
+                        notice = 'Notebook refresh is due. Trigger refresh when ready.'
             if _get_actor_refresh_stats is not None:
                 try:
                     refresh_stats = _get_actor_refresh_stats(selected_actor_id)

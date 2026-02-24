@@ -12,6 +12,7 @@ def run_tracked_actor_auto_refresh_once_core(
 ) -> int:
     _parse_published_datetime = deps['parse_published_datetime']
     _enqueue_actor_generation = deps['enqueue_actor_generation']
+    _on_actor_queued = deps.get('on_actor_queued')
     now_utc = datetime.now(timezone.utc)
     cutoff = now_utc - timedelta(hours=max(1, int(min_interval_hours)))
     queued_actor_ids: list[str] = []
@@ -48,6 +49,11 @@ def run_tracked_actor_auto_refresh_once_core(
         connection.commit()
     for actor_id in queued_actor_ids:
         _enqueue_actor_generation(actor_id)
+        if _on_actor_queued is not None:
+            try:
+                _on_actor_queued(actor_id)
+            except Exception:
+                pass
     return len(queued_actor_ids)
 
 

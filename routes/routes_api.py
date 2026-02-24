@@ -16,10 +16,17 @@ def create_api_router(*, deps: dict[str, object]) -> APIRouter:
     _actor_exists = deps['actor_exists']
     _set_actor_notebook_status = deps['set_actor_notebook_status']
     _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
+    _metrics_snapshot = deps.get('metrics_snapshot')
 
     @router.get('/health')
     def health() -> dict[str, str]:
         return {'status': 'ok'}
+
+    @router.get('/metrics')
+    def metrics() -> dict[str, object]:
+        if _metrics_snapshot is None:
+            return {'generated_at': '', 'counters': {}, 'requests_by_route': {}, 'requests_by_status': {}}
+        return _metrics_snapshot()
 
     @router.get('/actors')
     def get_actors() -> list[dict[str, str | None]]:

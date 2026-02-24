@@ -1,9 +1,11 @@
 import json
+import logging
 import os
 import re
 import socket
 import sqlite3
 import string
+import time
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -39,11 +41,19 @@ import routes.routes_notebook as routes_notebook
 import routes.routes_ui as routes_ui
 import services.network_service as network_service
 import services.notebook_service as notebook_service
+import services.ioc_hunt_service as ioc_hunt_service
+import services.ioc_store_service as ioc_store_service
+import services.ioc_validation_service as ioc_validation_service
 import services.source_ingest_service as source_ingest_service
 import services.source_derivation_service as source_derivation_service
 import services.source_store_service as source_store_service
+import services.stix_service as stix_service
+import services.feedback_service as feedback_service
+import services.environment_profile_service as environment_profile_service
+import services.source_reliability_service as source_reliability_service
 import services.requirements_service as requirements_service
 import services.status_service as status_service
+import services.metrics_service as metrics_service
 import pipelines.timeline_extraction as timeline_extraction
 import services.timeline_analytics_service as timeline_analytics_service
 import services.timeline_view_service as timeline_view_service
@@ -168,42 +178,52 @@ ATTACK_TACTIC_TO_CAPABILITY_MAP = {
     'exfiltration': 'exfiltration',
     'impact': 'impact',
 }
-PRIMARY_CTI_FEEDS = [
-    ('CISA Alerts', 'https://www.cisa.gov/cybersecurity-advisories/all.xml'),
-    ('CISA News', 'https://www.cisa.gov/news.xml'),
-    ('NCSC UK', 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml'),
-    ('Mandiant Blog', 'https://www.mandiant.com/resources/blog/rss.xml'),
-    ('Microsoft Security', 'https://www.microsoft.com/en-us/security/blog/feed/'),
-    ('Google Cloud Threat Intelligence', 'https://cloud.google.com/blog/topics/threat-intelligence/rss/'),
-    ('Cisco Talos', 'https://blog.talosintelligence.com/rss/'),
-    ('Palo Alto Unit 42', 'https://unit42.paloaltonetworks.com/feed/'),
-    ('SentinelOne Labs', 'https://www.sentinelone.com/labs/feed/'),
-    ('Kaspersky Securelist', 'https://securelist.com/feed/'),
-    ('CrowdStrike Blog', 'https://www.crowdstrike.com/en-us/blog/feed/'),
-    ('Proofpoint Blog', 'https://www.proofpoint.com/us/blog/rss.xml'),
-    ('Red Canary Blog', 'https://redcanary.com/blog/feed/'),
-    ('Huntress Blog', 'https://www.huntress.com/blog/rss.xml'),
-    ('Arctic Wolf Labs', 'https://arcticwolf.com/resources/blog/feed/'),
-    ('Rapid7 Blog', 'https://www.rapid7.com/blog/rss/'),
-    ('Sophos News', 'https://news.sophos.com/en-us/feed/'),
-    ('Trend Micro Research', 'https://www.trendmicro.com/en_us/research.html/rss.xml'),
-    ('ESET WeLiveSecurity', 'https://www.welivesecurity.com/en/rss/feed'),
-]
-SECONDARY_CONTEXT_FEEDS = [
-    ('BleepingComputer', 'https://www.bleepingcomputer.com/feed/'),
-    ('The Hacker News', 'https://feeds.feedburner.com/TheHackersNews'),
-    ('Krebs on Security', 'https://krebsonsecurity.com/feed/'),
-    ('The Record', 'https://therecord.media/feed'),
-    ('Dark Reading', 'https://www.darkreading.com/rss.xml'),
-    ('SANS Internet Storm Center', 'https://isc.sans.edu/rssfeed_full.xml'),
-]
-EXPANDED_PRIMARY_ADVISORY_FEEDS = [
-    ('Cisco PSIRT', 'https://sec.cloudapps.cisco.com/security/center/psirtrss20/CiscoSecurityAdvisory.xml'),
-    ('Fortinet PSIRT', 'https://filestore.fortinet.com/fortiguard/rss/ir.xml'),
-    ('Ivanti Security Advisory', 'https://www.ivanti.com/blog/topics/security-advisory/rss'),
-    ('JPCERT Alerts', 'https://www.jpcert.or.jp/rss/jpcert.rdf'),
-    ('JVN Vulnerability', 'https://jvn.jp/rss/jvn.rdf'),
-]
+# Feed catalog organized by use-case to simplify targeted pull strategies.
+FEED_CATALOG: dict[str, list[tuple[str, str]]] = {
+    'ioc': [
+        ('CISA Alerts', 'https://www.cisa.gov/cybersecurity-advisories/all.xml'),
+        ('NCSC UK', 'https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml'),
+        ('Cisco Talos', 'https://blog.talosintelligence.com/rss/'),
+        ('Palo Alto Unit 42', 'https://unit42.paloaltonetworks.com/feed/'),
+        ('Mandiant Blog', 'https://www.mandiant.com/resources/blog/rss.xml'),
+        ('SentinelOne Labs', 'https://www.sentinelone.com/labs/feed/'),
+        ('CrowdStrike Blog', 'https://www.crowdstrike.com/en-us/blog/feed/'),
+        ('Securelist', 'https://securelist.com/feed/'),
+    ],
+    'research': [
+        ('Microsoft Security', 'https://www.microsoft.com/en-us/security/blog/feed/'),
+        ('Google Cloud Threat Intelligence', 'https://cloud.google.com/blog/topics/threat-intelligence/rss/'),
+        ('Proofpoint Blog', 'https://www.proofpoint.com/us/blog/rss.xml'),
+        ('Red Canary Blog', 'https://redcanary.com/blog/feed/'),
+        ('Huntress Blog', 'https://www.huntress.com/blog/rss.xml'),
+        ('Arctic Wolf Labs', 'https://arcticwolf.com/resources/blog/feed/'),
+        ('Rapid7 Blog', 'https://www.rapid7.com/blog/rss/'),
+        ('Sophos News', 'https://news.sophos.com/en-us/feed/'),
+        ('Trend Micro Research', 'https://www.trendmicro.com/en_us/research.html/rss.xml'),
+        ('ESET WeLiveSecurity', 'https://www.welivesecurity.com/en/rss/feed'),
+        ('CISA News', 'https://www.cisa.gov/news.xml'),
+    ],
+    'advisory': [
+        ('Cisco PSIRT', 'https://sec.cloudapps.cisco.com/security/center/psirtrss20/CiscoSecurityAdvisory.xml'),
+        ('Fortinet PSIRT', 'https://filestore.fortinet.com/fortiguard/rss/ir.xml'),
+        ('Ivanti Security Advisory', 'https://www.ivanti.com/blog/topics/security-advisory/rss'),
+        ('JPCERT Alerts', 'https://www.jpcert.or.jp/rss/jpcert.rdf'),
+        ('JVN Vulnerability', 'https://jvn.jp/rss/jvn.rdf'),
+    ],
+    'context': [
+        ('BleepingComputer', 'https://www.bleepingcomputer.com/feed/'),
+        ('The Hacker News', 'https://feeds.feedburner.com/TheHackersNews'),
+        ('Krebs on Security', 'https://krebsonsecurity.com/feed/'),
+        ('The Record', 'https://therecord.media/feed'),
+        ('Dark Reading', 'https://www.darkreading.com/rss.xml'),
+        ('SANS Internet Storm Center', 'https://isc.sans.edu/rssfeed_full.xml'),
+    ],
+}
+
+IOC_INTELLIGENCE_FEEDS = FEED_CATALOG['ioc']
+PRIMARY_CTI_FEEDS = FEED_CATALOG['ioc'] + FEED_CATALOG['research']
+EXPANDED_PRIMARY_ADVISORY_FEEDS = FEED_CATALOG['advisory']
+SECONDARY_CONTEXT_FEEDS = FEED_CATALOG['context']
 DEFAULT_CTI_FEEDS = PRIMARY_CTI_FEEDS + EXPANDED_PRIMARY_ADVISORY_FEEDS + SECONDARY_CONTEXT_FEEDS
 ACTOR_SEARCH_DOMAINS = [
     'cisa.gov',
@@ -325,6 +345,9 @@ _DEFAULT_OUTBOUND_ALLOWED_DOMAINS.update(
 )
 if not OUTBOUND_ALLOWED_DOMAINS:
     OUTBOUND_ALLOWED_DOMAINS = _DEFAULT_OUTBOUND_ALLOWED_DOMAINS
+ALLOW_HTTP_OUTBOUND = os.environ.get('ALLOW_HTTP_OUTBOUND', '0').strip().lower() in {
+    '1', 'true', 'yes', 'on',
+}
 DEFAULT_BODY_LIMIT_BYTES = 256 * 1024
 SOURCE_UPLOAD_BODY_LIMIT_BYTES = 2 * 1024 * 1024
 OBSERVATION_BODY_LIMIT_BYTES = 512 * 1024
@@ -346,18 +369,41 @@ _RATE_LIMIT_REQUEST_COUNTER = 0
 _RATE_LIMIT_CLEANUP_EVERY = 512
 AUTO_REFRESH_STOP_EVENT: Event | None = None
 AUTO_REFRESH_THREAD: Thread | None = None
+LOGGER = logging.getLogger('actorwatch')
+if not LOGGER.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter('%(message)s'))
+    LOGGER.addHandler(_handler)
+LOGGER.setLevel(logging.INFO)
+
+
+def _log_event(event: str, **fields: object) -> None:
+    payload = {'event': event, **fields, 'ts': utc_now_iso()}
+    try:
+        LOGGER.info(json.dumps(payload, separators=(',', ':'), default=str))
+    except Exception:
+        LOGGER.info(str(payload))
 
 
 def _run_tracked_actor_auto_refresh_once(*, limit: int = 3) -> int:
-    return refresh_ops_service.run_tracked_actor_auto_refresh_once_core(
-        db_path=DB_PATH,
-        min_interval_hours=AUTO_REFRESH_MIN_INTERVAL_HOURS,
-        limit=limit,
-        deps={
-            'parse_published_datetime': _parse_published_datetime,
-            'enqueue_actor_generation': enqueue_actor_generation,
-        },
-    )
+    try:
+        queued = refresh_ops_service.run_tracked_actor_auto_refresh_once_core(
+            db_path=DB_PATH,
+            min_interval_hours=AUTO_REFRESH_MIN_INTERVAL_HOURS,
+            limit=limit,
+            deps={
+                'parse_published_datetime': _parse_published_datetime,
+                'enqueue_actor_generation': enqueue_actor_generation,
+                'on_actor_queued': lambda actor_id: _log_event('auto_refresh_actor_queued', actor_id=actor_id),
+            },
+        )
+        metrics_service.record_refresh_queue_core(queued_count=queued)
+        _log_event('auto_refresh_run', queued_count=queued, limit=limit)
+        return queued
+    except Exception as exc:
+        metrics_service.record_refresh_queue_core(queued_count=0)
+        _log_event('auto_refresh_failed', error=str(exc), limit=limit)
+        raise
 
 
 def _auto_refresh_loop(stop_event: Event) -> None:
@@ -548,28 +594,48 @@ def _csrf_request_allowed(request: Request) -> bool:
 
 @app.middleware('http')
 async def add_security_headers(request: Request, call_next):
+    started = time.perf_counter()
+
+    def _finalize(response: JSONResponse | HTMLResponse) -> JSONResponse | HTMLResponse:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        route = request.scope.get('route')
+        route_path = str(getattr(route, 'path', '') or request.url.path)
+        metrics_service.record_request_core(
+            method=request.method,
+            path=route_path,
+            status_code=int(response.status_code),
+        )
+        _log_event(
+            'request_complete',
+            method=request.method.upper(),
+            path=route_path,
+            status_code=int(response.status_code),
+            duration_ms=duration_ms,
+        )
+        return response
+
     if not _csrf_request_allowed(request):
-        return JSONResponse(
+        return _finalize(JSONResponse(
             status_code=403,
             content={'detail': 'cross-site request blocked'},
-        )
+        ))
 
     limit = _request_body_limit_bytes(request.method, request.url.path)
     if limit > 0:
         content_length = request.headers.get('content-length', '').strip()
         if content_length.isdigit() and int(content_length) > limit:
-            return JSONResponse(
+            return _finalize(JSONResponse(
                 status_code=413,
                 content={
                     'detail': (
                         f'Request body too large. Limit for this endpoint is {limit} bytes.'
                     )
                 },
-            )
+            ))
 
     limited, retry_after, limit = _check_rate_limit(request)
     if limited:
-        return JSONResponse(
+        return _finalize(JSONResponse(
             status_code=429,
             content={
                 'detail': (
@@ -580,9 +646,15 @@ async def add_security_headers(request: Request, call_next):
                 'Retry-After': str(retry_after),
                 'X-RateLimit-Limit': str(limit),
             },
-        )
+        ))
 
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        error_response = JSONResponse(status_code=500, content={'detail': 'internal server error'})
+        _log_event('request_exception', method=request.method.upper(), path=request.url.path, error=str(exc))
+        _finalize(error_response)
+        raise
     csp_policy = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
@@ -600,7 +672,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
     response.headers.setdefault('X-Frame-Options', 'DENY')
     response.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
-    return response
+    return _finalize(response)
 
 
 def _prepare_db_path(path_value: str) -> str:
@@ -1441,6 +1513,7 @@ def _validate_outbound_url(source_url: str, allowed_domains: set[str] | None = N
             'outbound_allowed_domains': OUTBOUND_ALLOWED_DOMAINS,
             'resolve_host': socket.getaddrinfo,
             'ipproto_tcp': socket.IPPROTO_TCP,
+            'allow_http': ALLOW_HTTP_OUTBOUND,
         },
     )
 
@@ -1596,6 +1669,24 @@ def _store_quick_check_overrides(
     )
 
 
+def _ollama_generate_ioc_hunt_queries(
+    actor_name: str,
+    cards: list[dict[str, object]],
+    environment_profile: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return ioc_hunt_service.generate_ioc_hunt_queries_core(
+        actor_name,
+        cards,
+        environment_profile=environment_profile,
+        deps={
+            'ollama_available': _ollama_available,
+            'get_env': os.environ.get,
+            'http_post': httpx.post,
+            'personalize_query': _personalize_query,
+        },
+    )
+
+
 def actor_exists(connection: sqlite3.Connection, actor_id: str) -> bool:
     return actor_profile_service.actor_exists_core(connection, actor_id)
 
@@ -1625,21 +1716,38 @@ def _mark_actor_generation_finished(actor_id: str) -> None:
 
 
 def run_actor_generation(actor_id: str) -> None:
-    generation_service.run_actor_generation_core(
-        actor_id=actor_id,
-        deps={
-            'mark_started': _mark_actor_generation_started,
-            'mark_finished': _mark_actor_generation_finished,
-            'pipeline_run_actor_generation_core': pipeline_run_actor_generation_core,
-            'db_path': lambda: DB_PATH,
-            'set_actor_notebook_status': set_actor_notebook_status,
-            'import_default_feeds_for_actor': import_default_feeds_for_actor,
-            'build_notebook': build_notebook,
-        },
-    )
+    started = time.perf_counter()
+    success = False
+    _log_event('generation_started', actor_id=actor_id)
+    try:
+        generation_service.run_actor_generation_core(
+            actor_id=actor_id,
+            deps={
+                'mark_started': _mark_actor_generation_started,
+                'mark_finished': _mark_actor_generation_finished,
+                'pipeline_run_actor_generation_core': pipeline_run_actor_generation_core,
+                'db_path': lambda: DB_PATH,
+                'set_actor_notebook_status': set_actor_notebook_status,
+                'import_default_feeds_for_actor': import_default_feeds_for_actor,
+                'build_notebook': build_notebook,
+            },
+        )
+        success = True
+    except Exception as exc:
+        _log_event('generation_failed', actor_id=actor_id, error=str(exc))
+        raise
+    finally:
+        metrics_service.record_generation_core(success=success)
+        _log_event(
+            'generation_completed',
+            actor_id=actor_id,
+            success=success,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
 
 
 def enqueue_actor_generation(actor_id: str) -> None:
+    _log_event('generation_enqueued', actor_id=actor_id)
     generation_service.enqueue_actor_generation_core(
         actor_id=actor_id,
         deps={
@@ -1750,6 +1858,183 @@ def _parse_ioc_values(raw: str) -> list[str]:
     return source_ingest_service.parse_ioc_values_core(raw)
 
 
+def _validate_ioc_candidate(
+    *,
+    raw_value: str,
+    raw_type: str | None,
+    source_tier: str | None = None,
+    extraction_method: str = 'manual',
+) -> dict[str, object]:
+    return ioc_validation_service.validate_ioc_candidate_core(
+        raw_value=raw_value,
+        raw_type=raw_type,
+        source_tier=source_tier,
+        extraction_method=extraction_method,
+    )
+
+
+def _upsert_ioc_item(
+    connection: sqlite3.Connection,
+    *,
+    actor_id: str,
+    raw_ioc_type: str,
+    raw_ioc_value: str,
+    source_ref: str | None,
+    source_id: str | None,
+    source_tier: str | None,
+    extraction_method: str,
+    now_iso: str,
+    lifecycle_status: str = 'active',
+    handling_tlp: str = 'TLP:CLEAR',
+    confidence_score_override: int | None = None,
+) -> dict[str, object]:
+    return ioc_store_service.upsert_ioc_item_core(
+        connection,
+        actor_id=actor_id,
+        raw_ioc_type=raw_ioc_type,
+        raw_ioc_value=raw_ioc_value,
+        source_ref=source_ref,
+        source_id=source_id,
+        source_tier=source_tier,
+        extraction_method=extraction_method,
+        now_iso=now_iso,
+        lifecycle_status=lifecycle_status,
+        handling_tlp=handling_tlp,
+        confidence_score_override=confidence_score_override,
+        deps={
+            'validate_ioc_candidate': _validate_ioc_candidate,
+        },
+    )
+
+
+def _export_actor_stix_bundle(connection: sqlite3.Connection, *, actor_id: str, actor_name: str) -> dict[str, object]:
+    return stix_service.export_actor_bundle_core(
+        connection,
+        actor_id=actor_id,
+        actor_name=actor_name,
+    )
+
+
+def _import_actor_stix_bundle(
+    connection: sqlite3.Connection,
+    *,
+    actor_id: str,
+    bundle: dict[str, object],
+) -> dict[str, int]:
+    return stix_service.import_actor_bundle_core(
+        connection,
+        actor_id=actor_id,
+        bundle=bundle,
+        now_iso=utc_now_iso(),
+        upsert_ioc_item=_upsert_ioc_item,
+    )
+
+
+def _store_feedback_event(
+    connection: sqlite3.Connection,
+    *,
+    actor_id: str,
+    item_type: str,
+    item_id: str,
+    feedback_label: str,
+    reason: str,
+    source_id: str | None,
+    metadata: dict[str, object] | None,
+) -> dict[str, object]:
+    return feedback_service.store_feedback_event_core(
+        connection,
+        actor_id=actor_id,
+        item_type=item_type,
+        item_id=item_id,
+        feedback_label=feedback_label,
+        reason=reason,
+        source_id=source_id,
+        metadata=metadata,
+        now_iso=utc_now_iso(),
+    )
+
+
+def _feedback_summary_for_actor(
+    connection: sqlite3.Connection,
+    *,
+    actor_id: str,
+    item_type: str | None = None,
+) -> dict[str, object]:
+    return feedback_service.feedback_summary_for_actor_core(
+        connection,
+        actor_id=actor_id,
+        item_type=item_type,
+    )
+
+
+def _normalize_environment_profile(payload: dict[str, object]) -> dict[str, object]:
+    return environment_profile_service.normalize_environment_profile(payload)
+
+
+def _upsert_environment_profile(
+    connection: sqlite3.Connection,
+    *,
+    actor_id: str,
+    profile: dict[str, object],
+) -> dict[str, object]:
+    return environment_profile_service.upsert_environment_profile_core(
+        connection,
+        actor_id=actor_id,
+        profile=profile,
+        now_iso=utc_now_iso(),
+    )
+
+
+def _load_environment_profile(connection: sqlite3.Connection, *, actor_id: str) -> dict[str, object]:
+    return environment_profile_service.load_environment_profile_core(
+        connection,
+        actor_id=actor_id,
+    )
+
+
+def _apply_feedback_to_source_domains(
+    connection: sqlite3.Connection,
+    *,
+    actor_id: str,
+    source_urls: list[str],
+    rating_score: int,
+) -> int:
+    return source_reliability_service.apply_feedback_to_source_domains_core(
+        connection,
+        actor_id=actor_id,
+        source_urls=source_urls,
+        rating_score=rating_score,
+        now_iso=utc_now_iso(),
+    )
+
+
+def _load_source_reliability_map(
+    connection: sqlite3.Connection,
+    *,
+    actor_id: str,
+) -> dict[str, dict[str, object]]:
+    return source_reliability_service.load_reliability_map_core(
+        connection,
+        actor_id=actor_id,
+    )
+
+
+def _personalize_query(query: str, *, ioc_value: str, profile: dict[str, object]) -> str:
+    return environment_profile_service.personalize_query_core(
+        query,
+        ioc_value=ioc_value,
+        profile=profile,
+    )
+
+
+def _domain_from_url(url: str) -> str:
+    return environment_profile_service.domain_from_url_core(url)
+
+
+def _confidence_weight_adjustment(reliability_score: float) -> int:
+    return source_reliability_service.confidence_weight_adjustment_core(reliability_score)
+
+
 def _source_fingerprint(
     title: str | None,
     headline: str | None,
@@ -1771,37 +2056,49 @@ def _source_fingerprint(
 
 
 def import_default_feeds_for_actor(actor_id: str) -> int:
-    return feed_import_service.import_default_feeds_for_actor_core(
-        actor_id=actor_id,
-        deps={
-            'pipeline_import_default_feeds_for_actor_core': pipeline_import_default_feeds_for_actor_core,
-            'db_path': lambda: DB_PATH,
-            'default_cti_feeds': DEFAULT_CTI_FEEDS,
-            'primary_cti_feeds': PRIMARY_CTI_FEEDS + EXPANDED_PRIMARY_ADVISORY_FEEDS,
-            'secondary_context_feeds': SECONDARY_CONTEXT_FEEDS,
-            'actor_feed_lookback_days': ACTOR_FEED_LOOKBACK_DAYS,
-            'feed_import_max_seconds': FEED_IMPORT_MAX_SECONDS,
-            'feed_fetch_timeout_seconds': FEED_FETCH_TIMEOUT_SECONDS,
-            'feed_entry_scan_limit': FEED_ENTRY_SCAN_LIMIT,
-            'feed_imported_limit': FEED_IMPORTED_LIMIT,
-            'actor_search_link_limit': ACTOR_SEARCH_LINK_LIMIT,
-            'feed_require_published_at': FEED_REQUIRE_PUBLISHED_AT,
-            'actor_exists': actor_exists,
-            'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
-            'actor_terms': _actor_terms,
-            'actor_query_feeds': _actor_query_feeds,
-            'import_ransomware_live_actor_activity': _import_ransomware_live_actor_activity,
-            'safe_http_get': _safe_http_get,
-            'parse_feed_entries': _parse_feed_entries,
-            'text_contains_actor_term': _text_contains_actor_term,
-            'within_lookback': _within_lookback,
-            'parse_published_datetime': _parse_published_datetime,
-            'derive_source_from_url': derive_source_from_url,
-            'upsert_source_for_actor': _upsert_source_for_actor,
-            'duckduckgo_actor_search_urls': _duckduckgo_actor_search_urls,
-            'utc_now_iso': utc_now_iso,
-        },
-    )
+    _log_event('feed_import_started', actor_id=actor_id)
+    imported = 0
+    success = False
+    try:
+        imported = feed_import_service.import_default_feeds_for_actor_core(
+            actor_id=actor_id,
+            deps={
+                'pipeline_import_default_feeds_for_actor_core': pipeline_import_default_feeds_for_actor_core,
+                'db_path': lambda: DB_PATH,
+                'default_cti_feeds': DEFAULT_CTI_FEEDS,
+                'primary_cti_feeds': PRIMARY_CTI_FEEDS + EXPANDED_PRIMARY_ADVISORY_FEEDS,
+                'secondary_context_feeds': SECONDARY_CONTEXT_FEEDS,
+                'actor_feed_lookback_days': ACTOR_FEED_LOOKBACK_DAYS,
+                'feed_import_max_seconds': FEED_IMPORT_MAX_SECONDS,
+                'feed_fetch_timeout_seconds': FEED_FETCH_TIMEOUT_SECONDS,
+                'feed_entry_scan_limit': FEED_ENTRY_SCAN_LIMIT,
+                'feed_imported_limit': FEED_IMPORTED_LIMIT,
+                'actor_search_link_limit': ACTOR_SEARCH_LINK_LIMIT,
+                'feed_require_published_at': FEED_REQUIRE_PUBLISHED_AT,
+                'actor_exists': actor_exists,
+                'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
+                'actor_terms': _actor_terms,
+                'actor_query_feeds': _actor_query_feeds,
+                'import_ransomware_live_actor_activity': _import_ransomware_live_actor_activity,
+                'safe_http_get': _safe_http_get,
+                'parse_feed_entries': _parse_feed_entries,
+                'text_contains_actor_term': _text_contains_actor_term,
+                'within_lookback': _within_lookback,
+                'parse_published_datetime': _parse_published_datetime,
+                'derive_source_from_url': derive_source_from_url,
+                'upsert_source_for_actor': _upsert_source_for_actor,
+                'duckduckgo_actor_search_urls': _duckduckgo_actor_search_urls,
+                'utc_now_iso': utc_now_iso,
+            },
+        )
+        success = True
+        return imported
+    except Exception as exc:
+        _log_event('feed_import_failed', actor_id=actor_id, error=str(exc))
+        raise
+    finally:
+        metrics_service.record_feed_import_core(imported_count=imported, success=success)
+        _log_event('feed_import_completed', actor_id=actor_id, success=success, imported=imported)
 
 
 def generate_actor_requirements(actor_id: str, org_context: str, priority_mode: str) -> int:
@@ -1931,6 +2228,9 @@ def _fetch_actor_notebook_deps(
         'build_environment_checks': _build_environment_checks,
         'build_notebook_kpis': _build_notebook_kpis,
         'format_date_or_unknown': _format_date_or_unknown,
+        'load_source_reliability_map': _load_source_reliability_map,
+        'domain_from_url': _domain_from_url,
+        'confidence_weight_adjustment': _confidence_weight_adjustment,
         'load_quick_check_overrides': lambda connection, actor: quick_check_service.load_quick_check_overrides_core(
             connection,
             actor_id=actor,
@@ -1984,6 +2284,7 @@ def _register_routers() -> None:
             'set_actor_notebook_status': set_actor_notebook_status,
             'run_actor_generation': run_actor_generation,
             'enqueue_actor_generation': enqueue_actor_generation,
+            'metrics_snapshot': metrics_service.snapshot_metrics_core,
             'get_ollama_status': get_ollama_status,
             'page_refresh_auto_trigger_minutes': PAGE_REFRESH_AUTO_TRIGGER_MINUTES,
             'running_stale_recovery_minutes': RUNNING_STALE_RECOVERY_MINUTES,
@@ -2001,10 +2302,21 @@ def _register_routers() -> None:
             'upsert_source_for_actor': _upsert_source_for_actor,
             'import_default_feeds_for_actor': import_default_feeds_for_actor,
             'parse_ioc_values': _parse_ioc_values,
+            'validate_ioc_candidate': _validate_ioc_candidate,
+            'upsert_ioc_item': _upsert_ioc_item,
+            'export_actor_stix_bundle': _export_actor_stix_bundle,
+            'import_actor_stix_bundle': _import_actor_stix_bundle,
             'utc_now_iso': utc_now_iso,
             'get_actor_refresh_stats': get_actor_refresh_stats,
             'generate_actor_requirements': generate_actor_requirements,
             'safe_json_string_list': _safe_json_string_list,
+            'generate_ioc_hunt_queries': _ollama_generate_ioc_hunt_queries,
+            'store_feedback_event': _store_feedback_event,
+            'feedback_summary_for_actor': _feedback_summary_for_actor,
+            'normalize_environment_profile': _normalize_environment_profile,
+            'upsert_environment_profile': _upsert_environment_profile,
+            'load_environment_profile': _load_environment_profile,
+            'apply_feedback_to_source_domains': _apply_feedback_to_source_domains,
             'observation_body_limit_bytes': OBSERVATION_BODY_LIMIT_BYTES,
             'normalize_technique_id': _normalize_technique_id,
             'normalize_string_list': normalize_string_list,
@@ -2059,6 +2371,9 @@ def root(
             'run_actor_generation': run_actor_generation,
             'enqueue_actor_generation': enqueue_actor_generation,
             'get_ollama_status': get_ollama_status,
+            'page_refresh_auto_trigger_minutes': PAGE_REFRESH_AUTO_TRIGGER_MINUTES,
+            'running_stale_recovery_minutes': RUNNING_STALE_RECOVERY_MINUTES,
+            'recover_stale_running_states': _recover_stale_running_states,
             'format_duration_ms': _format_duration_ms,
             'templates': templates,
         },
