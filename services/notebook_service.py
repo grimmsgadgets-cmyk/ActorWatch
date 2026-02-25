@@ -86,5 +86,8 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
             'domain_from_url': deps.get('domain_from_url'),
             'confidence_weight_adjustment': deps.get('confidence_weight_adjustment'),
             'load_quick_check_overrides': deps.get('load_quick_check_overrides'),
+            'run_cold_actor_backfill': deps.get('run_cold_actor_backfill'),
+            'rebuild_notebook': deps.get('rebuild_notebook'),
+            'backfill_debug_ui_enabled': deps.get('backfill_debug_ui_enabled'),
         },
     )

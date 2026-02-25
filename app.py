@@ -48,6 +48,7 @@ import services.source_ingest_service as source_ingest_service
 import services.source_derivation_service as source_derivation_service
 import services.source_store_service as source_store_service
 import services.stix_service as stix_service
+import services.web_backfill_service as web_backfill_service
 import services.feedback_service as feedback_service
 import services.environment_profile_service as environment_profile_service
 import services.source_reliability_service as source_reliability_service
@@ -202,6 +203,18 @@ FEED_CATALOG: dict[str, list[tuple[str, str]]] = {
         ('Trend Micro Research', 'https://www.trendmicro.com/en_us/research.html/rss.xml'),
         ('ESET WeLiveSecurity', 'https://www.welivesecurity.com/en/rss/feed'),
         ('CISA News', 'https://www.cisa.gov/news.xml'),
+        ('The DFIR Report', 'https://thedfirreport.com/feed/'),
+        ('Recorded Future Blog', 'https://www.recordedfuture.com/feed'),
+        ('Intel 471 Blog', 'https://www.intel471.com/blog/feed'),
+        ('Sygnia Blog', 'https://www.sygnia.co/blog/feed/'),
+        ('Check Point Research', 'https://research.checkpoint.com/feed/'),
+        ('Malwarebytes Labs', 'https://www.malwarebytes.com/blog/feed/index.xml'),
+        ('Zero Day Initiative Blog', 'https://www.zerodayinitiative.com/blog?format=rss'),
+        ('NetWitness Blog', 'https://www.netwitness.com/en-us/blog/feed/'),
+        ('Corelight Labs', 'https://corelight.com/blog/rss.xml'),
+        ('EclecticIQ Blog', 'https://blog.eclecticiq.com/rss.xml'),
+        ('LevelBlue SpiderLabs Blog', 'https://www.levelblue.com/en-us/resources/blogs/spiderlabs-blog/rss.xml'),
+        ('CERT-FR', 'https://www.cert.ssi.gouv.fr/feed/'),
     ],
     'advisory': [
         ('Cisco PSIRT', 'https://sec.cloudapps.cisco.com/security/center/psirtrss20/CiscoSecurityAdvisory.xml'),
@@ -225,6 +238,178 @@ PRIMARY_CTI_FEEDS = FEED_CATALOG['ioc'] + FEED_CATALOG['research']
 EXPANDED_PRIMARY_ADVISORY_FEEDS = FEED_CATALOG['advisory']
 SECONDARY_CONTEXT_FEEDS = FEED_CATALOG['context']
 DEFAULT_CTI_FEEDS = PRIMARY_CTI_FEEDS + EXPANDED_PRIMARY_ADVISORY_FEEDS + SECONDARY_CONTEXT_FEEDS
+SOURCE_CANDIDATES_BATCH1 = [
+    {
+        'name': 'The DFIR Report',
+        'type': 'rss',
+        'value': 'https://thedfirreport.com/feed/',
+        'tier': 'medium',
+        'category': 'dfir',
+    },
+    {
+        'name': 'Recorded Future Blog',
+        'type': 'rss',
+        'value': 'https://www.recordedfuture.com/feed',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'Intel 471 Blog',
+        'type': 'rss',
+        'value': 'https://www.intel471.com/blog/feed',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'Sygnia Blog',
+        'type': 'rss',
+        'value': 'https://www.sygnia.co/blog/feed/',
+        'tier': 'medium',
+        'category': 'ir_firm',
+    },
+    {
+        'name': 'Check Point Research',
+        'type': 'rss',
+        'value': 'https://research.checkpoint.com/feed/',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'The DFIR Report',
+        'type': 'domain',
+        'value': 'thedfirreport.com',
+        'tier': 'medium',
+        'category': 'dfir',
+    },
+    {
+        'name': 'Recorded Future',
+        'type': 'domain',
+        'value': 'recordedfuture.com',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'Intel 471',
+        'type': 'domain',
+        'value': 'intel471.com',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'Sygnia',
+        'type': 'domain',
+        'value': 'sygnia.co',
+        'tier': 'medium',
+        'category': 'ir_firm',
+    },
+    {
+        'name': 'Check Point',
+        'type': 'domain',
+        'value': 'checkpoint.com',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+]
+SOURCE_CANDIDATES_BATCH2 = [
+    {
+        'name': 'Malwarebytes Labs',
+        'type': 'rss',
+        'value': 'https://www.malwarebytes.com/blog/feed/index.xml',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'Zero Day Initiative Blog',
+        'type': 'rss',
+        'value': 'https://www.zerodayinitiative.com/blog?format=rss',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'NetWitness Blog',
+        'type': 'rss',
+        'value': 'https://www.netwitness.com/en-us/blog/feed/',
+        'tier': 'medium',
+        'category': 'dfir',
+    },
+    {
+        'name': 'Corelight Labs',
+        'type': 'rss',
+        'value': 'https://corelight.com/blog/rss.xml',
+        'tier': 'medium',
+        'category': 'dfir',
+    },
+    {
+        'name': 'EclecticIQ Blog',
+        'type': 'rss',
+        'value': 'https://blog.eclecticiq.com/rss.xml',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'LevelBlue SpiderLabs Blog',
+        'type': 'rss',
+        'value': 'https://www.levelblue.com/en-us/resources/blogs/spiderlabs-blog/rss.xml',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'CERT-FR',
+        'type': 'rss',
+        'value': 'https://www.cert.ssi.gouv.fr/feed/',
+        'tier': 'high',
+        'category': 'cert',
+    },
+    {
+        'name': 'Malwarebytes',
+        'type': 'domain',
+        'value': 'malwarebytes.com',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'Zero Day Initiative',
+        'type': 'domain',
+        'value': 'zerodayinitiative.com',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'NetWitness',
+        'type': 'domain',
+        'value': 'netwitness.com',
+        'tier': 'medium',
+        'category': 'dfir',
+    },
+    {
+        'name': 'Corelight',
+        'type': 'domain',
+        'value': 'corelight.com',
+        'tier': 'medium',
+        'category': 'dfir',
+    },
+    {
+        'name': 'EclecticIQ',
+        'type': 'domain',
+        'value': 'eclecticiq.com',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'LevelBlue',
+        'type': 'domain',
+        'value': 'levelblue.com',
+        'tier': 'medium',
+        'category': 'vendor_research',
+    },
+    {
+        'name': 'CERT-FR',
+        'type': 'domain',
+        'value': 'cert.ssi.gouv.fr',
+        'tier': 'high',
+        'category': 'cert',
+    },
+]
 ACTOR_SEARCH_DOMAINS = [
     'cisa.gov',
     'fbi.gov',
@@ -278,6 +463,7 @@ HIGH_CONFIDENCE_SOURCE_DOMAINS.update(
     {
         'jpcert.or.jp',
         'jvn.jp',
+        'cert.ssi.gouv.fr',
     }
 )
 MEDIUM_CONFIDENCE_SOURCE_DOMAINS.update(
@@ -285,6 +471,17 @@ MEDIUM_CONFIDENCE_SOURCE_DOMAINS.update(
         'cisco.com',
         'fortinet.com',
         'ivanti.com',
+        'thedfirreport.com',
+        'recordedfuture.com',
+        'intel471.com',
+        'sygnia.co',
+        'checkpoint.com',
+        'malwarebytes.com',
+        'zerodayinitiative.com',
+        'netwitness.com',
+        'corelight.com',
+        'eclecticiq.com',
+        'levelblue.com',
     }
 )
 ACTOR_SEARCH_DOMAINS.extend(
@@ -304,6 +501,18 @@ ACTOR_SEARCH_DOMAINS.extend(
         'trendmicro.com',
         'welivesecurity.com',
         'eset.com',
+        'thedfirreport.com',
+        'recordedfuture.com',
+        'intel471.com',
+        'sygnia.co',
+        'checkpoint.com',
+        'malwarebytes.com',
+        'zerodayinitiative.com',
+        'netwitness.com',
+        'corelight.com',
+        'eclecticiq.com',
+        'levelblue.com',
+        'cert.ssi.gouv.fr',
     ]
 )
 TRUSTED_ACTIVITY_DOMAINS = set(ACTOR_SEARCH_DOMAINS + ['attack.mitre.org'])
@@ -363,6 +572,9 @@ SOURCE_QUALITY_OVERWRITE_ON_UPSERT = os.environ.get('SOURCE_QUALITY_OVERWRITE_ON
 RATE_LIMIT_WINDOW_SECONDS = max(1, int(os.environ.get('RATE_LIMIT_WINDOW_SECONDS', '60')))
 RATE_LIMIT_DEFAULT_PER_MINUTE = max(1, int(os.environ.get('RATE_LIMIT_DEFAULT_PER_MINUTE', '60')))
 RATE_LIMIT_HEAVY_PER_MINUTE = max(1, int(os.environ.get('RATE_LIMIT_HEAVY_PER_MINUTE', '15')))
+BACKFILL_DEBUG_UI = os.environ.get('BACKFILL_DEBUG_UI', os.environ.get('UVICORN_RELOAD', '0')).strip().lower() in {
+    '1', 'true', 'yes', 'on',
+}
 _RATE_LIMIT_STATE: dict[str, deque[float]] = defaultdict(deque)
 _RATE_LIMIT_LOCK = Lock()
 _RATE_LIMIT_REQUEST_COUNTER = 0
@@ -1820,6 +2032,7 @@ def _upsert_source_for_actor(
     site_name: str | None = None,
     source_tier: str | None = None,
     confidence_weight: int | None = None,
+    source_type: str | None = None,
     refresh_existing_content: bool = False,
 ) -> str:
     resolved_source_tier = str(source_tier or '').strip() or _source_tier_label(source_url)
@@ -1842,6 +2055,7 @@ def _upsert_source_for_actor(
         html_title=html_title,
         publisher=publisher,
         site_name=site_name,
+        source_type=source_type,
         source_tier=resolved_source_tier,
         confidence_weight=resolved_confidence_weight,
         overwrite_source_quality=SOURCE_QUALITY_OVERWRITE_ON_UPSERT,
@@ -1850,6 +2064,27 @@ def _upsert_source_for_actor(
             'source_fingerprint': _source_fingerprint,
             'new_id': lambda: str(uuid.uuid4()),
             'now_iso': utc_now_iso,
+        },
+    )
+
+
+def run_cold_actor_backfill(
+    actor_id: str,
+    actor_name: str,
+    actor_aliases: list[str] | None = None,
+) -> dict[str, object]:
+    return web_backfill_service.run_cold_actor_backfill_core(
+        actor_id=actor_id,
+        actor_name=actor_name,
+        actor_aliases=actor_aliases or [],
+        deps={
+            'db_path': _db_path,
+            'sqlite_connect': sqlite3.connect,
+            'utc_now_iso': utc_now_iso,
+            'http_get': httpx.get,
+            'derive_source_from_url': derive_source_from_url,
+            'upsert_source_for_actor': _upsert_source_for_actor,
+            'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
         },
     )
 
@@ -2243,6 +2478,9 @@ def _fetch_actor_notebook_deps(
             connection,
             actor_id=actor,
         ),
+        'run_cold_actor_backfill': run_cold_actor_backfill,
+        'rebuild_notebook': build_notebook,
+        'backfill_debug_ui_enabled': BACKFILL_DEBUG_UI,
     }
 
 

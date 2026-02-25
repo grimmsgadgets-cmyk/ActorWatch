@@ -44,6 +44,7 @@ def upsert_source_for_actor(
     site_name: str | None = None,
     source_tier: str | None = None,
     confidence_weight: int | None = None,
+    source_type: str | None = None,
     overwrite_source_quality: bool = False,
     refresh_existing_content: bool = False,
     *,
@@ -60,12 +61,14 @@ def upsert_source_for_actor(
         SELECT id
         FROM sources
         WHERE actor_id = ? AND url = ?
-        ORDER BY COALESCE(published_at, retrieved_at) DESC, retrieved_at DESC, id DESC
+        ORDER BY COALESCE(published_at, ingested_at, retrieved_at) DESC, retrieved_at DESC, id DESC
         ''',
         (actor_id, source_url),
     ).fetchall()
     if existing_rows:
         existing_id = str(existing_rows[0][0])
+        now_value = now_iso()
+        date_type = 'published' if str(published_at or '').strip() else 'ingested'
         duplicate_ids = [str(row[0]) for row in existing_rows[1:]]
         for duplicate_id in duplicate_ids:
             connection.execute(
@@ -97,6 +100,11 @@ def upsert_source_for_actor(
                         ELSE pasted_text
                     END,
                     published_at = COALESCE(?, published_at),
+                    ingested_at = COALESCE(NULLIF(ingested_at, ''), ?),
+                    source_date_type = CASE
+                        WHEN COALESCE(TRIM(?), '') <> '' THEN 'published'
+                        ELSE COALESCE(NULLIF(source_date_type, ''), 'ingested')
+                    END,
                     retrieved_at = ?,
                     title = COALESCE(?, title),
                     headline = COALESCE(?, headline),
@@ -104,6 +112,7 @@ def upsert_source_for_actor(
                     html_title = COALESCE(?, html_title),
                     publisher = COALESCE(?, publisher),
                     site_name = COALESCE(?, site_name),
+                    source_type = COALESCE(?, source_type),
                     source_tier = COALESCE(?, source_tier)
                 WHERE id = ?
                 ''',
@@ -112,13 +121,16 @@ def upsert_source_for_actor(
                     final_text,
                     final_text,
                     published_at,
-                    now_iso(),
+                    now_value,
+                    published_at,
+                    now_value,
                     title_value,
                     headline_value,
                     og_title_value,
                     html_title_value,
                     publisher_value,
                     site_name_value,
+                    str(source_type or '').strip() or None,
                     source_tier_value,
                     existing_id,
                 ),
@@ -136,6 +148,7 @@ def upsert_source_for_actor(
                             html_title = COALESCE(NULLIF(html_title, ''), ?),
                             publisher = COALESCE(NULLIF(publisher, ''), ?),
                             site_name = COALESCE(NULLIF(site_name, ''), ?),
+                            source_type = COALESCE(NULLIF(?, ''), source_type),
                             source_tier = COALESCE(NULLIF(?, ''), source_tier)
                         WHERE id = ?
                         ''',
@@ -146,6 +159,7 @@ def upsert_source_for_actor(
                             str(html_title or '').strip() or None,
                             str(publisher or '').strip() or None,
                             str(site_name or '').strip() or None,
+                            str(source_type or '').strip() or None,
                             str(source_tier or '').strip() or None,
                             existing_id,
                         ),
@@ -160,6 +174,7 @@ def upsert_source_for_actor(
                             html_title = COALESCE(NULLIF(html_title, ''), ?),
                             publisher = COALESCE(NULLIF(publisher, ''), ?),
                             site_name = COALESCE(NULLIF(site_name, ''), ?),
+                            source_type = COALESCE(NULLIF(source_type, ''), ?),
                             source_tier = COALESCE(NULLIF(source_tier, ''), ?)
                         WHERE id = ?
                         ''',
@@ -170,6 +185,7 @@ def upsert_source_for_actor(
                             str(html_title or '').strip() or None,
                             str(publisher or '').strip() or None,
                             str(site_name or '').strip() or None,
+                            str(source_type or '').strip() or None,
                             str(source_tier or '').strip() or None,
                             existing_id,
                         ),
@@ -231,11 +247,11 @@ def upsert_source_for_actor(
     connection.execute(
         '''
         INSERT INTO sources (
-            id, actor_id, source_name, url, published_at, retrieved_at, pasted_text,
+            id, actor_id, source_name, url, published_at, ingested_at, source_date_type, retrieved_at, pasted_text,
             source_fingerprint, title, headline, og_title, html_title, publisher, site_name,
-            source_tier, confidence_weight
+            source_type, source_tier, confidence_weight
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
             source_id,
@@ -243,6 +259,8 @@ def upsert_source_for_actor(
             source_name,
             source_url,
             published_at,
+            now_iso(),
+            'published' if str(published_at or '').strip() else 'ingested',
             now_iso(),
             final_text,
             fingerprint or None,
@@ -252,6 +270,7 @@ def upsert_source_for_actor(
             str(html_title or '').strip() or None,
             str(publisher or '').strip() or None,
             str(site_name or '').strip() or None,
+            str(source_type or '').strip() or 'manual',
             str(source_tier or '').strip() or None,
             int(confidence_weight) if confidence_weight is not None else None,
         ),

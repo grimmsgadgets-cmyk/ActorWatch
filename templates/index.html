@@ -865,27 +865,38 @@
         {% if notebook.priority_questions %}
         <section class="card span-2 decision-queue" data-step="action" id="section-nextchecks">
           <div class="decision-header">
-            <h2 class="section-title" style="margin:0;">Quick checks<span class="role-chip">Do next</span></h2>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="section-title" style="margin:0;">Quick checks</h2>
+              <button type="button" id="quick-check-do-next" style="padding:6px 10px; border:1px solid #9fb3d5; border-radius:8px; background:#eef4ff; cursor:pointer;">DO NEXT</button>
+            </div>
             <div>
+              {% if notebook.backfill_notice %}
+              <span class="badge">{{ notebook.backfill_notice }}</span>
+              <span> | </span>
+              {% endif %}
+              {% if notebook.backfill_debug %}
+              <span class="actor-scope">{{ notebook.backfill_debug }}</span>
+              <span> | </span>
+              {% endif %}
               <a href="/actors/{{ notebook.actor.id }}/questions">Open workspace</a>
               <span> | </span>
-              <a href="/actors/{{ notebook.actor.id }}/hunts/iocs">IOC hunt queries</a>
+              <a href="/actors/{{ notebook.actor.id }}/hunts/iocs?window_days=30">IOC hunt queries</a>
             </div>
           </div>
           <div class="dq-list">
-            {% for question in notebook.priority_questions[:3] %}
-            <details class="dq-row{% if loop.first %} open{% endif %}" {% if loop.first %}open{% endif %}>
+            {% for question in notebook.priority_questions %}
+            <details class="dq-row" data-quick-check="1" data-quick-check-rank="{{ loop.index0 }}">
               <summary>
-                <strong>{{ question.quick_check_title }}</strong>
-                <span class="pbadge {{ question.priority.lower() }}">{{ question.priority }}</span>
+                <strong>{{ question.title or question.quick_check_title }}</strong>
+                <span class="pbadge {{ question.severity.lower() if question.severity else question.priority.lower() }}">{{ question.severity or question.priority }}</span>
               </summary>
               <div class="dq-detail">
                 <div class="dq-line"><strong>Behavior to hunt:</strong> {{ question.behavior_to_hunt or question.decision_trigger }}</div>
-                <div class="dq-line"><strong>Where to start:</strong> {{ question.first_step or question.telemetry_anchor }}</div>
-                <div class="dq-line"><strong>What to watch:</strong> {{ question.what_to_look_for or question.success_condition or question.decision_trigger }}</div>
+                <div class="dq-line"><strong>Where to start:</strong> {{ question.where_to_start or question.first_step or question.telemetry_anchor }}</div>
+                <div class="dq-line"><strong>What to watch:</strong> {{ question.what_to_watch or question.what_to_look_for or question.success_condition or question.decision_trigger }}</div>
                 <div class="dq-line"><strong>Required data:</strong>
                   {% if question.required_data %}
-                    {{ question.required_data | join(' | ') }}
+                    {{ question.required_data }}
                   {% else %}
                     Windows Event Logs with host/user context.
                   {% endif %}
@@ -896,23 +907,15 @@
                   {% if question.evidence_used %}
                     {{ question.evidence_used | join(' | ') }}
                   {% else %}
-                    No thread-linked evidence in last 30 days.
+                    No actor-linked evidence in last 30 days.
                   {% endif %}
                 </div>
-                <div class="dq-line"><a href="/actors/{{ notebook.actor.id }}/hunts/iocs?thread_id={{ question.id }}">Open IOC hunt queries for this check</a></div>
+                <div class="dq-line"><a href="/actors/{{ notebook.actor.id }}/hunts/iocs?quick_check_id={{ (question.quick_check_id or question.check_template_id or question.id) | urlencode }}&window_start={{ question.window_start | urlencode }}&window_end={{ question.window_end | urlencode }}">Open IOC hunt queries for this check</a></div>
                 <div class="feedback-actions">
                   <button type="button" class="question-feedback-btn positive" data-thread-id="{{ question.id }}" data-feedback="useful">Useful</button>
                   <button type="button" class="question-feedback-btn negative" data-thread-id="{{ question.id }}" data-feedback="not_useful">Not useful</button>
                   <span class="feedback-status" id="feedback-status-{{ question.id }}"></span>
                 </div>
-                {% if question.related_iocs %}
-                <div class="dq-line">
-                  <strong>Relevant IOCs:</strong>
-                  {% for ioc in question.related_iocs %}
-                  <span class="badge">{{ ioc.ioc_type }}</span> {{ ioc.ioc_value }}{% if ioc.source_ref %} ({{ ioc.source_ref }}){% endif %}{% if not loop.last %} | {% endif %}
-                  {% endfor %}
-                </div>
-                {% endif %}
               </div>
             </details>
             {% endfor %}

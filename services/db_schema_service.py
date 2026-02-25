@@ -1,5 +1,5 @@
 def ensure_schema(connection) -> None:
-    schema_version = '2026-02-24.1'
+    schema_version = '2026-02-25.5'
     connection.execute(
         '''
         CREATE TABLE IF NOT EXISTS schema_meta (
@@ -37,6 +37,10 @@ def ensure_schema(connection) -> None:
     if not any(col[1] == 'canonical_name' for col in actor_cols):
         connection.execute(
             "ALTER TABLE actor_profiles ADD COLUMN canonical_name TEXT"
+        )
+    if not any(col[1] == 'aliases_csv' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN aliases_csv TEXT NOT NULL DEFAULT ''"
         )
     connection.execute(
         '''
@@ -147,9 +151,12 @@ def ensure_schema(connection) -> None:
             source_name TEXT NOT NULL,
             url TEXT NOT NULL,
             published_at TEXT,
+            ingested_at TEXT,
+            source_date_type TEXT,
             retrieved_at TEXT NOT NULL,
             pasted_text TEXT NOT NULL,
             source_fingerprint TEXT,
+            source_type TEXT,
             source_tier TEXT,
             confidence_weight INTEGER
         )
@@ -190,12 +197,73 @@ def ensure_schema(connection) -> None:
         connection.execute("ALTER TABLE sources ADD COLUMN site_name TEXT")
     if not any(col[1] == 'source_tier' for col in source_cols):
         connection.execute("ALTER TABLE sources ADD COLUMN source_tier TEXT")
+    if not any(col[1] == 'source_type' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN source_type TEXT")
     if not any(col[1] == 'confidence_weight' for col in source_cols):
         connection.execute("ALTER TABLE sources ADD COLUMN confidence_weight INTEGER")
+    if not any(col[1] == 'ingested_at' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN ingested_at TEXT")
+    if not any(col[1] == 'source_date_type' for col in source_cols):
+        connection.execute("ALTER TABLE sources ADD COLUMN source_date_type TEXT")
+    connection.execute(
+        '''
+        UPDATE sources
+        SET ingested_at = COALESCE(NULLIF(ingested_at, ''), retrieved_at)
+        '''
+    )
+    connection.execute(
+        '''
+        UPDATE sources
+        SET source_date_type = CASE
+            WHEN COALESCE(TRIM(published_at), '') <> '' THEN 'published'
+            ELSE 'ingested'
+        END
+        WHERE COALESCE(TRIM(source_date_type), '') = ''
+        '''
+    )
+    connection.execute(
+        '''
+        UPDATE sources
+        SET source_type = COALESCE(NULLIF(TRIM(source_type), ''), 'manual')
+        '''
+    )
     connection.execute(
         '''
         CREATE INDEX IF NOT EXISTS idx_sources_actor_fingerprint
         ON sources(actor_id, source_fingerprint)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS web_backfill_cache (
+            actor_id TEXT PRIMARY KEY,
+            queried_at TEXT NOT NULL,
+            result_urls_json TEXT NOT NULL DEFAULT '[]',
+            inserted_count INTEGER NOT NULL DEFAULT 0
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS backfill_runs (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            mode TEXT NOT NULL DEFAULT '',
+            queries_attempted INTEGER NOT NULL DEFAULT 0,
+            candidates_found INTEGER NOT NULL DEFAULT 0,
+            pages_fetched INTEGER NOT NULL DEFAULT 0,
+            pages_parsed_ok INTEGER NOT NULL DEFAULT 0,
+            sources_inserted INTEGER NOT NULL DEFAULT 0,
+            error_summary_json TEXT NOT NULL DEFAULT '{}'
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_backfill_runs_actor_started
+        ON backfill_runs(actor_id, started_at DESC)
         '''
     )
     connection.execute(

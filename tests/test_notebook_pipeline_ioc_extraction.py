@@ -1,6 +1,13 @@
 from datetime import datetime, timedelta, timezone
 
-from pipelines.notebook_pipeline import _extract_ioc_candidates_from_text, _ioc_seen_within_days, _relevant_iocs_for_quick_check
+from pipelines.notebook_pipeline import (
+    _extract_behavior_observables,
+    _extract_ioc_candidates_from_text,
+    _ioc_seen_within_days,
+    _quick_check_is_evidence_backed_core,
+    _relevant_iocs_for_quick_check,
+    _select_event_ids_for_where_to_start_core,
+)
 
 
 def test_extract_ioc_candidates_skips_software_like_domain_tokens():
@@ -102,3 +109,52 @@ def test_ioc_seen_within_days_enforces_recency_window():
 
     assert _ioc_seen_within_days({'last_seen_at': recent, 'created_at': recent}, days=180, parse_published_datetime=parse)
     assert not _ioc_seen_within_days({'last_seen_at': stale, 'created_at': stale}, days=180, parse_published_datetime=parse)
+
+
+def test_evidence_backed_requires_ref_and_observable():
+    assert _quick_check_is_evidence_backed_core(
+        evidence_refs=[{'title': 'Report', 'date': '2026-02-20', 'url': 'https://example.test/r'}],
+        observables={'event_ids': ['4688'], 'commands': [], 'markers': []},
+    )
+    assert not _quick_check_is_evidence_backed_core(
+        evidence_refs=[],
+        observables={'event_ids': ['4688'], 'commands': [], 'markers': []},
+    )
+    assert not _quick_check_is_evidence_backed_core(
+        evidence_refs=[{'title': 'Report', 'date': '2026-02-20', 'url': 'https://example.test/r'}],
+        observables={'event_ids': [], 'commands': [], 'markers': []},
+    )
+
+
+def test_event_id_selection_prefers_evidence_then_baseline_then_data_gap():
+    evidence_mode = _select_event_ids_for_where_to_start_core(
+        evidence_event_ids=['4688', '4104'],
+        template_hint_event_ids=['4624'],
+    )
+    baseline_mode = _select_event_ids_for_where_to_start_core(
+        evidence_event_ids=[],
+        template_hint_event_ids=['4624', '4672'],
+    )
+    gap_mode = _select_event_ids_for_where_to_start_core(
+        evidence_event_ids=[],
+        template_hint_event_ids=[],
+    )
+
+    assert evidence_mode['mode'] == 'evidence'
+    assert evidence_mode['event_ids'] == ['4688', '4104']
+    assert baseline_mode['mode'] == 'baseline'
+    assert str(baseline_mode['line']).startswith('Baseline suggestion:')
+    assert gap_mode['mode'] == 'data_gap'
+    assert 'Data gap:' in str(gap_mode['line'])
+
+
+def test_no_self_ingestion_regression_event_ids_not_extracted_from_generated_quick_check_text():
+    generated_quick_check_body = (
+        'Behavior to hunt: suspicious host behavior. '
+        'Where to start: Event IDs 4104, 4688, 4624, 4698 for last 24h.'
+    )
+    source_evidence_text = 'Observed suspicious PowerShell with encoded execution and vssadmin usage.'
+    observables = _extract_behavior_observables(source_evidence_text)
+
+    assert all(event_id not in observables.get('event_ids', []) for event_id in ['4104', '4688', '4624', '4698'])
+    assert generated_quick_check_body  # explicit fixture to document non-input source

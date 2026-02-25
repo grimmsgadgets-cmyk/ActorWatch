@@ -190,6 +190,8 @@ def derive_source_from_url_core(
     )
     if not published_at:
         published_at = published_hint
+    if not published_at and (parsed.hostname or '').strip('.').lower() == 'attack.mitre.org':
+        published_at = str(response.headers.get('Last-Modified') or '').strip() or None
 
     paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', content, flags=re.IGNORECASE | re.DOTALL)
     cleaned_paragraphs = [strip_html(paragraph) for paragraph in paragraphs]

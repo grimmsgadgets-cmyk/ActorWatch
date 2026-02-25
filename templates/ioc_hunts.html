@@ -6,94 +6,189 @@
     <title>IOC Hunt Queries</title>
     <style>
       body { margin: 0; padding: 16px; font-family: Arial, sans-serif; background: #f7f7f7; color: #111; }
-      .wrap { max-width: 1080px; margin: 0 auto; }
-      .top { margin-bottom: 12px; }
+      .wrap { max-width: 1120px; margin: 0 auto; }
       .muted { color: #475569; font-size: 12px; }
+      .card { background: #fff; border: 1px solid #d9e2ef; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
       .notice { background: #fff7d6; border: 1px solid #ead48f; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
-      .card { background: #fff; border: 1px solid #d9e2ef; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
-      .badge { display: inline-block; border: 1px solid #9db2d3; border-radius: 999px; font-size: 11px; padding: 2px 8px; margin-right: 6px; background: #eef4ff; }
-      .query { background: #f8fbff; border: 1px solid #d8e1ef; border-radius: 8px; padding: 10px; margin: 8px 0; }
+      .tabs { display: flex; gap: 6px; margin: 8px 0; }
+      .tab-btn { border: 1px solid #b9c9e4; background: #eef4ff; border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+      .tab-btn.active { background: #dce9ff; border-color: #8ea9d9; }
+      .tab-panel { display: none; }
+      .tab-panel.active { display: block; }
+      .query-panel { border: 1px solid #d8e1ef; border-radius: 8px; background: #f8fbff; padding: 10px; margin: 8px 0; }
       pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border-bottom: 1px solid #e5ebf5; padding: 8px; text-align: left; font-size: 12px; }
+      .filter-row { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)) auto; gap: 8px; align-items: end; }
+      .filter-row label { font-size: 12px; color: #334155; display: grid; gap: 4px; }
+      input, select, button { padding: 7px; border-radius: 6px; border: 1px solid #c8d5ea; }
+      .actions { display: flex; gap: 8px; }
       a { color: #2255aa; text-decoration: none; }
       a:hover { text-decoration: underline; }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <div class="top">
-        <a href="/?actor_id={{ actor_id }}">← Back to dashboard</a>
-        <h1>IOC Hunt Queries: {{ actor_name }}</h1>
-        <div class="muted">Queries are generated from actor evidence and IOC context only.</div>
-        <div class="muted">Dialect: {{ environment_profile.query_dialect }} | Time window: {{ environment_profile.default_time_window_hours }}h</div>
+      <div class="card">
+        <a href="/?actor_id={{ actor_id }}">&larr; Back to dashboard</a>
+        <h1 style="margin:8px 0 4px;">IOC hunt queries: {{ actor_name }}</h1>
+        <div class="muted">Actor scope: {{ actor_id }} | Window: {{ window_start }} to {{ window_end }}</div>
+        <div class="muted">Dialect: {{ environment_profile.query_dialect }} | Time window profile: {{ environment_profile.default_time_window_hours }}h</div>
+        {% if quick_check_id %}
+        <div class="muted">Check pre-filter: {{ quick_check_id }}</div>
+        {% endif %}
       </div>
 
       {% if reason %}
       <div class="notice">{{ reason }}</div>
       {% endif %}
       {% if not ollama_status.available %}
-      <div class="notice">Ollama is offline. Bring it online to generate evidence-backed hunt queries.</div>
+      <div class="notice">Ollama is offline. Generated query slots will show placeholders until configured.</div>
       {% endif %}
 
-      {% if cards %}
-      {% for card in cards %}
       <div class="card">
-        <h3>{{ card.title }}</h3>
-        {% if card.iocs %}
-        <div>
-          {% for ioc in card.iocs %}
-          <span class="badge">{{ ioc.ioc_type }}</span>{{ ioc.ioc_value }}{% if ioc.source_ref %} ({{ ioc.source_ref }}){% endif %}{% if not loop.last %} | {% endif %}
-          {% endfor %}
-        </div>
-        {% endif %}
+        <h2 style="margin:0 0 8px;">Primary IOC Hunts</h2>
+        {% for section in sections %}
+        <div class="query-panel">
+          <h3 style="margin:0 0 6px;">{{ section.label }}</h3>
+          <div class="tabs" data-tabs="{{ section.id }}">
+            <button type="button" class="tab-btn active" data-tab="{{ section.id }}-sentinel">Sentinel KQL</button>
+            <button type="button" class="tab-btn" data-tab="{{ section.id }}-splunk">Splunk SPL</button>
+            <button type="button" class="tab-btn" data-tab="{{ section.id }}-elastic">Elastic KQL/ES|QL</button>
+          </div>
 
-        {% if card.queries %}
-          {% for query in card.queries %}
-          <div class="query">
-            <div><strong>Platform:</strong> {{ query.platform }}</div>
-            {% if query.ioc_value %}<div><strong>IOC:</strong> {{ query.ioc_value }}</div>{% endif %}
-            {% if query.why_this_query %}<div><strong>Why:</strong> {{ query.why_this_query }}</div>{% endif %}
-            <pre>{{ query.query }}</pre>
-            <div class="muted">Query id: {{ query.query_id }} | Feedback score: {{ query.feedback_score }} ({{ query.feedback_votes }} votes)</div>
-            {% if query.evidence_sources %}
-            <div class="muted" style="margin-top:8px;"><strong>Evidence refs:</strong></div>
-            <ul>
-              {% for ref in query.evidence_sources %}
-              <li>
-                {% if ref.source_url %}<a href="{{ ref.source_url }}" target="_blank" rel="noreferrer">{{ ref.source_title or ref.id }}</a>{% else %}{{ ref.source_title or ref.id }}{% endif %}
-                {% if ref.source_date %}<span class="muted"> ({{ ref.source_date }})</span>{% endif %}
-              </li>
+          <div id="{{ section.id }}-sentinel" class="tab-panel active">
+            {% if section.platforms.sentinel %}
+              {% for item in section.platforms.sentinel %}
+              <div class="query-panel">
+                <div><strong>Required data sources/tables:</strong> {{ item.required_data }}</div>
+                <div><strong>What this returns:</strong> {{ item.returns }}</div>
+                <pre>{{ item.query }}</pre>
+              </div>
               {% endfor %}
-            </ul>
+            {% else %}
+            <div class="muted">Not configured</div>
             {% endif %}
           </div>
-          {% endfor %}
-        {% else %}
-        <p class="muted">No validated IOC hunt queries were generated for this check.</p>
-        {% endif %}
-      </div>
-      {% endfor %}
-      {% else %}
-      <div class="card">No quick checks with IOC + evidence context are available yet.</div>
-      {% endif %}
 
-      {% if misc_iocs_by_type %}
-      <div class="card">
-        <h3>Actor-related unmatched IOCs</h3>
-        <div class="muted">Valid actor-linked IOCs not currently attached to a specific quick check.</div>
-        {% for ioc_type, items in misc_iocs_by_type.items() %}
-        <h4>{{ ioc_type|upper }}</h4>
-        <ul>
-          {% for ioc in items %}
-          <li>
-            <span class="badge">{{ ioc.ioc_type }}</span>{{ ioc.ioc_value }}
-            {% if ioc.source_ref %}<span class="muted"> ({{ ioc.source_ref }})</span>{% endif %}
-            {% if ioc.confidence_score %}<span class="muted"> score={{ ioc.confidence_score }}</span>{% endif %}
-          </li>
-          {% endfor %}
-        </ul>
+          <div id="{{ section.id }}-splunk" class="tab-panel">
+            {% if section.platforms.splunk %}
+              {% for item in section.platforms.splunk %}
+              <div class="query-panel">
+                <div><strong>Required data sources/tables:</strong> {{ item.required_data }}</div>
+                <div><strong>What this returns:</strong> {{ item.returns }}</div>
+                <pre>{{ item.query }}</pre>
+              </div>
+              {% endfor %}
+            {% else %}
+            <div class="muted">Not configured</div>
+            {% endif %}
+          </div>
+
+          <div id="{{ section.id }}-elastic" class="tab-panel">
+            {% if section.platforms.elastic %}
+              {% for item in section.platforms.elastic %}
+              <div class="query-panel">
+                <div><strong>Required data sources/tables:</strong> {{ item.required_data }}</div>
+                <div><strong>What this returns:</strong> {{ item.returns }}</div>
+                <pre>{{ item.query }}</pre>
+              </div>
+              {% endfor %}
+            {% else %}
+            <div class="muted">Not configured</div>
+            {% endif %}
+          </div>
+        </div>
         {% endfor %}
       </div>
-      {% endif %}
+
+      <div class="card">
+        <h2 style="margin:0 0 8px;">Misc IOCs (from reports)</h2>
+        <div class="muted">Actor-related unmatched IOCs</div>
+        <form method="get" class="filter-row">
+          <input type="hidden" name="window_start" value="{{ window_start }}" />
+          <input type="hidden" name="window_end" value="{{ window_end }}" />
+          {% if quick_check_id %}<input type="hidden" name="quick_check_id" value="{{ quick_check_id }}" />{% endif %}
+          <label>Type
+            <select name="ioc_type">
+              <option value="" {% if not filters.ioc_type %}selected{% endif %}>All</option>
+              <option value="domain" {% if filters.ioc_type == 'domain' %}selected{% endif %}>domain</option>
+              <option value="ip" {% if filters.ioc_type == 'ip' %}selected{% endif %}>ip</option>
+              <option value="url" {% if filters.ioc_type == 'url' %}selected{% endif %}>url</option>
+              <option value="hash" {% if filters.ioc_type == 'hash' %}selected{% endif %}>hash</option>
+              <option value="email" {% if filters.ioc_type == 'email' %}selected{% endif %}>email</option>
+            </select>
+          </label>
+          <label>Confidence (min)
+            <input type="number" min="0" max="5" name="confidence" value="{{ filters.confidence }}" />
+          </label>
+          <label>Source count (min)
+            <input type="number" min="1" name="source_count" value="{{ filters.source_count }}" />
+          </label>
+          <label>Freshness
+            <select name="freshness">
+              <option value="" {% if not filters.freshness %}selected{% endif %}>Any</option>
+              <option value="24h" {% if filters.freshness == '24h' %}selected{% endif %}>24h</option>
+              <option value="7d" {% if filters.freshness == '7d' %}selected{% endif %}>7d</option>
+              <option value="30d" {% if filters.freshness == '30d' %}selected{% endif %}>30d</option>
+            </select>
+          </label>
+          <button type="submit">Apply</button>
+        </form>
+        <div class="actions" style="margin:8px 0;">
+          <a href="?window_start={{ window_start | urlencode }}&window_end={{ window_end | urlencode }}{% if quick_check_id %}&quick_check_id={{ quick_check_id | urlencode }}{% endif %}&ioc_type={{ filters.ioc_type | urlencode }}&confidence={{ filters.confidence | urlencode }}&source_count={{ filters.source_count | urlencode }}&freshness={{ filters.freshness | urlencode }}&export=csv">Export CSV</a>
+          <a href="?window_start={{ window_start | urlencode }}&window_end={{ window_end | urlencode }}{% if quick_check_id %}&quick_check_id={{ quick_check_id | urlencode }}{% endif %}&ioc_type={{ filters.ioc_type | urlencode }}&confidence={{ filters.confidence | urlencode }}&source_count={{ filters.source_count | urlencode }}&freshness={{ filters.freshness | urlencode }}&export=json">Export JSON</a>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>type</th>
+              <th>value</th>
+              <th>first_seen</th>
+              <th>last_seen</th>
+              <th>sources_count</th>
+              <th>confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in misc_iocs %}
+            <tr>
+              <td>{{ item.ioc_type }}</td>
+              <td>{{ item.ioc_value }}</td>
+              <td>{{ item.first_seen }}</td>
+              <td>{{ item.last_seen }}</td>
+              <td>{{ item.sources_count }}</td>
+              <td>{{ item.confidence }}</td>
+            </tr>
+            {% endfor %}
+            {% if not misc_iocs %}
+            <tr><td colspan="6" class="muted">No IOC rows in the actor-scoped last-30-day window.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
     </div>
+
+    <script>
+      (function () {
+        const groups = document.querySelectorAll("[data-tabs]");
+        groups.forEach((group) => {
+          const buttons = Array.from(group.querySelectorAll(".tab-btn"));
+          buttons.forEach((button) => {
+            button.addEventListener("click", () => {
+              const targetId = button.getAttribute("data-tab");
+              if (!targetId) return;
+              const parent = group.parentElement;
+              if (!parent) return;
+              buttons.forEach((btn) => btn.classList.remove("active"));
+              button.classList.add("active");
+              Array.from(parent.querySelectorAll(".tab-panel")).forEach((panel) => panel.classList.remove("active"));
+              const target = parent.querySelector("#" + CSS.escape(targetId));
+              if (target) target.classList.add("active");
+            });
+          });
+        });
+      })();
+    </script>
   </body>
 </html>

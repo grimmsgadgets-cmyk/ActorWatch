@@ -35,7 +35,7 @@ def list_actor_profiles_core(*, deps: dict[str, object]) -> list[dict[str, objec
         rows = connection.execute(
             '''
             SELECT
-                id, display_name, scope_statement, created_at, is_tracked,
+                id, display_name, scope_statement, created_at, is_tracked, aliases_csv,
                 notebook_status, notebook_message, notebook_updated_at,
                 last_refresh_duration_ms, last_refresh_sources_processed
             FROM actor_profiles
@@ -49,11 +49,12 @@ def list_actor_profiles_core(*, deps: dict[str, object]) -> list[dict[str, objec
             'scope_statement': row[2],
             'created_at': row[3],
             'is_tracked': bool(row[4]),
-            'notebook_status': row[5],
-            'notebook_message': row[6],
-            'notebook_updated_at': row[7],
-            'last_refresh_duration_ms': row[8],
-            'last_refresh_sources_processed': row[9],
+            'aliases_csv': str(row[5] or ''),
+            'notebook_status': row[6],
+            'notebook_message': row[7],
+            'notebook_updated_at': row[8],
+            'last_refresh_duration_ms': row[9],
+            'last_refresh_sources_processed': row[10],
         }
         for row in rows
     ]
@@ -135,13 +136,14 @@ def create_actor_profile_core(
 
         connection.execute(
             '''
-            INSERT INTO actor_profiles (id, display_name, canonical_name, scope_statement, created_at, is_tracked)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO actor_profiles (id, display_name, canonical_name, aliases_csv, scope_statement, created_at, is_tracked)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 actor_profile['id'],
                 actor_profile['display_name'],
                 canonical_name,
+                '',
                 actor_profile['scope_statement'],
                 actor_profile['created_at'],
                 1 if is_tracked else 0,

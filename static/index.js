@@ -14,6 +14,8 @@
         const envProfileSave = document.getElementById("env-profile-save");
         const envProfileStatus = document.getElementById("env-profile-status");
         const questionFeedbackButtons = Array.from(document.querySelectorAll(".question-feedback-btn"));
+        const quickCheckDoNext = document.getElementById("quick-check-do-next");
+        const quickCheckRows = Array.from(document.querySelectorAll("details[data-quick-check='1']"));
         const analystPackActorSelect = document.getElementById("analyst-pack-actor-select");
         const analystPackExportJsonLink = document.getElementById("analyst-pack-export-json-link");
         const analystPackExportPdfLink = document.getElementById("analyst-pack-export-pdf-link");
@@ -601,6 +603,24 @@
             submitQuestionFeedback(threadId, feedbackValue, statusNode);
           });
         });
+        if (quickCheckDoNext && quickCheckRows.length) {
+          quickCheckDoNext.addEventListener("click", () => {
+            const sortedRows = quickCheckRows
+              .slice()
+              .filter((row) => row && row.offsetParent !== null)
+              .sort((a, b) => {
+                const rankA = Number.parseInt(String(a.dataset.quickCheckRank || "999"), 10);
+                const rankB = Number.parseInt(String(b.dataset.quickCheckRank || "999"), 10);
+                const safeA = Number.isFinite(rankA) ? rankA : 999;
+                const safeB = Number.isFinite(rankB) ? rankB : 999;
+                return safeA - safeB;
+              });
+            const nextRow = sortedRows[0];
+            if (!nextRow) return;
+            nextRow.open = true;
+            nextRow.scrollIntoView({ behavior: "smooth", block: "start" });
+          });
+        }
 
         loadObservations();
         loadEnvironmentProfile();
