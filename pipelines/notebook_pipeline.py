@@ -6,6 +6,7 @@ from typing import Callable
 from fastapi import HTTPException
 import services.ioc_store_service as ioc_store_service
 import services.ioc_validation_service as ioc_validation_service
+import services.quick_checks_view_service as quick_checks_view_service
 
 
 def _quick_check_ioc_type_hints(text: str) -> set[str]:
@@ -499,6 +500,7 @@ def _extract_behavior_observables(text: str) -> dict[str, list[str]]:
         (r'\bpsexec\b', 'psexec'),
         (r'\brdp\b', 'rdp'),
         (r'\bsmb\b', 'smb'),
+        (r'\bpowershell\b', 'powershell'),
     ]
     commands: list[str] = []
     for pattern, label in command_patterns:
@@ -506,23 +508,115 @@ def _extract_behavior_observables(text: str) -> dict[str, list[str]]:
             commands.append(label)
 
     behavior_markers: list[str] = []
-    for marker in (
-        'recovery inhibition',
-        'service stop burst',
-        'encoded execution',
-        'remote logon pivot',
-        'beacon recurrence',
-        'archive staging',
-        'outbound upload',
-    ):
-        lookup = marker.replace(' ', r'\s+')
-        if re.search(lookup, normalized):
-            behavior_markers.append(marker)
+    marker_patterns: list[tuple[str, str]] = [
+        ('recovery inhibition', r'\brecovery\s+inhibit\w*\b|\bvssadmin\b|\bwbadmin\b|\bbcdedit\b'),
+        ('service stop burst', r'\bnet\s+stop\b|\bservice\s+stop\b'),
+        ('encoded execution', r'\b-enc\b|\bfrombase64string\b|\bencoded\b|\bpowershell\b'),
+        ('remote logon pivot', r'\bremote\s+logon\b|\blateral\b|\brdp\b|\bpsexec\b|\bwmic\b'),
+        ('beacon recurrence', r'\bbeacon(?:ing)?\b|\bcallback\b|\bc2\b|\bcommand\s+and\s+control\b'),
+        ('archive staging', r'\barchive\b|\b7zip\b|\brar\b|\bstag(?:e|ing)\b'),
+        ('outbound upload', r'\bupload\b|\bexfil\w*\b|\boutbound\b'),
+    ]
+    for label, pattern in marker_patterns:
+        if re.search(pattern, normalized):
+            behavior_markers.append(label)
 
     return {
         'event_ids': event_ids[:8],
         'commands': commands[:10],
         'markers': behavior_markers[:6],
+    }
+
+
+QUICK_CHECK_TEMPLATE_HINTS: dict[str, dict[str, list[str]]] = {
+    'impact': {
+        'event_ids': ['4688', '4104', '4698'],
+        'log_sources': ['Windows Security', 'PowerShell Script Block'],
+    },
+    'execution': {
+        'event_ids': ['4104', '4688', '4698'],
+        'log_sources': ['Windows Security', 'PowerShell Script Block'],
+    },
+    'lateral_movement': {
+        'event_ids': ['4624', '4648', '4672'],
+        'log_sources': ['Windows Security'],
+    },
+    'command_and_control': {
+        'event_ids': ['5156'],
+        'log_sources': ['Windows Security', 'DNS/Proxy'],
+    },
+    'exfiltration': {
+        'event_ids': ['4688'],
+        'log_sources': ['Windows Security', 'Proxy'],
+    },
+    'phishing': {
+        'event_ids': [],
+        'log_sources': ['Email Gateway', 'Identity Sign-in'],
+    },
+    'general_activity': {
+        'event_ids': [],
+        'log_sources': ['Windows Security'],
+    },
+}
+
+
+def _format_evidence_ref_core(*, title: str, date_value: str, url: str) -> str:
+    clean_title = str(title or '').strip() or 'Untitled report'
+    clean_url = str(url or '').strip()
+    clean_date = str(date_value or '').strip()
+    if clean_date and 'T' in clean_date:
+        clean_date = clean_date.split('T', 1)[0]
+    if clean_url:
+        return f'{clean_title} | {clean_date or "unknown date"} | {clean_url}'
+    return f'{clean_title} | {clean_date or "unknown date"}'
+
+
+def _quick_check_is_evidence_backed_core(
+    *,
+    evidence_refs: list[dict[str, str]],
+    observables: dict[str, list[str]],
+) -> bool:
+    has_refs = len(evidence_refs) >= 1
+    observable_count = sum(len(observables.get(key, [])) for key in ('event_ids', 'commands', 'markers'))
+    has_observables = observable_count >= 1
+    return has_refs and has_observables
+
+
+def _quick_check_update_effective_dt(
+    update: dict[str, object],
+    *,
+    parse_published_datetime: Callable[[str], datetime | None],
+) -> datetime | None:
+    for key in ('source_published_at', 'source_ingested_at', 'source_retrieved_at', 'created_at'):
+        parsed = parse_published_datetime(str(update.get(key) or ''))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _select_event_ids_for_where_to_start_core(
+    *,
+    evidence_event_ids: list[str],
+    template_hint_event_ids: list[str],
+) -> dict[str, object]:
+    evidence_ids = [str(item).strip() for item in evidence_event_ids if str(item).strip()]
+    hint_ids = [str(item).strip() for item in template_hint_event_ids if str(item).strip()]
+    if evidence_ids:
+        return {
+            'mode': 'evidence',
+            'event_ids': evidence_ids[:6],
+            'line': f'Event IDs {", ".join(evidence_ids[:6])}',
+        }
+    if hint_ids:
+        return {
+            'mode': 'baseline',
+            'event_ids': hint_ids[:6],
+            'line': f'Baseline suggestion: Event IDs {", ".join(hint_ids[:6])} (not evidence-linked)',
+        }
+    return {
+        'mode': 'data_gap',
+        'event_ids': [],
+        'line': 'Data gap: no evidence-derived event IDs in last 30 days. Validate logging coverage.',
     }
 
 
@@ -1378,7 +1472,6 @@ def fetch_actor_notebook_core(
     _safe_json_string_list = deps['safe_json_string_list']
     _actor_signal_categories = deps['actor_signal_categories']
     _question_actor_relevance = deps['question_actor_relevance']
-    _priority_update_evidence_dt = deps['priority_update_evidence_dt']
     _question_org_alignment = deps['question_org_alignment']
     _priority_rank_score = deps['priority_rank_score']
     _phase_label_for_question = deps['phase_label_for_question']
@@ -1421,10 +1514,83 @@ def fetch_actor_notebook_core(
     )
     _domain_from_url = deps.get('domain_from_url', lambda _url: '')
     _confidence_weight_adjustment = deps.get('confidence_weight_adjustment', lambda _score: 0)
+    _run_cold_actor_backfill = deps.get('run_cold_actor_backfill')
+    _rebuild_notebook = deps.get('rebuild_notebook')
+    _backfill_debug_ui_enabled = bool(deps.get('backfill_debug_ui_enabled', False))
 
     quick_check_overrides: dict[str, dict[str, str]] = {}
     question_feedback: dict[str, dict[str, int]] = {}
     source_reliability_map: dict[str, dict[str, object]] = {}
+    backfill_notice = ''
+    backfill_debug = ''
+    with sqlite3.connect(db_path) as precheck_connection:
+        actor_row_pre = precheck_connection.execute(
+            'SELECT display_name FROM actor_profiles WHERE id = ?',
+            (actor_id,),
+        ).fetchone()
+        if actor_row_pre is None:
+            raise HTTPException(status_code=404, detail='actor not found')
+        max_source_row = precheck_connection.execute(
+            '''
+            SELECT MAX(COALESCE(published_at, ingested_at, retrieved_at))
+            FROM sources
+            WHERE actor_id = ?
+            ''',
+            (actor_id,),
+        ).fetchone()
+        max_source_dt = _parse_published_datetime(str(max_source_row[0] or '')) if max_source_row is not None else None
+        cold_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        is_cold_actor = max_source_dt is None or max_source_dt < cold_cutoff
+    if is_cold_actor and callable(_run_cold_actor_backfill):
+        backfill_aliases: list[str] = []
+        try:
+            profile_for_alias = _build_actor_profile_from_mitre(str(actor_row_pre[0] or ''))
+            aliases_csv = str(profile_for_alias.get('aliases_csv') or '')
+            backfill_aliases = [item.strip() for item in aliases_csv.split(',') if item.strip()][:8]
+        except Exception:
+            backfill_aliases = []
+        try:
+            backfill_result = _run_cold_actor_backfill(
+                actor_id,
+                str(actor_row_pre[0] or actor_id),
+                backfill_aliases,
+            )
+        except Exception:
+            backfill_result = {'ran': False, 'inserted': 0}
+        telemetry = backfill_result.get('telemetry') if isinstance(backfill_result, dict) else {}
+        telemetry_dict = telemetry if isinstance(telemetry, dict) else {}
+        top_reason = str(backfill_result.get('top_error_reason') or '')
+        if _backfill_debug_ui_enabled and (bool(backfill_result.get('ran')) or int(backfill_result.get('inserted') or 0) > 0):
+            dropped_domains = backfill_result.get('dropped_domains') if isinstance(backfill_result, dict) else []
+            dropped_summary = 'none'
+            if isinstance(dropped_domains, list) and dropped_domains:
+                parts: list[str] = []
+                for item in dropped_domains[:3]:
+                    if not isinstance(item, list) or len(item) < 3:
+                        continue
+                    parts.append(f"{str(item[0])}:{str(item[1])}:{int(item[2])}")
+                if parts:
+                    dropped_summary = ','.join(parts)
+            backfill_debug = (
+                f"backfill: candidates={int(telemetry_dict.get('candidates_found') or 0)} "
+                f"prefetch_kept={int(telemetry_dict.get('prefetch_kept') or 0)} "
+                f"prefetch_dropped={int(telemetry_dict.get('prefetch_dropped') or 0)} "
+                f"fetched={int(telemetry_dict.get('pages_fetched') or 0)} "
+                f"inserted={int(backfill_result.get('inserted') or 0)} "
+                f"top_error={top_reason or 'none'} "
+                f"dropped_domains={dropped_summary}"
+            )
+        if int(backfill_result.get('inserted') or 0) > 0:
+            backfill_notice = 'Backfilled sources (cold actor)'
+        elif bool(backfill_result.get('ran')):
+            backfill_notice = 'Cold actor backfill ran (no new sources found)'
+        if int(backfill_result.get('inserted') or 0) > 0 and callable(_rebuild_notebook):
+            try:
+                _rebuild_notebook(actor_id, generate_questions=False, rebuild_timeline=True)
+                _rebuild_notebook(actor_id, generate_questions=True, rebuild_timeline=False)
+            except Exception:
+                pass
+
     with sqlite3.connect(db_path) as connection:
         actor_row = connection.execute(
             '''
@@ -1443,12 +1609,12 @@ def fetch_actor_notebook_core(
         sources = connection.execute(
             '''
             SELECT
-                id, source_name, url, published_at, retrieved_at, pasted_text,
+                id, source_name, url, published_at, ingested_at, source_date_type, retrieved_at, pasted_text,
                 title, headline, og_title, html_title, publisher, site_name,
                 source_tier, confidence_weight
             FROM sources
             WHERE actor_id = ?
-            ORDER BY COALESCE(published_at, retrieved_at) DESC
+            ORDER BY COALESCE(published_at, ingested_at, retrieved_at) DESC
             ''',
             (actor_id,),
         ).fetchall()
@@ -1458,16 +1624,18 @@ def fetch_actor_notebook_core(
                 'source_name': row[1],
                 'url': row[2],
                 'published_at': row[3],
-                'retrieved_at': row[4],
-                'pasted_text': row[5],
-                'title': row[6],
-                'headline': row[7],
-                'og_title': row[8],
-                'html_title': row[9],
-                'publisher': row[10],
-                'site_name': row[11],
-                'source_tier': row[12],
-                'confidence_weight': row[13],
+                'ingested_at': row[4],
+                'source_date_type': row[5],
+                'retrieved_at': row[6],
+                'pasted_text': row[7],
+                'title': row[8],
+                'headline': row[9],
+                'og_title': row[10],
+                'html_title': row[11],
+                'publisher': row[12],
+                'site_name': row[13],
+                'source_tier': row[14],
+                'confidence_weight': row[15],
             }
             for row in sources
         ]
@@ -1523,11 +1691,14 @@ def fetch_actor_notebook_core(
                     qu.created_at,
                     s.source_name,
                     s.url,
-                    s.published_at
+                    s.published_at,
+                    s.ingested_at,
+                    s.source_date_type,
+                    s.retrieved_at
                 FROM question_updates qu
                 JOIN sources s ON s.id = qu.source_id
                 WHERE qu.thread_id = ?
-                ORDER BY qu.created_at DESC
+                ORDER BY COALESCE(s.published_at, s.ingested_at, s.retrieved_at, qu.created_at) DESC, qu.created_at DESC
                 ''',
                 (thread_id,),
             ).fetchall()
@@ -1540,6 +1711,9 @@ def fetch_actor_notebook_core(
                     'source_name': update_row[4],
                     'source_url': update_row[5],
                     'source_published_at': update_row[6],
+                    'source_ingested_at': update_row[7],
+                    'source_date_type': update_row[8],
+                    'source_retrieved_at': update_row[9],
                 }
                 for update_row in update_rows
             ]
@@ -1715,10 +1889,34 @@ def fetch_actor_notebook_core(
     actor_categories = _actor_signal_categories(timeline_recent_items)
     signal_text = ' '.join([str(item.get('summary') or '') for item in timeline_recent_items]).lower()
     org_context_text = str(context_row[0]) if context_row and context_row[0] else ''
+    source_relevance_cutoff_30 = datetime.now(timezone.utc) - timedelta(days=30)
+    recent_source_blobs_30: list[str] = []
+    for source_row in sources:
+        effective_dt = _parse_published_datetime(str(source_row[3] or source_row[4] or source_row[6] or ''))
+        if effective_dt is None or effective_dt < source_relevance_cutoff_30:
+            continue
+        recent_source_blobs_30.append(
+            ' '.join(
+                [
+                    str(source_row[1] or ''),
+                    str(source_row[8] or ''),
+                    str(source_row[9] or ''),
+                    str(source_row[10] or ''),
+                    str(source_row[11] or ''),
+                    str(source_row[7] or ''),
+                ]
+            )
+        )
     scored_threads: list[dict[str, object]] = []
     for thread in open_threads:
         question_text = str(thread.get('question_text') or '')
         relevance = _question_actor_relevance(question_text, actor_categories, signal_text)
+        if relevance <= 0 and recent_source_blobs_30:
+            max_overlap = 0.0
+            for source_blob in recent_source_blobs_30:
+                max_overlap = max(max_overlap, float(_token_overlap(question_text, source_blob)))
+            if max_overlap >= 0.08:
+                relevance = 1
         if relevance <= 0:
             continue
         updates = thread.get('updates', [])
@@ -1726,7 +1924,10 @@ def fetch_actor_notebook_core(
         evidence_dts = [
             dt
             for dt in (
-                _priority_update_evidence_dt(update)
+                _quick_check_update_effective_dt(
+                    update,
+                    parse_published_datetime=_parse_published_datetime,
+                )
                 for update in updates_list
                 if isinstance(update, dict)
             )
@@ -1883,15 +2084,7 @@ def fetch_actor_notebook_core(
                 card['what_to_look_for'] = what_to_look_for
             if expected_output:
                 card['expected_output'] = expected_output
-    phase_group_order: list[str] = []
-    phase_groups_map: dict[str, list[dict[str, object]]] = {}
-    for card in priority_questions:
-        phase = str(card.get('phase_label') or 'Operational Signal')
-        if phase not in phase_groups_map:
-            phase_groups_map[phase] = []
-            phase_group_order.append(phase)
-        phase_groups_map[phase].append(card)
-    priority_phase_groups = [{'phase': phase, 'cards': phase_groups_map[phase]} for phase in phase_group_order]
+    priority_phase_groups: list[dict[str, object]] = []
 
     source_items = [
         {
@@ -1899,16 +2092,18 @@ def fetch_actor_notebook_core(
             'source_name': row[1],
             'url': row[2],
             'published_at': row[3],
-            'retrieved_at': row[4],
-            'pasted_text': row[5],
-            'title': row[6],
-            'headline': row[7],
-            'og_title': row[8],
-            'html_title': row[9],
-            'publisher': row[10],
-            'site_name': row[11],
-            'source_tier': row[12],
-            'confidence_weight': row[13],
+            'ingested_at': row[4],
+            'source_date_type': row[5],
+            'retrieved_at': row[6],
+            'pasted_text': row[7],
+            'title': row[8],
+            'headline': row[9],
+            'og_title': row[10],
+            'html_title': row[11],
+            'publisher': row[12],
+            'site_name': row[13],
+            'source_tier': row[14],
+            'confidence_weight': row[15],
         }
         for row in sources
     ]
@@ -1947,7 +2142,7 @@ def fetch_actor_notebook_core(
         except Exception:
             normalized_source_days = None
 
-    ioc_recency_days = max(30, min(365, int(normalized_source_days or 180)))
+    ioc_recency_days = 30
     ioc_items = [
         item
         for item in ioc_items
@@ -1975,6 +2170,7 @@ def fetch_actor_notebook_core(
                 'ioc_value': ioc_value,
                 'source_ref': str(item.get('source_ref') or ''),
                 'confidence_score': int(item.get('confidence_score') or 0),
+                'last_seen_at': str(item.get('last_seen_at') or item.get('created_at') or ''),
             }
         )
     now_utc = datetime.now(timezone.utc)
@@ -1995,12 +2191,52 @@ def fetch_actor_notebook_core(
         category_counts_30[category] = category_counts_30.get(category, 0) + 1
     top_categories_30 = sorted(category_counts_30.items(), key=lambda row: row[1], reverse=True)[:3]
     top_categories_label = ', '.join([f'{name} ({count})' for name, count in top_categories_30]) or 'general activity'
+    source_by_id = {
+        str(source.get('id') or '').strip(): source
+        for source in source_items
+        if isinstance(source, dict) and str(source.get('id') or '').strip()
+    }
     thread_by_id = {
         str(thread.get('id') or ''): thread
         for thread in thread_items
         if isinstance(thread, dict) and str(thread.get('id') or '').strip()
     }
-    event_id_pattern = re.compile(r'\b(?:1[0-9]{3}|2[0-9]{3}|3[0-9]{3}|4[0-9]{3}|5[0-9]{3})\b')
+    window_start_30_iso = cutoff_30.astimezone(timezone.utc).isoformat()
+    window_end_30_iso = now_utc.astimezone(timezone.utc).isoformat()
+    recent_source_pool: list[dict[str, object]] = []
+    for source in source_items:
+        if not isinstance(source, dict):
+            continue
+        effective_dt = _parse_published_datetime(
+            str(
+                source.get('published_at')
+                or source.get('ingested_at')
+                or source.get('retrieved_at')
+                or ''
+            )
+        )
+        if effective_dt is None or effective_dt < cutoff_30:
+            continue
+        source_text_blob = ' '.join(
+            [
+                str(source.get('title') or ''),
+                str(source.get('headline') or ''),
+                str(source.get('og_title') or ''),
+                str(source.get('html_title') or ''),
+                str(source.get('pasted_text') or ''),
+            ]
+        ).strip()
+        recent_source_pool.append(
+            {
+                'source': source,
+                'effective_dt': effective_dt,
+                'text_blob': source_text_blob,
+            }
+        )
+    recent_source_pool.sort(
+        key=lambda item: item.get('effective_dt') if isinstance(item.get('effective_dt'), datetime) else datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
 
     for card in priority_questions:
         related = _relevant_iocs_for_quick_check(card, quick_check_ioc_pool, limit=4)
@@ -2018,9 +2254,61 @@ def fetch_actor_notebook_core(
         for update in updates:
             if not isinstance(update, dict):
                 continue
-            evidence_dt = _priority_update_evidence_dt(update)
+            evidence_dt = _quick_check_update_effective_dt(
+                update,
+                parse_published_datetime=_parse_published_datetime,
+            )
             if evidence_dt is not None and evidence_dt >= cutoff_30:
                 recent_updates.append(update)
+        if not recent_updates and recent_source_pool:
+            card_context = ' '.join(
+                [
+                    str(actor_name or ''),
+                    str(card.get('question_text') or ''),
+                    str(card.get('quick_check_title') or ''),
+                    str(card.get('phase_label') or ''),
+                ]
+            ).strip()
+            fallback_candidates: list[tuple[float, datetime, dict[str, object]]] = []
+            seen_urls: set[str] = set()
+            for pool_item in recent_source_pool:
+                source_obj = pool_item.get('source')
+                if not isinstance(source_obj, dict):
+                    continue
+                source_url = str(source_obj.get('url') or '').strip()
+                if not source_url or source_url in seen_urls:
+                    continue
+                seen_urls.add(source_url)
+                source_text_blob = str(pool_item.get('text_blob') or '')
+                relevance = float(_token_overlap(card_context, source_text_blob)) if source_text_blob else 0.0
+                actor_hit = actor_name.lower() in source_text_blob.lower() if actor_name and source_text_blob else False
+                if relevance < 0.08 and not actor_hit:
+                    continue
+                effective_dt_obj = pool_item.get('effective_dt')
+                if not isinstance(effective_dt_obj, datetime):
+                    continue
+                fallback_candidates.append(
+                    (
+                        relevance,
+                        effective_dt_obj,
+                        {
+                            'id': f"src-fallback-{str(source_obj.get('id') or '')}",
+                            'trigger_excerpt': str(source_obj.get('title') or source_obj.get('headline') or card.get('question_text') or '').strip(),
+                            'update_note': '',
+                            'created_at': effective_dt_obj.astimezone(timezone.utc).isoformat(),
+                            'source_name': str(source_obj.get('source_name') or '').strip(),
+                            'source_url': source_url,
+                            'source_published_at': str(source_obj.get('published_at') or '').strip(),
+                            'source_ingested_at': str(source_obj.get('ingested_at') or '').strip(),
+                            'source_date_type': str(source_obj.get('source_date_type') or '').strip() or (
+                                'published' if str(source_obj.get('published_at') or '').strip() else 'ingested'
+                            ),
+                            'source_retrieved_at': str(source_obj.get('retrieved_at') or '').strip(),
+                        },
+                    )
+                )
+            fallback_candidates.sort(key=lambda item: (item[1], item[0]), reverse=True)
+            recent_updates = [item[2] for item in fallback_candidates[:4]]
         recent_source_count = len(
             {
                 str(update.get('source_url') or update.get('source_name') or '').strip().lower()
@@ -2035,31 +2323,6 @@ def fetch_actor_notebook_core(
             label = str(update.get('source_name') or update.get('source_url') or '').strip()
             if label and label not in recent_source_labels:
                 recent_source_labels.append(label)
-        source_label_text = ', '.join(recent_source_labels[:3]) or 'recent actor reporting'
-        context_blob = ' '.join(
-            [
-                str(card.get('question_text') or ''),
-                str(card.get('first_step') or ''),
-                str(card.get('what_to_look_for') or ''),
-                str(card.get('query_hint') or ''),
-            ]
-            + [str(update.get('trigger_excerpt') or '') for update in recent_updates[:5] if isinstance(update, dict)]
-        )
-        event_ids = []
-        for token in event_id_pattern.findall(context_blob):
-            if token not in event_ids:
-                event_ids.append(token)
-        if related:
-            top_iocs = [
-                str(item.get('ioc_value') or '').strip()
-                for item in related[:2]
-                if isinstance(item, dict) and str(item.get('ioc_value') or '').strip()
-            ]
-        else:
-            top_iocs = []
-        ioc_hint = ', '.join(top_iocs)
-        event_id_label = ', '.join(event_ids[:4]) if event_ids else ''
-
         phase_hint = str(card.get('phase_label') or '').strip().lower()
         phase_behavior_map = {
             'initial access': 'phishing',
@@ -2070,7 +2333,147 @@ def fetch_actor_notebook_core(
             'exfiltration': 'exfiltration',
             'impact': 'impact',
         }
-        behavior_id = phase_behavior_map.get(phase_hint) or _behavior_id_from_context(context_blob, phase_hint)
+        evidence_text_parts: list[str] = []
+        for update in recent_updates:
+            if not isinstance(update, dict):
+                continue
+            source_url = str(update.get('source_url') or '').strip()
+            trigger_excerpt = str(update.get('trigger_excerpt') or '').strip()
+            if trigger_excerpt:
+                evidence_text_parts.append(trigger_excerpt)
+            source_match = None
+            for source_item in source_items:
+                if not isinstance(source_item, dict):
+                    continue
+                if str(source_item.get('url') or '').strip() == source_url:
+                    source_match = source_item
+                    break
+            if source_match is not None:
+                source_text = str(source_match.get('pasted_text') or '').strip()
+                if source_text:
+                    evidence_text_parts.append(source_text[:4000])
+        evidence_context_blob = ' '.join(evidence_text_parts).strip()
+        behavior_id = phase_behavior_map.get(phase_hint) or _behavior_id_from_context(evidence_context_blob, phase_hint)
+        behavior_category_map = {
+            'impact': {'impact'},
+            'exfiltration': {'exfiltration'},
+            'lateral_movement': {'lateral_movement'},
+            'execution': {'execution', 'persistence', 'defense_evasion'},
+            'command_and_control': {'command_and_control'},
+            'phishing': {'initial_access'},
+            'general_activity': {'initial_access', 'execution', 'persistence', 'lateral_movement', 'command_and_control', 'exfiltration', 'impact'},
+        }
+        matched_categories = behavior_category_map.get(behavior_id, behavior_category_map['general_activity'])
+        timeline_matches = [
+            item
+            for item in recent_30_timeline
+            if str(item.get('category') or '').strip().lower() in matched_categories
+        ]
+        timeline_dates = [
+            dt
+            for dt in (
+                _parse_published_datetime(str(item.get('occurred_at') or ''))
+                for item in timeline_matches
+                if isinstance(item, dict)
+            )
+            if dt is not None
+        ]
+        ioc_dates = [
+            dt
+            for dt in (
+                _parse_published_datetime(str(item.get('last_seen_at') or ''))
+                for item in related
+                if isinstance(item, dict)
+            )
+            if dt is not None
+        ]
+        update_dates = [
+            dt
+            for dt in (
+                _quick_check_update_effective_dt(
+                    update,
+                    parse_published_datetime=_parse_published_datetime,
+                )
+                for update in recent_updates
+                if isinstance(update, dict)
+            )
+            if dt is not None
+        ]
+        all_evidence_dates = update_dates + timeline_dates + ioc_dates
+        last_seen_evidence_at = max(all_evidence_dates).astimezone(timezone.utc).isoformat() if all_evidence_dates else ''
+        source_refs: list[dict[str, str]] = []
+        seen_ref_keys: set[tuple[str, str]] = set()
+        recent_updates_sorted = sorted(
+            [item for item in recent_updates if isinstance(item, dict)],
+            key=lambda item: _quick_check_update_effective_dt(
+                item,
+                parse_published_datetime=_parse_published_datetime,
+            ) or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        for update in recent_updates_sorted:
+            if not isinstance(update, dict):
+                continue
+            ref_title = str(update.get('source_name') or '').strip()
+            ref_url = str(update.get('source_url') or '').strip()
+            ref_date_type = 'published'
+            ref_date_raw = str(update.get('source_published_at') or '').strip()
+            if not ref_date_raw:
+                ref_date_raw = str(update.get('source_ingested_at') or '').strip()
+                ref_date_type = str(update.get('source_date_type') or 'ingested').strip().lower() or 'ingested'
+            if not ref_date_raw:
+                ref_date_raw = str(update.get('source_retrieved_at') or '').strip()
+                ref_date_type = 'retrieved'
+            ref_date = ref_date_raw.split('T', 1)[0] if 'T' in ref_date_raw else ref_date_raw
+            if ref_date and ref_date_type == 'ingested':
+                ref_date = f'{ref_date} (ingested)'
+            dedupe_key = (ref_url, ref_date)
+            if (not ref_url) or dedupe_key in seen_ref_keys:
+                continue
+            seen_ref_keys.add(dedupe_key)
+            source_refs.append(
+                {
+                    'title': ref_title or ref_url,
+                    'date': ref_date,
+                    'url': ref_url,
+                }
+            )
+            if len(source_refs) >= 4:
+                break
+        observables = _extract_behavior_observables(evidence_context_blob)
+        evidence_backed = _quick_check_is_evidence_backed_core(
+            evidence_refs=source_refs,
+            observables=observables,
+        )
+        card['evidence_backed'] = evidence_backed
+        card['evidence_tier'] = 'A' if evidence_backed else 'D'
+        card['has_evidence'] = evidence_backed
+        card['last_seen_evidence_at'] = last_seen_evidence_at
+        source_label_text = ', '.join(recent_source_labels[:3]) or 'recent actor reporting'
+        event_ids = [str(token).strip() for token in observables.get('event_ids', []) if str(token).strip()]
+        if related:
+            top_iocs = [
+                str(item.get('ioc_value') or '').strip()
+                for item in related[:2]
+                if isinstance(item, dict) and str(item.get('ioc_value') or '').strip()
+            ]
+        else:
+            top_iocs = []
+        ioc_hint = ', '.join(top_iocs)
+        template_hints = QUICK_CHECK_TEMPLATE_HINTS.get(
+            behavior_id,
+            QUICK_CHECK_TEMPLATE_HINTS['general_activity'],
+        )
+        selected_event_scope = _select_event_ids_for_where_to_start_core(
+            evidence_event_ids=event_ids,
+            template_hint_event_ids=template_hints.get('event_ids', []),
+        )
+        selected_event_ids = [
+            str(item).strip()
+            for item in (selected_event_scope.get('event_ids') if isinstance(selected_event_scope, dict) else [])
+            if str(item).strip()
+        ]
+
         behavior_watch_map = {
             'phishing': 'Repeated suspicious sender domains, lookalike addresses, and clustered subjects targeting same teams.',
             'impact': 'Recovery-inhibit commands, service-stop bursts, and rapid host-level disruption behavior.',
@@ -2090,58 +2493,40 @@ def fetch_actor_notebook_core(
             'general_activity': 'Repeated suspicious host/user activity requiring triage and scoping.',
         }
 
-        observables = _extract_behavior_observables(
-            ' '.join(
-                [context_blob]
-                + [str(update.get('trigger_excerpt') or '') for update in recent_updates if isinstance(update, dict)]
-            )
-        )
         observable_lines: list[str] = []
         for cmd in observables.get('commands', [])[:5]:
             observable_lines.append(f'command token: `{cmd}`')
-        for event_id in observables.get('event_ids', [])[:4]:
+        for event_id in event_ids[:4]:
             observable_lines.append(f'event id: `{event_id}`')
         for marker in observables.get('markers', [])[:3]:
             observable_lines.append(f'behavior marker: `{marker}`')
         for ioc in top_iocs[:3]:
             observable_lines.append(f'ioc pivot: `{ioc}`')
-        data_gap = len(recent_updates) == 0 or (len(observable_lines) == 0 and len(top_iocs) == 0)
+        data_gap = not evidence_backed
 
-        if recent_updates:
+        if evidence_backed:
             card['decision_trigger'] = (
                 f'Last-30d evidence for this check: {len(recent_updates)} linked updates from '
                 f'{max(1, recent_source_count)} corroborating sources.'
             )
         else:
-            card['decision_trigger'] = 'Last-30d evidence for this check is limited; run behavior baseline and confirm gaps.'
+            card['decision_trigger'] = 'Data gap: no actor-linked evidence in last 30 days.'
         card['telemetry_anchor'] = str(card.get('telemetry_anchor') or 'Windows Event Logs').strip()
         if not override_first_step:
-            behavior_event_defaults = {
-                'impact': ['4688', '4104', '4698'],
-                'execution': ['4104', '4688', '4698'],
-                'lateral_movement': ['4624', '4648', '4672'],
-                'command_and_control': ['4104', '4688'],
-                'exfiltration': ['4688'],
-                'phishing': [],
-                'general_activity': ['4104', '4688', '4624', '4698'],
-            }
-            selected_event_ids = event_ids[:4] if event_ids else behavior_event_defaults.get(behavior_id, [])
             observable_cmds = observables.get('commands', []) if isinstance(observables, dict) else []
             if data_gap:
-                if selected_event_ids:
+                baseline_line = str(selected_event_scope.get('line') or '').strip()
+                if str(selected_event_scope.get('mode') or '') == 'baseline':
                     first_step = (
-                        'Data gap: no thread-linked 30-day observables. '
-                        f'Baseline last 24h with Event IDs {", ".join(selected_event_ids)} and validate command-line/script logging coverage.'
+                        'Data gap: no actor-linked evidence-derived observables in last 30 days. '
+                        f'{baseline_line}.'
                     )
                 else:
-                    first_step = (
-                        'Data gap: no thread-linked 30-day observables. '
-                        'Start by validating telemetry coverage for this behavior and run a 24h baseline by host/user.'
-                    )
+                    first_step = str(selected_event_scope.get("line") or "").strip()
             else:
                 if selected_event_ids:
                     first_step = (
-                        f'Start with Event IDs {", ".join(selected_event_ids)} for the last 24h; '
+                        f'Start with {str(selected_event_scope.get("line") or "").strip()} for the last 24h; '
                         'cluster repeated host/user pairs, then pivot ±30 minutes around repeats.'
                     )
                 else:
@@ -2159,15 +2544,19 @@ def fetch_actor_notebook_core(
 
         if not override_what_to_look_for:
             watch_line = behavior_watch_map.get(behavior_id, behavior_watch_map['general_activity'])
-            if observable_lines:
+            if evidence_backed and observable_lines:
                 watch_line = f'{watch_line} Observables: ' + '; '.join(observable_lines[:8]) + '.'
             card['what_to_look_for'] = watch_line
 
         behavior_queries = _behavior_query_pack(
             behavior_id=behavior_id,
             ioc_values=top_iocs,
-            event_ids=event_ids,
+            event_ids=selected_event_ids,
         )
+        card['check_template_id'] = card_id
+        card['quick_check_id'] = card_id
+        card['query_bundle_key'] = behavior_id
+        card['mitre_ids'] = []
         card['behavior_queries'] = behavior_queries
 
         if not override_query_hint:
@@ -2183,11 +2572,12 @@ def fetch_actor_notebook_core(
         if top_iocs:
             required_data.append('Actor-linked IOC values for pivoting in same 24h window.')
         card['required_data'] = required_data
+        card['required_telemetry'] = list(required_data)
 
         card['data_gap'] = data_gap
         if data_gap:
             card['success_condition'] = (
-                'Data gap: insufficient thread-linked 30-day evidence to assert actor-specific behavior. Run baseline hunt and collect evidence.'
+                'Data gap: insufficient actor-linked 30-day evidence to assert actor-specific behavior. Run baseline hunt and collect evidence.'
             )
         else:
             card['success_condition'] = (
@@ -2202,14 +2592,60 @@ def fetch_actor_notebook_core(
             'Output table: host_or_system, user_or_sid, event_id, timestamp, behavior_tag, evidence_note, source_reference.'
         )
         card['expected_output'] = card['analyst_output']
-        evidence_used: list[str] = []
-        for label in recent_source_labels[:5]:
-            evidence_used.append(label)
-        if top_iocs:
-            evidence_used.append('IOC pivots: ' + ', '.join(top_iocs[:3]))
+        evidence_used = [
+            _format_evidence_ref_core(
+                title=str(item.get('title') or ''),
+                date_value=str(item.get('date') or ''),
+                url=str(item.get('url') or ''),
+            )
+            for item in source_refs[:2]
+        ]
         if not evidence_used:
-            evidence_used.append('No thread-linked evidence in last 30 days.')
+            evidence_used = ['No actor-linked evidence in last 30 days.']
         card['evidence_used'] = evidence_used
+        card['window_start'] = window_start_30_iso
+        card['window_end'] = window_end_30_iso
+        card['severity'] = str(card.get('priority') or 'Low')
+        card['title'] = str(card.get('quick_check_title') or card.get('question_text') or '')
+        card['behavior_to_hunt'] = str(card.get('behavior_to_hunt') or '')
+        card['where_to_start'] = str(card.get('first_step') or '')
+        card['what_to_watch'] = str(card.get('what_to_look_for') or '')
+        card['required_data'] = ' | '.join(str(item) for item in required_data)
+        card['decision_rule'] = str(card.get('decision_rule') or '')
+        card['analyst_output'] = str(card.get('analyst_output') or '')
+        card['populated_text_fields'] = {
+            'behavior_to_hunt': str(card.get('behavior_to_hunt') or ''),
+            'where_to_start': str(card.get('where_to_start') or card.get('first_step') or ''),
+            'what_to_watch': str(card.get('what_to_watch') or card.get('what_to_look_for') or ''),
+            'required_data': str(card.get('required_data') or ''),
+            'decision_rule': str(card.get('decision_rule') or ''),
+            'analyst_output': str(card.get('analyst_output') or ''),
+            'evidence_used': ' | '.join(str(item) for item in card.get('evidence_used', []) if str(item).strip()),
+        }
+        quick_checks_view_service.apply_no_evidence_rule_core(card)
+        if not evidence_backed:
+            card['first_step'] = str(card.get('first_step') or '').strip()
+            card['where_to_start'] = str(card.get('first_step') or '')
+            card['evidence_used'] = ['No actor-linked evidence in last 30 days.']
+        else:
+            card['where_to_start'] = str(card.get('first_step') or '')
+        card['what_to_watch'] = str(card.get('what_to_look_for') or '')
+        card['decision_rule'] = str(card.get('success_condition') or card.get('decision_rule') or '')
+        card['analyst_output'] = str(card.get('analyst_output') or card.get('expected_output') or '')
+    priority_questions = quick_checks_view_service.rank_quick_checks_core(priority_questions)
+    for rank_index, card in enumerate(priority_questions):
+        card['quick_check_rank'] = rank_index
+
+    phase_group_order: list[str] = []
+    phase_groups_map: dict[str, list[dict[str, object]]] = {}
+    for card in priority_questions:
+        phase = str(card.get('phase_label') or 'Operational Signal')
+        if phase not in phase_groups_map:
+            phase_groups_map[phase] = []
+            phase_group_order.append(phase)
+        phase_groups_map[phase].append(card)
+    priority_phase_groups = [{'phase': phase, 'cards': phase_groups_map[phase]} for phase in phase_group_order]
+
     strict_default_mode = (
         normalized_source_tier is None
         and normalized_min_confidence is None
@@ -2497,6 +2933,8 @@ def fetch_actor_notebook_core(
         ],
         'priority_questions': priority_questions,
         'priority_phase_groups': priority_phase_groups,
+        'backfill_notice': backfill_notice,
+        'backfill_debug': backfill_debug,
         'counts': {
             'sources': len(sources),
             'timeline_events': len(timeline_rows),
