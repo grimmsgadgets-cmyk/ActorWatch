@@ -19,6 +19,78 @@
         const analystPackActorSelect = document.getElementById("analyst-pack-actor-select");
         const analystPackExportJsonLink = document.getElementById("analyst-pack-export-json-link");
         const analystPackExportPdfLink = document.getElementById("analyst-pack-export-pdf-link");
+        const uiActivityStrip = document.getElementById("ui-activity-strip");
+        const uiActivityText = document.getElementById("ui-activity-text");
+        const uiToastStack = document.getElementById("ui-toast-stack");
+        const sectionNextChecks = document.getElementById("section-nextchecks");
+        const sectionLearning = document.getElementById("section-learning");
+        const sectionHistory = document.getElementById("section-history-left");
+        let activeUiOps = 0;
+        let activityClearTimer = 0;
+
+        function showToast(type, message) {
+          if (!uiToastStack || !message) return;
+          const toast = document.createElement("div");
+          toast.className = "ui-toast " + String(type || "info");
+          toast.textContent = String(message || "");
+          uiToastStack.appendChild(toast);
+          window.setTimeout(() => {
+            if (toast.parentNode) toast.parentNode.removeChild(toast);
+          }, 2600);
+        }
+
+        function setActivity(state, message) {
+          if (!uiActivityStrip || !uiActivityText) return;
+          window.clearTimeout(activityClearTimer);
+          uiActivityStrip.hidden = false;
+          uiActivityStrip.className = "notice status-chip ui-activity-strip status-" + String(state || "idle");
+          uiActivityText.textContent = String(message || "Idle");
+        }
+
+        function beginUiOp(message) {
+          activeUiOps += 1;
+          setActivity("running", message || "Working...");
+        }
+
+        function finishUiOp(message) {
+          activeUiOps = Math.max(0, activeUiOps - 1);
+          if (activeUiOps > 0) return;
+          setActivity("ready", message || "Done.");
+          activityClearTimer = window.setTimeout(() => {
+            if (!uiActivityStrip || activeUiOps > 0) return;
+            uiActivityStrip.hidden = true;
+          }, 1600);
+        }
+
+        function failUiOp(message) {
+          activeUiOps = Math.max(0, activeUiOps - 1);
+          setActivity("error", message || "Action failed.");
+        }
+
+        function setRegionBusy(node, busy) {
+          if (!node) return;
+          if (busy) {
+            node.classList.add("region-busy");
+            node.setAttribute("aria-busy", "true");
+          } else {
+            node.classList.remove("region-busy");
+            node.setAttribute("aria-busy", "false");
+          }
+        }
+
+        function setButtonLoading(button, loading, loadingText) {
+          if (!button) return;
+          if (loading) {
+            if (!button.dataset.originalLabel) button.dataset.originalLabel = String(button.textContent || "");
+            button.textContent = String(loadingText || "Working...");
+            button.disabled = true;
+            button.classList.add("is-loading-btn");
+          } else {
+            button.textContent = String(button.dataset.originalLabel || button.textContent || "");
+            button.disabled = false;
+            button.classList.remove("is-loading-btn");
+          }
+        }
 
         async function fetchLiveState() {
           const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/ui/live", { headers: { "Accept": "application/json" } });
@@ -108,6 +180,9 @@
             field_mapping: {},
             default_time_window_hours: Math.max(1, parseInt(String(envTimeWindow.value || "24"), 10) || 24)
           };
+          setButtonLoading(envProfileSave, true, "Saving...");
+          setRegionBusy(sectionLearning, true);
+          beginUiOp("Saving learning profile...");
           if (envProfileStatus) envProfileStatus.textContent = "Saving...";
           try {
             const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/environment-profile", {
@@ -117,21 +192,33 @@
             });
             if (!response.ok) {
               if (envProfileStatus) envProfileStatus.textContent = "Save failed";
+              failUiOp("Learning profile save failed.");
+              showToast("error", "Learning profile save failed.");
               return;
             }
             if (envProfileStatus) envProfileStatus.textContent = "Saved";
+            finishUiOp("Learning profile saved.");
+            showToast("success", "Learning profile saved.");
           } catch (error) {
             if (envProfileStatus) envProfileStatus.textContent = "Save failed";
+            failUiOp("Learning profile save failed.");
+            showToast("error", "Learning profile save failed.");
+          } finally {
+            setButtonLoading(envProfileSave, false);
+            setRegionBusy(sectionLearning, false);
           }
         }
 
-        async function submitQuestionFeedback(threadId, feedbackValue, statusNode) {
+        async function submitQuestionFeedback(threadId, feedbackValue, statusNode, triggerButton) {
           const payload = {
             item_type: "priority_question",
             item_id: String(threadId || ""),
             feedback: String(feedbackValue || "partial"),
             reason: ""
           };
+          setButtonLoading(triggerButton, true, "Saving...");
+          setRegionBusy(sectionNextChecks, true);
+          beginUiOp("Saving quick-check feedback...");
           if (statusNode) statusNode.textContent = "Saving...";
           try {
             const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/feedback", {
@@ -141,11 +228,20 @@
             });
             if (!response.ok) {
               if (statusNode) statusNode.textContent = "Failed";
+              failUiOp("Quick-check feedback failed.");
+              showToast("error", "Quick-check feedback failed.");
               return;
             }
             if (statusNode) statusNode.textContent = "Recorded";
+            finishUiOp("Quick-check feedback saved.");
+            showToast("success", "Quick-check feedback saved.");
           } catch (error) {
             if (statusNode) statusNode.textContent = "Failed";
+            failUiOp("Quick-check feedback failed.");
+            showToast("error", "Quick-check feedback failed.");
+          } finally {
+            setButtonLoading(triggerButton, false);
+            setRegionBusy(sectionNextChecks, false);
           }
         }
 
@@ -496,6 +592,7 @@
         }
 
         async function loadObservations() {
+          setRegionBusy(sectionHistory, true);
           try {
             const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/observations?limit=500", { headers: { "Accept": "application/json" } });
             if (!response.ok) return;
@@ -508,6 +605,8 @@
             renderObservationLedger();
           } catch (error) {
             // Keep page usable even if observation endpoint is unavailable.
+          } finally {
+            setRegionBusy(sectionHistory, false);
           }
         }
 
@@ -524,7 +623,18 @@
               if (!currentlyOpen) {
                 const historyNode = card.querySelector("[data-observation-history]");
                 if (historyNode) historyNode.textContent = "Loading history...";
-                await loadObservationHistory(itemType, itemKey);
+                setButtonLoading(historyToggle, true, "Loading...");
+                setRegionBusy(sectionHistory, true);
+                beginUiOp("Loading note history...");
+                try {
+                  await loadObservationHistory(itemType, itemKey);
+                  finishUiOp("History loaded.");
+                } catch (_error) {
+                  failUiOp("History load failed.");
+                } finally {
+                  setButtonLoading(historyToggle, false);
+                  setRegionBusy(sectionHistory, false);
+                }
               }
               observationCards
                 .filter((candidate) => (candidate.dataset.observationItemType || "") === itemType && (candidate.dataset.observationItemKey || "") === itemKey)
@@ -549,6 +659,9 @@
               note: note
             };
             try {
+              setButtonLoading(saveButton, true, "Saving...");
+              setRegionBusy(sectionHistory, true);
+              beginUiOp("Saving analyst note...");
               const metaNode = card.querySelector("[data-observation-meta]");
               if (metaNode) metaNode.textContent = "Saving...";
               const response = await fetch(
@@ -558,6 +671,8 @@
               if (!response.ok) {
                 const metaNode = card.querySelector("[data-observation-meta]");
                 if (metaNode) metaNode.textContent = "Save failed. Retry.";
+                failUiOp("Analyst note save failed.");
+                showToast("error", "Analyst note save failed.");
                 return;
               }
               const data = await response.json();
@@ -574,9 +689,16 @@
                   applyObservationHistoryCard(candidate);
                 });
               renderObservationLedger();
+              finishUiOp("Analyst note saved.");
+              showToast("success", "Analyst note saved.");
             } catch (error) {
               const metaNode = card.querySelector("[data-observation-meta]");
               if (metaNode) metaNode.textContent = "Save failed. Retry.";
+              failUiOp("Analyst note save failed.");
+              showToast("error", "Analyst note save failed.");
+            } finally {
+              setButtonLoading(saveButton, false);
+              setRegionBusy(sectionHistory, false);
             }
           });
         });
@@ -600,7 +722,7 @@
             const feedbackValue = String(button.getAttribute("data-feedback") || "partial");
             const statusNode = document.getElementById("feedback-status-" + threadId);
             if (!threadId) return;
-            submitQuestionFeedback(threadId, feedbackValue, statusNode);
+            submitQuestionFeedback(threadId, feedbackValue, statusNode, button);
           });
         });
         if (quickCheckDoNext && quickCheckRows.length) {

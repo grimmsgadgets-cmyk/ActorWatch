@@ -251,6 +251,14 @@
       .status-llm-ok { background: #eaf9ef; border-color: #9fd2ac; }
       .status-llm-bad { background: #ffeceb; border-color: #e4a8a3; }
       .status-working { background: #eef6ff; border-color: #8fb2e8; }
+      .ui-activity-strip { max-width: 520px; }
+      .region-busy { opacity: 0.55; pointer-events: none; transition: opacity 120ms ease; }
+      .is-loading-btn { opacity: 0.85; cursor: progress; }
+      .ui-toast-stack { position: fixed; right: 14px; bottom: 14px; z-index: 60; display: grid; gap: 8px; width: min(340px, calc(100vw - 28px)); }
+      .ui-toast { border-radius: 8px; border: 1px solid #c8d7ef; padding: 8px 10px; font-size: 12px; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12); background: #f8fbff; color: #0f172a; }
+      .ui-toast.success { background: #edf9f0; border-color: #a9d9b3; }
+      .ui-toast.error { background: #fff0ef; border-color: #e4b1ad; }
+      .ui-toast.info { background: #eef5ff; border-color: #b5caec; }
       .progress-wrap { margin-top: 4px; background: #dfe9f7; border-radius: 999px; height: 6px; overflow: hidden; width: 120px; }
       .progress-bar { height: 6px; width: 35%; background: #4a7bd0; border-radius: 999px; animation: loading 1.1s linear infinite; }
       @keyframes loading { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
@@ -748,6 +756,9 @@
             <span class="live-pill" id="live-indicator">Live sync on</span>
           </div>
           {% endif %}
+          <div id="ui-activity-strip" class="notice status-chip ui-activity-strip status-idle" role="status" aria-live="polite" hidden>
+            <strong>Activity:</strong> <span id="ui-activity-text">Idle</span>
+          </div>
         </div>
         {% if refresh_stats %}
         <div class="ops-health">
@@ -1122,5 +1133,6 @@
     {% if notebook %}
     <script src="/static/index.js" defer></script>
     {% endif %}
+    <div id="ui-toast-stack" class="ui-toast-stack" aria-live="polite" aria-atomic="false"></div>
   </body>
 </html>

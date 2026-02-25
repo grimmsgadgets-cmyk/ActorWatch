@@ -5,26 +5,55 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>IOC Hunt Queries</title>
     <style>
+      * { box-sizing: border-box; }
       body { margin: 0; padding: 16px; font-family: Arial, sans-serif; background: #f7f7f7; color: #111; }
-      .wrap { max-width: 1120px; margin: 0 auto; }
+      .wrap { width: 100%; max-width: 1700px; margin: 0 auto; }
       .muted { color: #475569; font-size: 12px; }
       .card { background: #fff; border: 1px solid #d9e2ef; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
       .notice { background: #fff7d6; border: 1px solid #ead48f; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+      .sections-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(540px, 1fr)); gap: 12px; align-items: start; }
+      .section-card { display: block; align-self: start; border: 1px solid #d8e1ef; border-radius: 10px; background: #fff; padding: 0; margin: 0; overflow: hidden; }
+      .section-details { border: none; border-radius: 0; background: transparent; }
+      .section-summary { cursor: pointer; list-style: none; padding: 10px 12px; font-weight: 600; border-bottom: 1px solid #d8e1ef; background: #f3f7ff; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .section-summary::-webkit-details-marker { display: none; }
+      .section-summary::after { content: "▸"; color: #36588d; font-size: 12px; }
+      details[open] > .section-summary::after { content: "▾"; }
+      .section-summary small { font-weight: 400; color: #4b607f; font-size: 11px; }
+      .section-body { padding: 10px; }
+      .sticky-controls { position: sticky; top: 8px; z-index: 5; background: #fff; border: 1px solid #d9e2ef; border-radius: 8px; padding: 8px; margin-bottom: 10px; }
       .tabs { display: flex; gap: 6px; margin: 8px 0; }
       .tab-btn { border: 1px solid #b9c9e4; background: #eef4ff; border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
       .tab-btn.active { background: #dce9ff; border-color: #8ea9d9; }
       .tab-panel { display: none; }
       .tab-panel.active { display: block; }
-      .query-panel { border: 1px solid #d8e1ef; border-radius: 8px; background: #f8fbff; padding: 10px; margin: 8px 0; }
-      pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px; }
+      .query-panel { border: 1px solid #e4ebf7; border-radius: 8px; background: #f9fbff; padding: 10px; margin: 8px 0; display: flex; flex-direction: column; min-height: 320px; }
+      .query-split { display: grid; grid-template-columns: 1fr; gap: 10px; align-items: stretch; height: 100%; }
+      .query-meta { font-size: 12px; color: #334155; border: 1px solid #dbe7fb; border-radius: 8px; padding: 8px; background: #f4f8ff; }
+      .query-content { display: flex; flex-direction: column; min-height: 220px; }
+      pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px; min-height: 210px; max-height: 210px; overflow: auto; }
       table { width: 100%; border-collapse: collapse; }
       th, td { border-bottom: 1px solid #e5ebf5; padding: 8px; text-align: left; font-size: 12px; }
       .filter-row { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)) auto; gap: 8px; align-items: end; }
       .filter-row label { font-size: 12px; color: #334155; display: grid; gap: 4px; }
       input, select, button { padding: 7px; border-radius: 6px; border: 1px solid #c8d5ea; }
       .actions { display: flex; gap: 8px; }
+      .lookback-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+      .lookback-btn { border: 1px solid #b9c9e4; background: #eef4ff; border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+      .lookback-btn.active { background: #dce9ff; border-color: #8ea9d9; }
+      .copy-btn { margin-top: 6px; border: 1px solid #b9c9e4; background: #eef4ff; border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
       a { color: #2255aa; text-decoration: none; }
       a:hover { text-decoration: underline; }
+      @media (min-width: 1400px) {
+        .query-split { grid-template-columns: minmax(220px, 320px) minmax(0, 1fr); }
+      }
+      @media (min-width: 1700px) {
+        .sections-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      }
+      @media (max-width: 1100px) {
+        .sections-grid { grid-template-columns: 1fr; }
+        .tabs { overflow-x: auto; padding-bottom: 4px; }
+        .sticky-controls { position: static; }
+      }
     </style>
   </head>
   <body>
@@ -33,55 +62,94 @@
         <a href="/?actor_id={{ actor_id }}">&larr; Back to dashboard</a>
         <h1 style="margin:8px 0 4px;">IOC hunt queries: {{ actor_name }}</h1>
         <div class="muted">Actor scope: {{ actor_id }} | IOC window: {{ window_start }} to {{ window_end }}</div>
-        <div class="muted">Dialect: {{ environment_profile.query_dialect }} | Query default lookback: {{ environment_profile.default_time_window_hours }}h (per-hunt query setting)</div>
+        <div class="muted">Dialect: {{ environment_profile.query_dialect }} | Query lookback: {{ query_lookback_hours }}h (execution window)</div>
+        <div class="muted">Note: IOC window controls which indicators are shown; query lookback controls how far each hunt query searches.</div>
         {% if quick_check_id %}
         <div class="muted">Check pre-filter: {{ quick_check_id }}</div>
         {% endif %}
       </div>
 
-      {% if reason %}
+      {% if reason and (not has_primary_queries) %}
       <div class="notice">{{ reason }}</div>
       {% endif %}
       {% if not ollama_status.available %}
       <div class="notice">Ollama is offline. Generated query slots will show placeholders until configured.</div>
       {% endif %}
+      {% if not has_primary_queries and not reason %}
+      <div class="notice">No cards with both IOC context and evidence in the selected window.</div>
+      {% endif %}
 
+      {% if has_primary_queries %}
       <div class="card">
         <h2 style="margin:0 0 8px;">Primary IOC Hunts</h2>
+        <form id="lookback-form" method="get" class="lookback-row sticky-controls">
+          <input type="hidden" name="window_start" value="{{ window_start }}" />
+          <input type="hidden" name="window_end" value="{{ window_end }}" />
+          {% if quick_check_id %}<input type="hidden" name="quick_check_id" value="{{ quick_check_id }}" />{% endif %}
+          {% if filters.ioc_type %}<input type="hidden" name="ioc_type" value="{{ filters.ioc_type }}" />{% endif %}
+          {% if filters.confidence %}<input type="hidden" name="confidence" value="{{ filters.confidence }}" />{% endif %}
+          {% if filters.source_count %}<input type="hidden" name="source_count" value="{{ filters.source_count }}" />{% endif %}
+          {% if filters.freshness %}<input type="hidden" name="freshness" value="{{ filters.freshness }}" />{% endif %}
+          <input type="hidden" name="query_lookback_hours" id="query-lookback-hours" value="{{ query_lookback_hours }}" />
+          <span class="muted">Run mode:</span>
+          {% for preset in lookback_presets %}
+          <button type="button" class="lookback-btn{% if preset.active %} active{% endif %}" data-lookback-hours="{{ preset.hours }}">{{ preset.label }}</button>
+          {% endfor %}
+        </form>
+        <div class="sections-grid">
         {% for section in sections %}
-        <div class="query-panel">
-          <h3 style="margin:0 0 6px;">{{ section.label }}</h3>
-          <div class="tabs" data-tabs="{{ section.id }}">
-            {% for tab in platform_tabs %}
-            <button type="button" class="tab-btn{% if loop.first %} active{% endif %}" data-tab="{{ section.id }}-{{ tab.key }}">{{ tab.label }}</button>
-            {% endfor %}
-          </div>
+        <div class="section-card">
+          <details class="section-details" open>
+            <summary class="section-summary">
+              <span>{{ section.label }}</span>
+              <small>Click to expand/collapse</small>
+            </summary>
+            <div class="section-body">
+              <div class="tabs" data-tabs="{{ section.id }}">
+                {% for tab in platform_tabs %}
+                <button type="button" class="tab-btn{% if loop.first %} active{% endif %}" data-tab="{{ section.id }}-{{ tab.key }}">{{ tab.label }}</button>
+                {% endfor %}
+              </div>
 
-          {% for tab in platform_tabs %}
-          <div id="{{ section.id }}-{{ tab.key }}" class="tab-panel{% if loop.first %} active{% endif %}">
-            {% if section.platforms[tab.key] %}
-              {% for item in section.platforms[tab.key] %}
-              <div class="query-panel">
-                <div><strong>Required data sources/tables:</strong> {{ item.required_data }}</div>
-                <div><strong>What this returns:</strong> {{ item.returns }}</div>
-                <pre>{{ item.query }}</pre>
+              {% for tab in platform_tabs %}
+              <div id="{{ section.id }}-{{ tab.key }}" class="tab-panel{% if loop.first %} active{% endif %}">
+                {% if section.platforms[tab.key] %}
+                  {% for item in section.platforms[tab.key] %}
+                  <div class="query-panel">
+                    <div class="query-split">
+                      <div class="query-meta">
+                        <div><strong>Required data sources/tables:</strong> {{ item.required_data }}</div>
+                        <div style="margin-top:6px;"><strong>What this returns:</strong> {{ item.returns }}</div>
+                      </div>
+                      <div class="query-content">
+                        <pre id="query-{{ section.id }}-{{ tab.key }}-{{ loop.index }}">{{ item.query }}</pre>
+                        <button type="button" class="copy-btn" data-copy-target="query-{{ section.id }}-{{ tab.key }}-{{ loop.index }}">Copy query</button>
+                      </div>
+                    </div>
+                  </div>
+                  {% endfor %}
+                {% else %}
+                <div class="muted">Not configured</div>
+                {% endif %}
               </div>
               {% endfor %}
-            {% else %}
-            <div class="muted">Not configured</div>
-            {% endif %}
-          </div>
-          {% endfor %}
+            </div>
+          </details>
         </div>
         {% endfor %}
+        </div>
       </div>
+      {% endif %}
 
       <div class="card">
-        <h2 style="margin:0 0 8px;">Misc IOCs (from reports)</h2>
+        <details id="misc-iocs-details">
+          <summary class="section-summary">Misc IOCs (from reports)</summary>
+          <div class="section-body">
         <div class="muted">Actor-related unmatched IOCs</div>
         <form method="get" class="filter-row">
           <input type="hidden" name="window_start" value="{{ window_start }}" />
           <input type="hidden" name="window_end" value="{{ window_end }}" />
+          <input type="hidden" name="query_lookback_hours" value="{{ query_lookback_hours }}" />
           {% if quick_check_id %}<input type="hidden" name="quick_check_id" value="{{ quick_check_id }}" />{% endif %}
           <label>Type
             <select name="ioc_type">
@@ -110,8 +178,8 @@
           <button type="submit">Apply</button>
         </form>
         <div class="actions" style="margin:8px 0;">
-          <a href="?window_start={{ window_start | urlencode }}&window_end={{ window_end | urlencode }}{% if quick_check_id %}&quick_check_id={{ quick_check_id | urlencode }}{% endif %}&ioc_type={{ filters.ioc_type | urlencode }}&confidence={{ filters.confidence | urlencode }}&source_count={{ filters.source_count | urlencode }}&freshness={{ filters.freshness | urlencode }}&export=csv">Export CSV</a>
-          <a href="?window_start={{ window_start | urlencode }}&window_end={{ window_end | urlencode }}{% if quick_check_id %}&quick_check_id={{ quick_check_id | urlencode }}{% endif %}&ioc_type={{ filters.ioc_type | urlencode }}&confidence={{ filters.confidence | urlencode }}&source_count={{ filters.source_count | urlencode }}&freshness={{ filters.freshness | urlencode }}&export=json">Export JSON</a>
+          <a href="?window_start={{ window_start | urlencode }}&window_end={{ window_end | urlencode }}&query_lookback_hours={{ query_lookback_hours | urlencode }}{% if quick_check_id %}&quick_check_id={{ quick_check_id | urlencode }}{% endif %}&ioc_type={{ filters.ioc_type | urlencode }}&confidence={{ filters.confidence | urlencode }}&source_count={{ filters.source_count | urlencode }}&freshness={{ filters.freshness | urlencode }}&export=csv">Export CSV</a>
+          <a href="?window_start={{ window_start | urlencode }}&window_end={{ window_end | urlencode }}&query_lookback_hours={{ query_lookback_hours | urlencode }}{% if quick_check_id %}&quick_check_id={{ quick_check_id | urlencode }}{% endif %}&ioc_type={{ filters.ioc_type | urlencode }}&confidence={{ filters.confidence | urlencode }}&source_count={{ filters.source_count | urlencode }}&freshness={{ filters.freshness | urlencode }}&export=json">Export JSON</a>
         </div>
         <table>
           <thead>
@@ -140,26 +208,124 @@
             {% endif %}
           </tbody>
         </table>
+          </div>
+        </details>
       </div>
     </div>
 
     <script>
       (function () {
+        const actorId = "{{ actor_id }}";
+        const tabStorageKey = `ioc_hunts_tab:${actorId}`;
+        const lookbackStorageKey = `ioc_hunts_lookback:${actorId}`;
+        const miscOpenKey = `ioc_hunts_misc_open:${actorId}`;
+        const lookbackForm = document.getElementById("lookback-form");
+        const lookbackInput = document.getElementById("query-lookback-hours");
+        const safeEscape = (value) => {
+          if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
+          return String(value).replace(/[^a-zA-Z0-9\-_]/g, "\\$&");
+        };
+        const storageGet = (key) => {
+          try {
+            return window.localStorage ? window.localStorage.getItem(key) : null;
+          } catch (_err) {
+            return null;
+          }
+        };
+        const storageSet = (key, value) => {
+          try {
+            if (window.localStorage) window.localStorage.setItem(key, value);
+          } catch (_err) {
+            // ignore storage failures (private mode / policy restrictions)
+          }
+        };
+
+        const params = new URLSearchParams(window.location.search);
+        if (!params.get("query_lookback_hours")) {
+          const storedLookback = storageGet(lookbackStorageKey);
+          if (storedLookback && lookbackInput && lookbackForm) {
+            lookbackInput.value = storedLookback;
+            lookbackForm.submit();
+            return;
+          }
+        }
+
+        const lookbackButtons = Array.from(document.querySelectorAll(".lookback-btn"));
+        lookbackButtons.forEach((button) => {
+          button.addEventListener("click", () => {
+            const hours = button.getAttribute("data-lookback-hours");
+            if (!hours || !lookbackInput || !lookbackForm) return;
+            lookbackInput.value = hours;
+            storageSet(lookbackStorageKey, hours);
+            lookbackForm.submit();
+          });
+        });
+
+        const setActiveTab = (group, targetId) => {
+          const buttons = Array.from(group.querySelectorAll(".tab-btn"));
+          const parent = group.parentElement;
+          if (!parent) return;
+          buttons.forEach((btn) => btn.classList.remove("active"));
+          const targetButton = buttons.find((btn) => btn.getAttribute("data-tab") === targetId);
+          if (targetButton) targetButton.classList.add("active");
+          Array.from(parent.querySelectorAll(".tab-panel")).forEach((panel) => panel.classList.remove("active"));
+          const target = parent.querySelector("#" + safeEscape(targetId));
+          if (target) target.classList.add("active");
+        };
+
         const groups = document.querySelectorAll("[data-tabs]");
         groups.forEach((group) => {
           const buttons = Array.from(group.querySelectorAll(".tab-btn"));
+          const storedTabSuffix = storageGet(tabStorageKey);
+          if (storedTabSuffix) {
+            const groupId = group.getAttribute("data-tabs");
+            const preferredTab = `${groupId}-${storedTabSuffix}`;
+            if (buttons.some((btn) => btn.getAttribute("data-tab") === preferredTab)) {
+              setActiveTab(group, preferredTab);
+            }
+          }
           buttons.forEach((button) => {
             button.addEventListener("click", () => {
               const targetId = button.getAttribute("data-tab");
               if (!targetId) return;
-              const parent = group.parentElement;
-              if (!parent) return;
-              buttons.forEach((btn) => btn.classList.remove("active"));
-              button.classList.add("active");
-              Array.from(parent.querySelectorAll(".tab-panel")).forEach((panel) => panel.classList.remove("active"));
-              const target = parent.querySelector("#" + CSS.escape(targetId));
-              if (target) target.classList.add("active");
+              const groupId = group.getAttribute("data-tabs");
+              const suffix = groupId ? targetId.replace(`${groupId}-`, "") : "";
+              if (suffix) storageSet(tabStorageKey, suffix);
+              setActiveTab(group, targetId);
             });
+          });
+        });
+
+        const miscDetails = document.getElementById("misc-iocs-details");
+        if (miscDetails) {
+          const storedMisc = storageGet(miscOpenKey);
+          if (storedMisc === "1") miscDetails.setAttribute("open", "open");
+          if (storedMisc === "0") miscDetails.removeAttribute("open");
+          miscDetails.addEventListener("toggle", () => {
+            storageSet(miscOpenKey, miscDetails.open ? "1" : "0");
+          });
+        }
+
+        const copyButtons = Array.from(document.querySelectorAll(".copy-btn"));
+        copyButtons.forEach((button) => {
+          button.addEventListener("click", async () => {
+            const targetId = button.getAttribute("data-copy-target");
+            if (!targetId) return;
+            const pre = document.getElementById(targetId);
+            if (!pre) return;
+            try {
+              await navigator.clipboard.writeText(pre.innerText || "");
+              const original = button.textContent;
+              button.textContent = "Copied";
+              setTimeout(() => {
+                button.textContent = original || "Copy query";
+              }, 1200);
+            } catch (_err) {
+              button.textContent = "Copy failed";
+              setTimeout(() => {
+                button.textContent = "Copy query";
+              }, 1200);
+            }
           });
         });
       })();

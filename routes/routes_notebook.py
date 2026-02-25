@@ -514,6 +514,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         source_tier: str | None = None,
         min_confidence_weight: str | None = None,
         source_days: str | None = None,
+        query_lookback_hours: str | None = None,
     ) -> Response:
         selected_check_id = str(quick_check_id or check_template_id or thread_id or '').strip()
         try:
@@ -734,11 +735,27 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         for key in ioc_buckets:
             ioc_buckets[key] = ioc_buckets[key][:25]
 
-        default_lookback_hours = 24
+        profile_default_lookback_hours = 24
         try:
-            default_lookback_hours = max(1, min(24 * 30, int(environment_profile.get('default_time_window_hours') or 24)))
+            profile_default_lookback_hours = max(
+                1,
+                min(24 * 30, int(environment_profile.get('default_time_window_hours') or 24)),
+            )
         except Exception:
-            default_lookback_hours = 24
+            profile_default_lookback_hours = 24
+        default_lookback_hours = profile_default_lookback_hours
+        try:
+            requested_lookback = int(str(query_lookback_hours or '').strip())
+            if requested_lookback in {24, 24 * 7, 24 * 14, 24 * 30}:
+                default_lookback_hours = requested_lookback
+        except Exception:
+            pass
+        lookback_presets = [
+            {'hours': 24, 'label': '24h', 'active': default_lookback_hours == 24},
+            {'hours': 24 * 7, 'label': '7d', 'active': default_lookback_hours == 24 * 7},
+            {'hours': 24 * 14, 'label': '14d', 'active': default_lookback_hours == 24 * 14},
+            {'hours': 24 * 30, 'label': '30d', 'active': default_lookback_hours == 24 * 30},
+        ]
 
         with sqlite3.connect(_db_path()) as connection:
             feedback_rows = connection.execute(
@@ -930,7 +947,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             elif platform == 'splunk':
                 if section_id == 'dns_proxy_web':
                     query = (
-                        "index=* earliest=-24h "
+                        f"index=* earliest=-{default_lookback_hours}h "
                         f"({ _splunk_or('query', domains) } OR { _splunk_or('dest_domain', domains) } OR { _splunk_or('url', urls) }) "
                         "| eval match=coalesce(query,dest_domain,url,uri) "
                         "| stats count as hits min(_time) as first_seen max(_time) as last_seen values(src) as src values(dest) as dest by host user match "
@@ -939,7 +956,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     returns = 'Finds DNS/proxy/web IOC matches and recurring source-to-destination patterns.'
                 elif section_id == 'network':
                     query = (
-                        "index=* earliest=-24h "
+                        f"index=* earliest=-{default_lookback_hours}h "
                         f"({ _splunk_or('dest_ip', ips) } OR { _splunk_or('dest', domains) }) "
                         "| stats count as conn_count min(_time) as first_seen max(_time) as last_seen by src_ip dest_ip dest_port transport app "
                         "| convert ctime(first_seen) ctime(last_seen) | sort - conn_count"
@@ -947,7 +964,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     returns = 'Tracks firewall/flow connections to IOC endpoints and recurrent communication paths.'
                 elif section_id == 'endpoint_edr':
                     query = (
-                        "index=* earliest=-24h "
+                        f"index=* earliest=-{default_lookback_hours}h "
                         f"({ _splunk_or('process_hash', hashes) } OR { _splunk_or('CommandLine', domains) } OR { _splunk_or('Processes.process', domains) }) "
                         "| eval cmd=coalesce(CommandLine,process,Processes.process,NewProcessName) "
                         "| stats count as hits min(_time) as first_seen max(_time) as last_seen values(cmd) as commands by host user process_hash "
@@ -956,7 +973,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     returns = 'Maps EDR/endpoint process activity to IOC hashes/domains and returns host-user command pivots.'
                 else:
                     query = (
-                        "index=* earliest=-24h "
+                        f"index=* earliest=-{default_lookback_hours}h "
                         f"({ _splunk_or('src_ip', ips) } OR { _splunk_or('user', emails) } OR { _splunk_or('user_principal_name', emails) }) "
                         "| eval actor_user=coalesce(user,user_principal_name,Account_Name) "
                         "| stats count as attempts count(eval(action=\"failure\" OR result=\"failure\")) as failures min(_time) as first_seen max(_time) as last_seen by actor_user src_ip app result "
@@ -967,7 +984,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 if section_id == 'dns_proxy_web':
                     query = (
                         "FROM logs-dns*, logs-proxy*, logs-web* \n"
-                        "| WHERE @timestamp >= NOW() - INTERVAL 24 HOURS\n"
+                        f"| WHERE @timestamp >= NOW() - INTERVAL {default_lookback_hours} HOURS\n"
                         f"| WHERE dns.question.name IN ({_es_values(domains)}) OR url.full IN ({_es_values(urls)}) OR destination.domain IN ({_es_values(domains)})\n"
                         "| STATS hits = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY host.name, user.name, source.ip, destination.ip, destination.domain, url.full\n"
                         "| SORT hits DESC"
@@ -976,7 +993,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 elif section_id == 'network':
                     query = (
                         "FROM logs-network*, logs-firewall*, logs-zeek* \n"
-                        "| WHERE @timestamp >= NOW() - INTERVAL 24 HOURS\n"
+                        f"| WHERE @timestamp >= NOW() - INTERVAL {default_lookback_hours} HOURS\n"
                         f"| WHERE destination.ip IN ({_es_values(ips)}) OR destination.domain IN ({_es_values(domains)})\n"
                         "| STATS conn_count = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY source.ip, destination.ip, destination.port, network.transport, host.name\n"
                         "| SORT conn_count DESC"
@@ -986,7 +1003,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     domain_probe = domains[0] if domains else '__no_ioc__'
                     query = (
                         "FROM logs-endpoint*, logs-windows*, logs-powershell* \n"
-                        "| WHERE @timestamp >= NOW() - INTERVAL 24 HOURS\n"
+                        f"| WHERE @timestamp >= NOW() - INTERVAL {default_lookback_hours} HOURS\n"
                         f"| WHERE file.hash.sha256 IN ({_es_values(hashes)}) OR process.command_line LIKE \"%{domain_probe}%\"\n"
                         "| STATS hits = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp), cmds = VALUES(process.command_line) BY host.name, user.name, process.hash.sha256\n"
                         "| SORT hits DESC"
@@ -995,7 +1012,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 else:
                     query = (
                         "FROM logs-identity*, logs-auth*, logs-audit* \n"
-                        "| WHERE @timestamp >= NOW() - INTERVAL 24 HOURS\n"
+                        f"| WHERE @timestamp >= NOW() - INTERVAL {default_lookback_hours} HOURS\n"
                         f"| WHERE source.ip IN ({_es_values(ips)}) OR user.email IN ({_es_values(emails)}) OR user.name IN ({_es_values(emails)})\n"
                         "| STATS attempts = COUNT(*), failures = COUNT_IF(event.outcome == \"failure\"), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY user.name, user.email, source.ip, event.dataset\n"
                         "| SORT failures DESC, attempts DESC"
@@ -1115,6 +1132,11 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                         'evidence_sources': evidence_sources,
                     }
                 )
+        has_generated_queries = any(
+            isinstance(items, list) and len(items) > 0
+            for items in (hunt_by_card.values() if isinstance(hunt_by_card, dict) else [])
+        )
+
         for section in section_views:
             section_id = str(section.get('id') or '').strip()
             for platform in platform_keys:
@@ -1140,6 +1162,11 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                         'evidence_sources': [],
                     }
                 ] + list(existing_items)
+        has_primary_queries = any(
+            bool(section.get('platforms', {}).get(platform))
+            for section in section_views
+            for platform in platform_keys
+        )
 
         misc_ioc_rows: list[dict[str, object]] = []
         for ioc in iocs_in_window:
@@ -1259,8 +1286,12 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 'check_template_id': selected_check_id,
                 'quick_check_id': selected_check_id,
                 'reason': reason,
+                'has_generated_queries': has_generated_queries,
+                'has_primary_queries': has_primary_queries,
                 'ollama_status': ollama_status,
                 'environment_profile': environment_profile,
+                'query_lookback_hours': default_lookback_hours,
+                'lookback_presets': lookback_presets,
                 'window_start': window_start_iso,
                 'window_end': window_end_iso,
                 'platform_tabs': platform_tabs,
