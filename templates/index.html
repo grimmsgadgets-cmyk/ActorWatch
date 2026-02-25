@@ -92,6 +92,33 @@
         font-weight: 400;
         text-align: center;
       }
+      button,
+      .action-button,
+      .quick-actions a,
+      .quick-actions details.quick-export-menu > summary,
+      .question-feedback-btn,
+      .live-controls button {
+        transition: transform 90ms ease, box-shadow 120ms ease, filter 120ms ease, opacity 120ms ease;
+      }
+      button:active,
+      .action-button:active,
+      .quick-actions a:active,
+      .quick-actions details.quick-export-menu > summary:active,
+      .question-feedback-btn:active,
+      .live-controls button:active {
+        transform: translateY(1px) scale(0.99);
+        filter: brightness(0.94);
+        box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.14);
+      }
+      button:focus-visible,
+      .action-button:focus-visible,
+      .quick-actions a:focus-visible,
+      .quick-actions details.quick-export-menu > summary:focus-visible,
+      .question-feedback-btn:focus-visible,
+      .live-controls button:focus-visible {
+        outline: 2px solid #1f4a8a;
+        outline-offset: 2px;
+      }
       .main { padding: 16px; overflow: hidden; display: flex; flex-direction: column; gap: 12px; }
       .top-status-row { position: sticky; top: 0; z-index: 15; background: #f7f7f7; padding-bottom: 6px; }
       .dashboard { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; flex: 1; min-height: 0; }
@@ -253,7 +280,11 @@
       .status-working { background: #eef6ff; border-color: #8fb2e8; }
       .ui-activity-strip { max-width: 520px; }
       .region-busy { opacity: 0.55; pointer-events: none; transition: opacity 120ms ease; }
-      .is-loading-btn { opacity: 0.85; cursor: progress; }
+      .is-loading-btn {
+        opacity: 0.85;
+        cursor: progress;
+        box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.14);
+      }
       .ui-toast-stack { position: fixed; right: 14px; bottom: 14px; z-index: 60; display: grid; gap: 8px; width: min(340px, calc(100vw - 28px)); }
       .ui-toast { border-radius: 8px; border: 1px solid #c8d7ef; padding: 8px 10px; font-size: 12px; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12); background: #f8fbff; color: #0f172a; }
       .ui-toast.success { background: #edf9f0; border-color: #a9d9b3; }
@@ -1130,9 +1161,7 @@
       </main>
     </div>
     <script src="/static/actor_autocomplete.js" defer></script>
-    {% if notebook %}
     <script src="/static/index.js" defer></script>
-    {% endif %}
     <div id="ui-toast-stack" class="ui-toast-stack" aria-live="polite" aria-atomic="false"></div>
   </body>
 </html>

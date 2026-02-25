@@ -1,6 +1,52 @@
       (function () {
-        const actorId = document.body.dataset.actorId || "";
-        if (!actorId) return;
+        const actorRestoreKey = "tracker:lastActorId";
+        const actorLinks = Array.from(document.querySelectorAll(".actor-link[href*='actor_id=']"));
+
+        function actorIdFromHref(href) {
+          const rawHref = String(href || "").trim();
+          if (!rawHref) return "";
+          try {
+            const parsed = new URL(rawHref, window.location.origin);
+            return String(parsed.searchParams.get("actor_id") || "").trim();
+          } catch (_error) {
+            return "";
+          }
+        }
+
+        function restoreActorIfMissing() {
+          const validActorIds = actorLinks
+            .map((link) => actorIdFromHref(link.getAttribute("href")))
+            .filter((value) => value);
+          if (!validActorIds.length) return "";
+          const validSet = new Set(validActorIds);
+          const storedActorId = String(localStorage.getItem(actorRestoreKey) || "").trim();
+          const fallbackActorId = validActorIds[0];
+          const restoredActorId = validSet.has(storedActorId) ? storedActorId : fallbackActorId;
+          if (!restoredActorId) return "";
+          localStorage.setItem(actorRestoreKey, restoredActorId);
+          const params = new URLSearchParams(window.location.search);
+          params.set("actor_id", restoredActorId);
+          const query = params.toString();
+          const target = query ? "/?" + query : "/";
+          window.location.replace(target);
+          return restoredActorId;
+        }
+
+        const actorIdFromUrl = String(new URLSearchParams(window.location.search).get("actor_id") || "").trim();
+        if (actorIdFromUrl) localStorage.setItem(actorRestoreKey, actorIdFromUrl);
+
+        const actorId = String(document.body.dataset.actorId || actorIdFromUrl || "").trim();
+        if (!actorId) {
+          restoreActorIfMissing();
+          return;
+        }
+        localStorage.setItem(actorRestoreKey, actorId);
+        actorLinks.forEach((link) => {
+          link.addEventListener("click", () => {
+            const linkActorId = actorIdFromHref(link.getAttribute("href"));
+            if (linkActorId) localStorage.setItem(actorRestoreKey, linkActorId);
+          });
+        });
 
         const liveIndicator = document.getElementById("live-indicator");
         const notebookHealthChip = document.getElementById("notebook-health-chip");
