@@ -629,7 +629,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     JOIN sources s ON s.id = qu.source_id
                     WHERE qu.thread_id = ?
                       AND s.actor_id = ?
-                      AND COALESCE(s.published_at, s.retrieved_at, '') >= ?
+                      AND COALESCE(s.published_at, s.ingested_at, s.retrieved_at, '') >= ?
                     ORDER BY qu.created_at DESC
                     LIMIT 8
                     ''',
@@ -694,6 +694,51 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             for ioc in (iocs if isinstance(iocs, list) else [])
             if isinstance(ioc, dict)
         }
+        ioc_items_raw = notebook.get('ioc_items', []) if isinstance(notebook, dict) else []
+        ioc_items = ioc_items_raw if isinstance(ioc_items_raw, list) else []
+        filtered_iocs = quick_checks_view_service.filter_iocs_for_check_core(
+            ioc_items,
+            relevant_types=relevant_types,
+            relevant_values=relevant_values,
+        )
+        iocs_in_window: list[dict[str, object]] = []
+        for ioc in filtered_iocs:
+            if not isinstance(ioc, dict):
+                continue
+            ioc_type_value = str(ioc.get('ioc_type') or '').strip().lower()
+            ioc_value = str(ioc.get('ioc_value') or '').strip()
+            if not ioc_type_value or not ioc_value:
+                continue
+            last_seen_raw = str(ioc.get('last_seen_at') or ioc.get('created_at') or '')
+            if not quick_checks_view_service.is_in_window_core(
+                last_seen_raw,
+                window_start=window_start_dt,
+                window_end=window_end_dt,
+            ):
+                continue
+            iocs_in_window.append(ioc)
+
+        ioc_buckets: dict[str, list[str]] = {
+            'domain': [],
+            'url': [],
+            'ip': [],
+            'hash': [],
+            'email': [],
+        }
+        for ioc in iocs_in_window:
+            ioc_type_value = str(ioc.get('ioc_type') or '').strip().lower()
+            ioc_value = str(ioc.get('ioc_value') or '').strip()
+            if ioc_type_value in ioc_buckets and ioc_value:
+                if ioc_value not in ioc_buckets[ioc_type_value]:
+                    ioc_buckets[ioc_type_value].append(ioc_value)
+        for key in ioc_buckets:
+            ioc_buckets[key] = ioc_buckets[key][:25]
+
+        default_lookback_hours = 24
+        try:
+            default_lookback_hours = max(1, min(24 * 30, int(environment_profile.get('default_time_window_hours') or 24)))
+        except Exception:
+            default_lookback_hours = 24
 
         with sqlite3.connect(_db_path()) as connection:
             feedback_rows = connection.execute(
@@ -736,7 +781,13 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 'returns': 'Suspicious account auth activity and anomalous access behavior',
             },
         ]
-        platform_keys = ['sentinel', 'splunk', 'elastic']
+        platform_tabs = [
+            {'key': 'generic', 'label': 'Generic (Vendor-neutral)'},
+            {'key': 'sentinel', 'label': 'Sentinel KQL'},
+            {'key': 'splunk', 'label': 'Splunk SPL'},
+            {'key': 'elastic', 'label': 'Elastic KQL/ES|QL'},
+        ]
+        platform_keys = [str(item['key']) for item in platform_tabs]
         section_views: list[dict[str, object]] = []
         for section in section_templates:
             section_views.append(
@@ -749,13 +800,15 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
 
         def _platform_key(value: str) -> str:
             lowered = str(value or '').strip().lower()
+            if any(token in lowered for token in ('generic', 'vendor-neutral', 'pseudocode')):
+                return 'generic'
             if 'kql' in lowered or 'sentinel' in lowered:
                 return 'sentinel'
             if 'splunk' in lowered or 'spl' in lowered:
                 return 'splunk'
             if 'elastic' in lowered or 'es|ql' in lowered:
                 return 'elastic'
-            return 'splunk'
+            return 'generic'
 
         def _section_id_for_query(*, card: dict[str, object], query_item: dict[str, object]) -> str:
             text_blob = ' '.join(
@@ -773,6 +826,229 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             if any(token in text_blob for token in ('process', 'powershell', 'edr', 'endpoint', 'commandline', 'eventid')):
                 return 'endpoint_edr'
             return 'network'
+
+        def _kql_dynamic(values: list[str]) -> str:
+            escaped = [str(value).replace("\\", "\\\\").replace("'", "\\'") for value in values if str(value).strip()]
+            if not escaped:
+                return 'dynamic([])'
+            return "dynamic([" + ', '.join([f"'{value}'" for value in escaped]) + "])"
+
+        def _splunk_or(field: str, values: list[str]) -> str:
+            escaped = [str(value).replace('"', '\\"') for value in values if str(value).strip()]
+            if not escaped:
+                return 'false()'
+            return '(' + ' OR '.join([f'{field}="{value}"' for value in escaped]) + ')'
+
+        def _es_values(values: list[str]) -> str:
+            escaped = [str(value).replace('\\', '\\\\').replace('"', '\\"') for value in values if str(value).strip()]
+            if not escaped:
+                return '"__no_ioc__"'
+            return ', '.join([f'"{value}"' for value in escaped])
+
+        def _section_required_data(section_id: str, platform: str) -> str:
+            mapping = {
+                ('dns_proxy_web', 'generic'): 'DNS + proxy + web logs with source, destination, and URL/domain fields',
+                ('dns_proxy_web', 'sentinel'): 'DnsEvents, DeviceNetworkEvents, CommonSecurityLog (proxy/web gateway)',
+                ('dns_proxy_web', 'splunk'): 'DNS logs (bind/infoblox/sysmon), proxy logs (zscaler/bluecoat), web gateway indexes',
+                ('dns_proxy_web', 'elastic'): 'logs-dns*, logs-proxy*, logs-web* data streams',
+                ('network', 'generic'): 'Firewall/flow telemetry with src/dst IP, port, protocol, and device context',
+                ('network', 'sentinel'): 'CommonSecurityLog (firewall), DeviceNetworkEvents, VMConnection/Zeek if available',
+                ('network', 'splunk'): 'Firewall/NetFlow/Zeek indexes, IDS logs',
+                ('network', 'elastic'): 'logs-network*, logs-firewall*, logs-zeek*',
+                ('endpoint_edr', 'generic'): 'EDR/endpoint process and file telemetry with command line, hash, and user/host context',
+                ('endpoint_edr', 'sentinel'): 'DeviceProcessEvents, DeviceFileEvents, SecurityEvent (4688/4104)',
+                ('endpoint_edr', 'splunk'): 'EDR process/file telemetry, WinEventLog:Security, PowerShell logs',
+                ('endpoint_edr', 'elastic'): 'logs-endpoint*, logs-windows*, logs-powershell*',
+                ('identity', 'generic'): 'Identity/authentication logs with account, source IP, result, and app/resource context',
+                ('identity', 'sentinel'): 'SigninLogs, IdentityLogonEvents, AuditLogs, SecurityEvent(4624/4625)',
+                ('identity', 'splunk'): 'IdP sign-in indexes (AAD/Okta), Windows auth logs, directory audit logs',
+                ('identity', 'elastic'): 'logs-identity*, logs-auth*, logs-audit*',
+            }
+            return mapping.get((section_id, platform), '')
+
+        def _baseline_query_item(section_id: str, platform: str) -> dict[str, str]:
+            domains = ioc_buckets.get('domain', [])
+            urls = ioc_buckets.get('url', [])
+            ips = ioc_buckets.get('ip', [])
+            hashes = ioc_buckets.get('hash', [])
+            emails = ioc_buckets.get('email', [])
+            lookback = f'{default_lookback_hours}h'
+            if platform == 'sentinel':
+                if section_id == 'dns_proxy_web':
+                    query = (
+                        f"let lookback = {lookback};\n"
+                        f"let domains = {_kql_dynamic(domains)};\n"
+                        f"let urls = {_kql_dynamic(urls)};\n"
+                        "union isfuzzy=true DnsEvents, DeviceNetworkEvents, CommonSecurityLog\n"
+                        "| where TimeGenerated >= ago(lookback)\n"
+                        "| extend match_domain=tostring(coalesce(Name, QueryName, DestinationHostName, RequestURL, RemoteUrl)), "
+                        "match_url=tostring(coalesce(RemoteUrl, RequestURL, UrlOriginal))\n"
+                        "| where (array_length(domains) > 0 and match_domain in~ (domains)) or (array_length(urls) > 0 and match_url has_any (urls))\n"
+                        "| summarize hits=count(), first_seen=min(TimeGenerated), last_seen=max(TimeGenerated) by DeviceName, SourceIP, DestinationIP, match_domain, match_url\n"
+                        "| sort by hits desc"
+                    )
+                    returns = 'Matches DNS/proxy/web telemetry to known domains/URLs and summarizes recurring destinations.'
+                elif section_id == 'network':
+                    query = (
+                        f"let lookback = {lookback};\n"
+                        f"let ips = {_kql_dynamic(ips)};\n"
+                        f"let domains = {_kql_dynamic(domains)};\n"
+                        "union isfuzzy=true CommonSecurityLog, DeviceNetworkEvents\n"
+                        "| where TimeGenerated >= ago(lookback)\n"
+                        "| extend dst_ip=tostring(coalesce(DestinationIP, RemoteIP, DestinationIP_s)), dst_host=tostring(coalesce(DestinationHostName, RemoteUrl, DestinationHostName_s))\n"
+                        "| where (array_length(ips) > 0 and dst_ip in (ips)) or (array_length(domains) > 0 and dst_host has_any (domains))\n"
+                        "| summarize conn_count=count(), first_seen=min(TimeGenerated), last_seen=max(TimeGenerated) by DeviceName, SourceIP, dst_ip, dst_host, Protocol\n"
+                        "| sort by conn_count desc"
+                    )
+                    returns = 'Finds network flow and firewall connections to IOC destinations with recurrence and host pivots.'
+                elif section_id == 'endpoint_edr':
+                    query = (
+                        f"let lookback = {lookback};\n"
+                        f"let domains = {_kql_dynamic(domains)};\n"
+                        f"let hashes = {_kql_dynamic(hashes)};\n"
+                        "union isfuzzy=true DeviceProcessEvents, DeviceFileEvents, SecurityEvent\n"
+                        "| where TimeGenerated >= ago(lookback)\n"
+                        "| extend cmd=tostring(coalesce(ProcessCommandLine, CommandLine, NewProcessName)), file_hash=tostring(coalesce(SHA256, SHA1, MD5)), net_hint=tostring(coalesce(RemoteUrl, RemoteIP, DestinationHostName))\n"
+                        "| where (array_length(hashes) > 0 and file_hash in (hashes)) or (array_length(domains) > 0 and net_hint has_any (domains))\n"
+                        "| summarize hits=count(), first_seen=min(TimeGenerated), last_seen=max(TimeGenerated), commands=make_set(cmd,5) by DeviceName, InitiatingProcessAccountName, file_hash, net_hint\n"
+                        "| sort by hits desc"
+                    )
+                    returns = 'Correlates endpoint process/file activity with IOC hashes/domains and highlights repeated host activity.'
+                else:
+                    query = (
+                        f"let lookback = {lookback};\n"
+                        f"let ips = {_kql_dynamic(ips)};\n"
+                        f"let users = {_kql_dynamic(emails)};\n"
+                        "union isfuzzy=true SigninLogs, IdentityLogonEvents, SecurityEvent\n"
+                        "| where TimeGenerated >= ago(lookback)\n"
+                        "| extend user=tostring(coalesce(UserPrincipalName, Account, TargetUserName)), src_ip=tostring(coalesce(IPAddress, SourceIP, IpAddress))\n"
+                        "| where (array_length(users) > 0 and user in~ (users)) or (array_length(ips) > 0 and src_ip in (ips))\n"
+                        "| summarize attempts=count(), failures=countif(ResultType !in ('0','Success')), first_seen=min(TimeGenerated), last_seen=max(TimeGenerated) by user, src_ip, AppDisplayName\n"
+                        "| sort by failures desc, attempts desc"
+                    )
+                    returns = 'Surfaces suspicious identity sign-ins tied to IOC IPs/accounts and prioritizes failed-auth anomalies.'
+            elif platform == 'splunk':
+                if section_id == 'dns_proxy_web':
+                    query = (
+                        "index=* earliest=-24h "
+                        f"({ _splunk_or('query', domains) } OR { _splunk_or('dest_domain', domains) } OR { _splunk_or('url', urls) }) "
+                        "| eval match=coalesce(query,dest_domain,url,uri) "
+                        "| stats count as hits min(_time) as first_seen max(_time) as last_seen values(src) as src values(dest) as dest by host user match "
+                        "| convert ctime(first_seen) ctime(last_seen) | sort - hits"
+                    )
+                    returns = 'Finds DNS/proxy/web IOC matches and recurring source-to-destination patterns.'
+                elif section_id == 'network':
+                    query = (
+                        "index=* earliest=-24h "
+                        f"({ _splunk_or('dest_ip', ips) } OR { _splunk_or('dest', domains) }) "
+                        "| stats count as conn_count min(_time) as first_seen max(_time) as last_seen by src_ip dest_ip dest_port transport app "
+                        "| convert ctime(first_seen) ctime(last_seen) | sort - conn_count"
+                    )
+                    returns = 'Tracks firewall/flow connections to IOC endpoints and recurrent communication paths.'
+                elif section_id == 'endpoint_edr':
+                    query = (
+                        "index=* earliest=-24h "
+                        f"({ _splunk_or('process_hash', hashes) } OR { _splunk_or('CommandLine', domains) } OR { _splunk_or('Processes.process', domains) }) "
+                        "| eval cmd=coalesce(CommandLine,process,Processes.process,NewProcessName) "
+                        "| stats count as hits min(_time) as first_seen max(_time) as last_seen values(cmd) as commands by host user process_hash "
+                        "| convert ctime(first_seen) ctime(last_seen) | sort - hits"
+                    )
+                    returns = 'Maps EDR/endpoint process activity to IOC hashes/domains and returns host-user command pivots.'
+                else:
+                    query = (
+                        "index=* earliest=-24h "
+                        f"({ _splunk_or('src_ip', ips) } OR { _splunk_or('user', emails) } OR { _splunk_or('user_principal_name', emails) }) "
+                        "| eval actor_user=coalesce(user,user_principal_name,Account_Name) "
+                        "| stats count as attempts count(eval(action=\"failure\" OR result=\"failure\")) as failures min(_time) as first_seen max(_time) as last_seen by actor_user src_ip app result "
+                        "| convert ctime(first_seen) ctime(last_seen) | sort - failures - attempts"
+                    )
+                    returns = 'Highlights identity authentication anomalies associated with IOC IPs/accounts.'
+            elif platform == 'elastic':
+                if section_id == 'dns_proxy_web':
+                    query = (
+                        "FROM logs-dns*, logs-proxy*, logs-web* \n"
+                        "| WHERE @timestamp >= NOW() - INTERVAL 24 HOURS\n"
+                        f"| WHERE dns.question.name IN ({_es_values(domains)}) OR url.full IN ({_es_values(urls)}) OR destination.domain IN ({_es_values(domains)})\n"
+                        "| STATS hits = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY host.name, user.name, source.ip, destination.ip, destination.domain, url.full\n"
+                        "| SORT hits DESC"
+                    )
+                    returns = 'Filters DNS/proxy/web logs for IOC domains/URLs and aggregates recurring destination activity.'
+                elif section_id == 'network':
+                    query = (
+                        "FROM logs-network*, logs-firewall*, logs-zeek* \n"
+                        "| WHERE @timestamp >= NOW() - INTERVAL 24 HOURS\n"
+                        f"| WHERE destination.ip IN ({_es_values(ips)}) OR destination.domain IN ({_es_values(domains)})\n"
+                        "| STATS conn_count = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY source.ip, destination.ip, destination.port, network.transport, host.name\n"
+                        "| SORT conn_count DESC"
+                    )
+                    returns = 'Finds network flow hits for IOC destinations and surfaces high-frequency connection paths.'
+                elif section_id == 'endpoint_edr':
+                    domain_probe = domains[0] if domains else '__no_ioc__'
+                    query = (
+                        "FROM logs-endpoint*, logs-windows*, logs-powershell* \n"
+                        "| WHERE @timestamp >= NOW() - INTERVAL 24 HOURS\n"
+                        f"| WHERE file.hash.sha256 IN ({_es_values(hashes)}) OR process.command_line LIKE \"%{domain_probe}%\"\n"
+                        "| STATS hits = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp), cmds = VALUES(process.command_line) BY host.name, user.name, process.hash.sha256\n"
+                        "| SORT hits DESC"
+                    )
+                    returns = 'Links endpoint process/file activity to IOC hashes/domains with host-user command context.'
+                else:
+                    query = (
+                        "FROM logs-identity*, logs-auth*, logs-audit* \n"
+                        "| WHERE @timestamp >= NOW() - INTERVAL 24 HOURS\n"
+                        f"| WHERE source.ip IN ({_es_values(ips)}) OR user.email IN ({_es_values(emails)}) OR user.name IN ({_es_values(emails)})\n"
+                        "| STATS attempts = COUNT(*), failures = COUNT_IF(event.outcome == \"failure\"), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp) BY user.name, user.email, source.ip, event.dataset\n"
+                        "| SORT failures DESC, attempts DESC"
+                    )
+                    returns = 'Prioritizes suspicious identity auth events tied to IOC IPs and user identities.'
+            else:
+                if section_id == 'dns_proxy_web':
+                    query = (
+                        f"Time window: last {default_lookback_hours}h\n"
+                        "Data sources: DNS + Proxy + Web logs\n"
+                        f"Filter: domain in {domains[:10]} OR url in {urls[:10]}\n"
+                        "Group by: src_host/src_user, destination_domain/url\n"
+                        "Return: repeat_count, first_seen, last_seen, top destinations\n"
+                        "Pivot: from repeated destinations into endpoint process and identity sign-ins"
+                    )
+                    returns = 'Vendor-neutral workflow for IOC matching in DNS/proxy/web telemetry.'
+                elif section_id == 'network':
+                    query = (
+                        f"Time window: last {default_lookback_hours}h\n"
+                        "Data sources: firewall/netflow/network sensor logs\n"
+                        f"Filter: destination_ip in {ips[:10]} OR destination_domain in {domains[:10]}\n"
+                        "Group by: src_ip, dst_ip, dst_port, protocol, asset\n"
+                        "Return: connection_count, first_seen, last_seen, recurrent paths\n"
+                        "Pivot: correlate same src assets with endpoint/identity events"
+                    )
+                    returns = 'Vendor-neutral network hunt for IOC destination reachability and recurrence.'
+                elif section_id == 'endpoint_edr':
+                    query = (
+                        f"Time window: last {default_lookback_hours}h\n"
+                        "Data sources: EDR process + file + script logs\n"
+                        f"Filter: process/file hash in {hashes[:10]} OR command line contains {domains[:10]}\n"
+                        "Group by: host, user, process, hash\n"
+                        "Return: execution_count, command_lines, first_seen, last_seen\n"
+                        "Pivot: connect matching executions to network callbacks and auth anomalies"
+                    )
+                    returns = 'Vendor-neutral endpoint/EDR hunt for IOC-linked execution and artifacts.'
+                else:
+                    query = (
+                        f"Time window: last {default_lookback_hours}h\n"
+                        "Data sources: IdP sign-in + directory audit + auth logs\n"
+                        f"Filter: source_ip in {ips[:10]} OR account/email in {emails[:10]}\n"
+                        "Group by: account, source_ip, app/resource, auth result\n"
+                        "Return: attempts, failures, impossible travel or unusual source patterns\n"
+                        "Pivot: tie suspicious accounts back to endpoint and network indicators"
+                    )
+                    returns = 'Vendor-neutral identity hunt for IOC-associated authentication anomalies.'
+            return {
+                'required_data': _section_required_data(section_id, platform),
+                'returns': returns,
+                'query': query,
+            }
+
+        seen_queries: dict[tuple[str, str], set[str]] = {}
 
         for card_id, card in cards_by_id.items():
             evidence_items_raw = evidence_map_by_card.get(card_id, [])
@@ -821,11 +1097,16 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 section = section_by_id.get(section_id)
                 if section is None:
                     continue
+                dedupe_key = (section_id, platform)
+                section_seen = seen_queries.setdefault(dedupe_key, set())
+                if query_value in section_seen:
+                    continue
+                section_seen.add(query_value)
                 section['platforms'][platform].append(
                     {
                         'card_id': card_id,
                         'card_title': str(card.get('quick_check_title') or card.get('question_text') or card_id),
-                        'required_data': str(section.get('required_data') or ''),
+                        'required_data': _section_required_data(section_id, platform) or str(section.get('required_data') or ''),
                         'returns': str(query_item.get('why_this_query') or section.get('returns') or ''),
                         'query': query_value,
                         'query_id': query_id,
@@ -834,16 +1115,34 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                         'evidence_sources': evidence_sources,
                     }
                 )
+        for section in section_views:
+            section_id = str(section.get('id') or '').strip()
+            for platform in platform_keys:
+                baseline_item = _baseline_query_item(section_id, platform)
+                if not baseline_item:
+                    continue
+                existing_items = section['platforms'].get(platform, [])
+                baseline_query = str(baseline_item.get('query') or '').strip()
+                if not baseline_query:
+                    continue
+                if any(str(item.get('query') or '').strip() == baseline_query for item in existing_items):
+                    continue
+                section['platforms'][platform] = [
+                    {
+                        'card_id': selected_check_id or '',
+                        'card_title': 'Actor-scoped baseline IOC hunt',
+                        'required_data': str(baseline_item.get('required_data') or section.get('required_data') or ''),
+                        'returns': str(baseline_item.get('returns') or section.get('returns') or ''),
+                        'query': baseline_query,
+                        'query_id': str(uuid.uuid5(uuid.NAMESPACE_URL, f"{actor_id}:{section_id}:{platform}:baseline")),
+                        'feedback_votes': 0,
+                        'feedback_score': 0,
+                        'evidence_sources': [],
+                    }
+                ] + list(existing_items)
 
         misc_ioc_rows: list[dict[str, object]] = []
-        ioc_items_raw = notebook.get('ioc_items', []) if isinstance(notebook, dict) else []
-        ioc_items = ioc_items_raw if isinstance(ioc_items_raw, list) else []
-        filtered_iocs = quick_checks_view_service.filter_iocs_for_check_core(
-            ioc_items,
-            relevant_types=relevant_types,
-            relevant_values=relevant_values,
-        )
-        for ioc in filtered_iocs:
+        for ioc in iocs_in_window:
             if not isinstance(ioc, dict):
                 continue
             ioc_type_value = str(ioc.get('ioc_type') or '').strip().lower()
@@ -853,12 +1152,6 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             if not _ioc_value_is_hunt_relevant(ioc_type_value, ioc_value):
                 continue
             last_seen_raw = str(ioc.get('last_seen_at') or ioc.get('created_at') or '')
-            if not quick_checks_view_service.is_in_window_core(
-                last_seen_raw,
-                window_start=window_start_dt,
-                window_end=window_end_dt,
-            ):
-                continue
             key = (ioc_type_value, ioc_value.lower())
             if key in used_ioc_pairs:
                 continue
@@ -970,6 +1263,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 'environment_profile': environment_profile,
                 'window_start': window_start_iso,
                 'window_end': window_end_iso,
+                'platform_tabs': platform_tabs,
                 'sections': section_views,
                 'misc_iocs': misc_ioc_rows,
                 'filters': {

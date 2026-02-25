@@ -2253,6 +2253,55 @@ def test_ioc_hunts_misc_only_includes_actor_related_unmatched_iocs(tmp_path, mon
         assert '203.0.113.9' not in response.text
 
 
+def test_actor_ioc_hunts_renders_system_specific_section_queries(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Systems', 'System-specific hunt query scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        now_iso = '2026-02-24T00:00:00+00:00'
+        rows = [
+            ('ioc-sys-domain', 'domain', 'systems-check.example'),
+            ('ioc-sys-ip', 'ip', '198.51.100.10'),
+            ('ioc-sys-hash', 'hash', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+            ('ioc-sys-email', 'email', 'analyst@example.com'),
+        ]
+        for ioc_id, ioc_type, ioc_value in rows:
+            connection.execute(
+                '''
+                INSERT INTO ioc_items (
+                    id, actor_id, ioc_type, ioc_value, source_ref, validation_status,
+                    lifecycle_status, revoked, is_active, created_at, last_seen_at, seen_count, confidence_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    ioc_id,
+                    actor['id'],
+                    ioc_type,
+                    ioc_value,
+                    'systems ref',
+                    'valid',
+                    'active',
+                    0,
+                    1,
+                    now_iso,
+                    now_iso,
+                    2,
+                    4,
+                ),
+            )
+        connection.commit()
+
+    with TestClient(app_module.app) as client:
+        response = client.get(f'/actors/{actor["id"]}/hunts/iocs?window_days=30')
+    assert response.status_code == 200
+    html = response.text
+    assert 'Generic (Vendor-neutral)' in html
+    assert 'DnsEvents, DeviceNetworkEvents, CommonSecurityLog (proxy/web gateway)' in html
+    assert 'CommonSecurityLog (firewall), DeviceNetworkEvents, VMConnection/Zeek if available' in html
+    assert 'DeviceProcessEvents, DeviceFileEvents, SecurityEvent (4688/4104)' in html
+    assert 'SigninLogs, IdentityLogonEvents, AuditLogs, SecurityEvent(4624/4625)' in html
+
+
 def test_fetch_notebook_ioc_items_excludes_unvalidated_revoked_and_expired(tmp_path):
     _setup_db(tmp_path)
     actor = app_module.create_actor_profile('APT-IOC-Filter', 'IOC filter scope')

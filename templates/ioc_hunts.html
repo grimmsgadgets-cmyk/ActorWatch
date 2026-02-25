@@ -52,14 +52,15 @@
         <div class="query-panel">
           <h3 style="margin:0 0 6px;">{{ section.label }}</h3>
           <div class="tabs" data-tabs="{{ section.id }}">
-            <button type="button" class="tab-btn active" data-tab="{{ section.id }}-sentinel">Sentinel KQL</button>
-            <button type="button" class="tab-btn" data-tab="{{ section.id }}-splunk">Splunk SPL</button>
-            <button type="button" class="tab-btn" data-tab="{{ section.id }}-elastic">Elastic KQL/ES|QL</button>
+            {% for tab in platform_tabs %}
+            <button type="button" class="tab-btn{% if loop.first %} active{% endif %}" data-tab="{{ section.id }}-{{ tab.key }}">{{ tab.label }}</button>
+            {% endfor %}
           </div>
 
-          <div id="{{ section.id }}-sentinel" class="tab-panel active">
-            {% if section.platforms.sentinel %}
-              {% for item in section.platforms.sentinel %}
+          {% for tab in platform_tabs %}
+          <div id="{{ section.id }}-{{ tab.key }}" class="tab-panel{% if loop.first %} active{% endif %}">
+            {% if section.platforms[tab.key] %}
+              {% for item in section.platforms[tab.key] %}
               <div class="query-panel">
                 <div><strong>Required data sources/tables:</strong> {{ item.required_data }}</div>
                 <div><strong>What this returns:</strong> {{ item.returns }}</div>
@@ -70,34 +71,7 @@
             <div class="muted">Not configured</div>
             {% endif %}
           </div>
-
-          <div id="{{ section.id }}-splunk" class="tab-panel">
-            {% if section.platforms.splunk %}
-              {% for item in section.platforms.splunk %}
-              <div class="query-panel">
-                <div><strong>Required data sources/tables:</strong> {{ item.required_data }}</div>
-                <div><strong>What this returns:</strong> {{ item.returns }}</div>
-                <pre>{{ item.query }}</pre>
-              </div>
-              {% endfor %}
-            {% else %}
-            <div class="muted">Not configured</div>
-            {% endif %}
-          </div>
-
-          <div id="{{ section.id }}-elastic" class="tab-panel">
-            {% if section.platforms.elastic %}
-              {% for item in section.platforms.elastic %}
-              <div class="query-panel">
-                <div><strong>Required data sources/tables:</strong> {{ item.required_data }}</div>
-                <div><strong>What this returns:</strong> {{ item.returns }}</div>
-                <pre>{{ item.query }}</pre>
-              </div>
-              {% endfor %}
-            {% else %}
-            <div class="muted">Not configured</div>
-            {% endif %}
-          </div>
+          {% endfor %}
         </div>
         {% endfor %}
       </div>
