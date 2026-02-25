@@ -117,6 +117,7 @@ Useful endpoints:
 - `GET /health`
 - `GET /actors`
 - `POST /actors`
+- `GET /actors/{actor_id}/hunts/iocs`
 - `POST /actors/{target_actor_id}/merge` (form or JSON with `source_actor_id`)
 - `GET /actors/{actor_id}/refresh/stats`
 - `GET /actors/{actor_id}/stix/export`
@@ -256,6 +257,35 @@ See:
 - Environment-aware IOC hunts:
   - Per-actor environment profile (query dialect + field mapping + default time window).
   - Hunt queries are personalized before display.
+  - Primary hunt sections are distinct by telemetry system:
+    - `DNS/Proxy/Web`
+    - `Network`
+    - `Endpoint/EDR`
+    - `Identity`
+  - Hunt tabs include:
+    - `Generic (Vendor-neutral)` (default)
+    - `Sentinel KQL`
+    - `Splunk SPL`
+    - `Elastic KQL/ES|QL`
 - Source reliability auto-tuning:
   - Hunt feedback updates per-domain reliability.
+
+## Quick Checks and Evidence Dates
+
+- Quick Checks use actor-scoped evidence in a rolling 30-day window.
+- Evidence date fallback uses effective source date:
+  - `published_at`
+  - else `ingested_at`
+  - else `retrieved_at`
+- When `published_at` is blank and `ingested_at` is used, evidence lines are labeled with `(ingested)`.
+
+## Cold Actor Backfill
+
+- If an actor has no recent evidence in the last 30 days, cold backfill can run to ingest recent actor-linked reporting.
+- Newly ingested sources are then used by normal notebook and Quick Checks generation.
+
+## Fresh Install Behavior
+
+- A fresh install starts with no tracked actors.
+- Add and track actors from the UI (`/`) or API (`POST /actors`).
   - Reliability adjusts source confidence weighting used in notebook views.
