@@ -32,8 +32,8 @@
       <div class="card">
         <a href="/?actor_id={{ actor_id }}">&larr; Back to dashboard</a>
         <h1 style="margin:8px 0 4px;">IOC hunt queries: {{ actor_name }}</h1>
-        <div class="muted">Actor scope: {{ actor_id }} | Window: {{ window_start }} to {{ window_end }}</div>
-        <div class="muted">Dialect: {{ environment_profile.query_dialect }} | Time window profile: {{ environment_profile.default_time_window_hours }}h</div>
+        <div class="muted">Actor scope: {{ actor_id }} | IOC window: {{ window_start }} to {{ window_end }}</div>
+        <div class="muted">Dialect: {{ environment_profile.query_dialect }} | Query default lookback: {{ environment_profile.default_time_window_hours }}h (per-hunt query setting)</div>
         {% if quick_check_id %}
         <div class="muted">Check pre-filter: {{ quick_check_id }}</div>
         {% endif %}
