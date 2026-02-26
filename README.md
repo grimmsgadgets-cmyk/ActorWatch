@@ -84,8 +84,15 @@ This will:
 -   Build the Docker image
 -   Install dependencies inside the container
 -   Start the web application and local Ollama service
+-   Pull the configured Ollama model (`llama3.1:8b` by default) before app startup
 
 The first run may take a few minutes.
+If the model is not already present, first run can take longer while the model downloads.
+
+To override model selection (for lower-resource machines), set `OLLAMA_MODEL` before running compose.
+Example:
+
+    OLLAMA_MODEL=llama3.1:8b docker compose up --build
 
 Security defaults:
 

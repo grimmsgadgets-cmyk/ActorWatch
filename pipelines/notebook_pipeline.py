@@ -1501,6 +1501,8 @@ def fetch_actor_notebook_core(
     _build_recent_activity_highlights = deps['build_recent_activity_highlights']
     _build_top_change_signals = deps.get('build_top_change_signals', build_top_change_signals)
     _ollama_review_change_signals = deps.get('ollama_review_change_signals', lambda *_args, **_kwargs: [])
+    _ollama_synthesize_recent_activity = deps.get('ollama_synthesize_recent_activity', lambda *_args, **_kwargs: [])
+    _enforce_ollama_synthesis = bool(deps.get('enforce_ollama_synthesis', False))
     _build_recent_activity_synthesis = deps['build_recent_activity_synthesis']
     _recent_change_summary = deps['recent_change_summary']
     _build_environment_checks = deps['build_environment_checks']
@@ -2809,7 +2811,7 @@ def fetch_actor_notebook_core(
         and isinstance(item.get('validated_sources'), list)
         and len(item.get('validated_sources') or []) > 0
     ]
-    if not top_change_signals:
+    if not top_change_signals and not _enforce_ollama_synthesis:
         deterministic_signals = _build_top_change_signals(recent_activity_highlights, limit=3)
         for item in deterministic_signals:
             evidence_url = str(item.get('source_url') or '').strip()
@@ -2855,7 +2857,14 @@ def fetch_actor_notebook_core(
                     else [],
                 }
             )
-    recent_activity_synthesis = _build_recent_activity_synthesis(recent_activity_highlights)
+    recent_activity_synthesis = _ollama_synthesize_recent_activity(
+        str(actor.get('display_name') or ''),
+        recent_activity_highlights,
+    )
+    if not isinstance(recent_activity_synthesis, list):
+        recent_activity_synthesis = []
+    if not recent_activity_synthesis and not _enforce_ollama_synthesis:
+        recent_activity_synthesis = _build_recent_activity_synthesis(recent_activity_highlights)
     recent_change_summary = _recent_change_summary(
         timeline_recent_items_for_changes,
         recent_activity_highlights,

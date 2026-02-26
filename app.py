@@ -139,6 +139,9 @@ ACTOR_SEARCH_LINK_LIMIT = max(1, int(os.environ.get('ACTOR_SEARCH_LINK_LIMIT', '
 FEED_REQUIRE_PUBLISHED_AT = os.environ.get('FEED_REQUIRE_PUBLISHED_AT', '1').strip().lower() in {
     '1', 'true', 'yes', 'on',
 }
+ENFORCE_OLLAMA_SYNTHESIS = os.environ.get('ENFORCE_OLLAMA_SYNTHESIS', '0').strip().lower() in {
+    '1', 'true', 'yes', 'on',
+}
 
 CAPABILITY_GRID_KEYS = [
     'initial_access',
@@ -1852,6 +1855,21 @@ def _ollama_review_change_signals(
     )
 
 
+def _ollama_synthesize_recent_activity(
+    actor_name: str,
+    highlights: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    return analyst_text_service.ollama_synthesize_recent_activity_core(
+        actor_name,
+        highlights,
+        deps={
+            'ollama_available': _ollama_available,
+            'get_env': os.environ.get,
+            'http_post': httpx.post,
+        },
+    )
+
+
 def _ollama_enrich_quick_checks(
     actor_name: str,
     cards: list[dict[str, object]],
@@ -2466,6 +2484,8 @@ def _fetch_actor_notebook_deps(
         'build_recent_activity_highlights': _build_recent_activity_highlights,
         'build_top_change_signals': pipeline_build_top_change_signals,
         'ollama_review_change_signals': _ollama_review_change_signals,
+        'ollama_synthesize_recent_activity': _ollama_synthesize_recent_activity,
+        'enforce_ollama_synthesis': ENFORCE_OLLAMA_SYNTHESIS,
         'build_recent_activity_synthesis': _build_recent_activity_synthesis,
         'recent_change_summary': _recent_change_summary,
         'build_environment_checks': _build_environment_checks,

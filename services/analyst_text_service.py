@@ -347,3 +347,95 @@ def ollama_review_change_signals_core(
         if len(results) >= 3:
             break
     return results
+
+
+def ollama_synthesize_recent_activity_core(
+    actor_name: str,
+    highlights: list[dict[str, object]],
+    *,
+    deps: dict[str, object],
+) -> list[dict[str, str]]:
+    _ollama_available = deps['ollama_available']
+    _get_env = deps['get_env']
+    _http_post = deps['http_post']
+
+    if not highlights or not _ollama_available():
+        return []
+
+    prepared: list[dict[str, str]] = []
+    for item in highlights[:14]:
+        if not isinstance(item, dict):
+            continue
+        prepared.append(
+            {
+                'date': str(item.get('date') or ''),
+                'category': str(item.get('category') or ''),
+                'target': str(item.get('target_text') or ''),
+                'ttp_ids': str(item.get('ttp_ids') or ''),
+                'source': str(item.get('evidence_source_label') or item.get('source_name') or ''),
+                'url': str(item.get('source_url') or ''),
+                'text': ' '.join(str(item.get('text') or '').split())[:320],
+            }
+        )
+    if not prepared:
+        return []
+
+    lineage_count = len(
+        {
+            str(item.get('url') or '').strip()
+            for item in prepared
+            if str(item.get('url') or '').strip()
+        }
+    )
+    model = _get_env('OLLAMA_MODEL', 'llama3.1:8b')
+    base_url = _get_env('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
+    timeout_seconds = max(3.0, float(_get_env('RECENT_ACTIVITY_OLLAMA_TIMEOUT_SECONDS', '8')))
+    prompt = with_template_header(
+        'You are a CTI analyst writing concise dashboard synthesis for a defender. '
+        'Return ONLY JSON with schema: '
+        '{"items":[{"label":"What changed|Who is affected|What to do next","text":"...","confidence":"High|Medium|Low"}]}. '
+        'Rules: use only provided highlights, be concrete, avoid source titles as the main sentence, '
+        'avoid generic filler, and keep each text <= 220 characters. '
+        f'Actor: {actor_name}. Highlights: {json.dumps(prepared)}.'
+    )
+    payload = {
+        'model': model,
+        'prompt': prompt,
+        'stream': False,
+        'format': 'json',
+    }
+
+    try:
+        response = _http_post(f'{base_url}/api/generate', json=payload, timeout=timeout_seconds)
+        response.raise_for_status()
+        parsed = parse_ollama_json_object(response.json())
+    except Exception:
+        return []
+
+    raw_items = parsed.get('items') if isinstance(parsed, dict) else None
+    if not isinstance(raw_items, list):
+        return []
+
+    allowed_labels = {'What changed', 'Who is affected', 'What to do next'}
+    by_label: dict[str, dict[str, str]] = {}
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        label = ' '.join(str(raw.get('label') or '').split()).strip()
+        text = ' '.join(str(raw.get('text') or '').split()).strip()[:260]
+        confidence = ' '.join(str(raw.get('confidence') or 'Medium').split()).strip().title()
+        if label not in allowed_labels or not text:
+            continue
+        if confidence not in {'High', 'Medium', 'Low'}:
+            confidence = 'Medium'
+        if label in by_label:
+            continue
+        by_label[label] = {
+            'label': label,
+            'text': text,
+            'confidence': confidence,
+            'lineage': f'{lineage_count} sources',
+        }
+
+    ordered = [by_label.get(name) for name in ('What changed', 'Who is affected', 'What to do next')]
+    return [item for item in ordered if isinstance(item, dict)]

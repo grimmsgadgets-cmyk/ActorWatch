@@ -1,4 +1,93 @@
 from datetime import datetime, timedelta, timezone
+import re
+
+
+_GENERIC_TARGET_TERMS = {
+    'this threat',
+    'threat actor',
+    'actor',
+    'actors',
+    'threat',
+    'threats',
+    'victim',
+    'victims',
+    'targets',
+    'targets include',
+    'organizations',
+    'entities',
+    'organization',
+    'entity',
+    'high-impact sectors',
+    'high impact sectors',
+    'multiple sectors',
+    'various sectors',
+}
+
+_SECTOR_HINT_PATTERNS: dict[str, tuple[str, ...]] = {
+    'Healthcare': ('healthcare', 'hospital', 'medical', 'clinic', 'pharma', 'nhs'),
+    'Finance': ('bank', 'banking', 'financial', 'finance', 'insurance', 'fintech'),
+    'Government': ('government', 'federal', 'state agency', 'ministry', 'public sector', 'municipal'),
+    'Education': ('education', 'university', 'college', 'school', 'academic'),
+    'Retail': ('retail', 'e-commerce', 'ecommerce', 'merchant'),
+    'Manufacturing': ('manufacturing', 'industrial', 'factory', 'automotive'),
+    'Energy': ('energy', 'oil', 'gas', 'utility', 'power grid', 'electric'),
+    'Technology': ('technology', 'tech company', 'software vendor', 'saas'),
+    'Telecommunications': ('telecom', 'telecommunications', 'isp', 'mobile carrier'),
+    'Transportation': ('transportation', 'logistics', 'shipping', 'aviation', 'rail'),
+}
+
+
+def _clean_target_fragment(raw_value: str) -> str:
+    value = re.sub(r'\s+', ' ', str(raw_value or '')).strip(" \t\r\n.,;:-")
+    if not value:
+        return ''
+    value = re.sub(
+        r'^(?:recently\s+)?(?:affected|targeted|impacted)\s+(?:organizations?|entities|sectors?)\s+(?:include|including)\s+',
+        '',
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(r'^(?:high[- ]impact\s+)?(?:sectors?|industr(?:y|ies))\s+such\s+as\s+', '', value, flags=re.IGNORECASE)
+    return value.strip(" \t\r\n.,;:-")
+
+
+def _is_generic_target_fragment(value: str) -> bool:
+    token = value.strip().lower()
+    if not token:
+        return True
+    if token in _GENERIC_TARGET_TERMS:
+        return True
+    if token.startswith('this threat'):
+        return True
+    return False
+
+
+def _normalize_targets(raw_value: str) -> list[str]:
+    cleaned = _clean_target_fragment(raw_value)
+    if not cleaned:
+        return []
+    parts = re.split(r',|;|/|\band\b', cleaned, flags=re.IGNORECASE)
+    normalized: list[str] = []
+    for part in parts:
+        candidate = _clean_target_fragment(part)
+        if not candidate:
+            continue
+        if _is_generic_target_fragment(candidate):
+            continue
+        if candidate not in normalized:
+            normalized.append(candidate)
+    return normalized
+
+
+def _extract_sector_hints(raw_value: str) -> list[str]:
+    haystack = str(raw_value or '').lower()
+    if not haystack:
+        return []
+    hits: list[str] = []
+    for sector, markers in _SECTOR_HINT_PATTERNS.items():
+        if any(marker in haystack for marker in markers):
+            hits.append(sector)
+    return hits
 
 
 def build_recent_activity_synthesis_core(
@@ -27,8 +116,20 @@ def build_recent_activity_synthesis_core(
         target = str(item.get('target_text') or '').strip() or _extract_target_from_activity_text(
             str(item.get('text') or '')
         )
-        if target and target not in targets:
-            targets.append(target)
+        for normalized_target in _normalize_targets(target):
+            if normalized_target not in targets:
+                targets.append(normalized_target)
+        if not target:
+            combined = ' '.join(
+                [
+                    str(item.get('title') or ''),
+                    str(item.get('summary') or ''),
+                    str(item.get('text') or ''),
+                ]
+            )
+            for sector in _extract_sector_hints(combined):
+                if sector not in targets:
+                    targets.append(sector)
 
         ttp_csv = str(item.get('ttp_ids') or '').strip()
         if ttp_csv:
@@ -76,6 +177,11 @@ def build_recent_activity_synthesis_core(
     who_affected = 'Affected organizations/entities are not clearly named in current reporting.'
     if targets:
         who_affected = f'Recently affected organizations/entities include: {", ".join(targets[:4])}.'
+    elif highlights:
+        who_affected = (
+            'Recently affected organizations/entities are not explicitly named in-source; '
+            'review the linked reports below for victim details.'
+        )
 
     action_parts: list[str] = []
     if techniques:

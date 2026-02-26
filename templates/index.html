@@ -217,8 +217,10 @@
       .who-kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: .02em; color: #475569; }
       .who-kpi-value { margin-top: 2px; font-size: 15px; font-weight: 700; color: #0f172a; line-height: 1.3; }
       .snapshot-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 8px; margin: 10px 0; }
-      .snapshot-card { border: 1px solid #dfe6f3; border-radius: 10px; padding: 10px; background: #fbfdff; border-top: 3px solid #7ea4df; min-height: 118px; display: flex; flex-direction: column; gap: 6px; }
-      .snapshot-card.primary { border-top-color: #c44f4f; background: #fff7f7; }
+      .snapshot-card { border: 1px solid #dfe6f3; border-radius: 10px; padding: 10px; background: #fbfdff; border-top: 3px solid #9aa8bf; min-height: 118px; display: flex; flex-direction: column; gap: 6px; }
+      .snapshot-card.conf-high { border-top-color: #c44f4f; background: #fff7f7; }
+      .snapshot-card.conf-medium { border-top-color: #d0a13b; background: #fffaf0; }
+      .snapshot-card.conf-low { border-top-color: #4e7ecf; background: #f6faff; }
       .snapshot-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #475569; margin: 0; }
       .snapshot-text { font-size: 13px; line-height: 1.35; margin: 0; color: #1f2937; }
       .snapshot-meta { font-size: 11px; color: #475569; margin-top: auto; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -779,6 +781,13 @@
             <div class="status-meta">Last refresh: <span id="notebook-health-duration">{{ notebook_health.last_refresh_duration }}</span> | Sources processed: <span id="notebook-health-sources">{{ notebook_health.last_refresh_sources }}</span></div>
             <div id="notebook-health-progress" class="progress-wrap" {% if not notebook or notebook.actor.notebook_status != 'running' %}style="display:none;"{% endif %}><div class="progress-bar"></div></div>
           </div>
+          {% set llm_message = (ollama_status.message if ollama_status and ollama_status.message else 'LLM status unavailable.') %}
+          {% set llm_message_lower = llm_message|lower %}
+          {% set llm_ready = (ollama_status and ollama_status.available and ('not found' not in llm_message_lower)) %}
+          <div id="llm-status-chip" class="notice status-chip {% if llm_ready %}status-llm-ok{% else %}status-llm-bad{% endif %}">
+            <strong>LLM:</strong> {% if llm_ready %}ready{% else %}offline{% endif %}
+            <div class="status-meta">{{ llm_message }}</div>
+          </div>
           {% if notice %}
           <div class="notice status-chip">{{ notice }}</div>
           {% endif %}
@@ -973,7 +982,24 @@
             <p>{{ notebook.actor_profile_summary }}</p>
             <div class="who-meta">Framework Group Match: {{ notebook.actor_profile_group_name }} | Source: <a href="{{ notebook.actor_profile_source_url }}" target="_blank" rel="noreferrer">{{ notebook.actor_profile_source_label }}</a> | Created: {{ notebook.actor_created_date }}</div>
           </div>
-          <div class="who-why"><strong>Why this matters now:</strong> Recent reporting indicates likely focus on {{ recent_change.targets }} with observed impact reported as {{ recent_change.damage }}.</div>
+          {% set why_now_signal = notebook.top_change_signals[0] if notebook.top_change_signals else None %}
+          {% set why_now_synthesis = notebook.recent_activity_synthesis[0] if notebook.recent_activity_synthesis else None %}
+          {% set why_now_text = '' %}
+          {% if why_now_signal and why_now_signal.change_why_new %}
+            {% set why_now_text = why_now_signal.change_why_new %}
+          {% elif why_now_synthesis and why_now_synthesis.text %}
+            {% set why_now_text = why_now_synthesis.text %}
+          {% elif why_now_signal and why_now_signal.change_summary %}
+            {% set why_now_text = why_now_signal.change_summary %}
+          {% else %}
+            {% set why_now_text = recent_change.new_reports ~ ' recent report(s) were added for this actor, with observed impact reported as ' ~ recent_change.damage ~ '.' %}
+          {% endif %}
+          <div class="who-why">
+            <strong>Why this matters now:</strong> {{ why_now_text }}
+            {% if why_now_signal and why_now_signal.validated_source_count %}
+            <div class="who-meta">Supported by {{ why_now_signal.validated_source_count }} corroborated source(s).</div>
+            {% endif %}
+          </div>
           <p class="who-heading"><strong>Common moves they use (top 3)</strong></p>
           {% if notebook.top_techniques %}
           <div class="technique-grid">
@@ -1055,7 +1081,7 @@
           <p class="inline-note"><strong>How to read:</strong> left to right = change, affected area, and recommended first action.</p>
           <div class="snapshot-grid">
             {% for synthesis in notebook.recent_activity_synthesis %}
-            <div class="snapshot-card{% if loop.first %} primary{% endif %}">
+            <div class="snapshot-card conf-{{ (synthesis.confidence or 'low') | lower }}">
               <h3 class="snapshot-title">{{ synthesis.label }}</h3>
               <p class="snapshot-text">{{ synthesis.text }}</p>
               <div class="snapshot-meta">

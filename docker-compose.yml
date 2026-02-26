@@ -5,7 +5,8 @@ services:
       dockerfile: Dockerfile
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
-      - OLLAMA_MODEL=llama3.1:8b
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - ENFORCE_OLLAMA_SYNTHESIS=1
       - TRUST_PROXY_HEADERS=0
       - UVICORN_RELOAD=1
       - PAGE_REFRESH_AUTO_TRIGGER_MINUTES=0
@@ -17,13 +18,40 @@ services:
     networks:
       - default
     depends_on:
-      - ollama
+      ollama:
+        condition: service_started
+      ollama-model-pull:
+        condition: service_completed_successfully
 
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
+    networks:
+      - default
+
+  ollama-model-pull:
+    image: ollama/ollama:latest
+    restart: "no"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+    depends_on:
+      ollama:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        set -e
+        model="${OLLAMA_MODEL:-llama3.1:8b}"
+        echo "Ensuring Ollama model is available: $$model"
+        until ollama pull "$$model"; do
+          echo "Model pull failed; retrying in 3s..."
+          sleep 3
+        done
+        echo "Model ready: $$model"
     networks:
       - default
 
