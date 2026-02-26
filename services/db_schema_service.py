@@ -1,5 +1,5 @@
 def ensure_schema(connection) -> None:
-    schema_version = '2026-02-25.5'
+    schema_version = '2026-02-26.1'
     connection.execute(
         '''
         CREATE TABLE IF NOT EXISTS schema_meta (
@@ -605,6 +605,25 @@ def ensure_schema(connection) -> None:
             default_time_window_hours INTEGER NOT NULL DEFAULT 24,
             updated_at TEXT NOT NULL
         )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS notebook_cache (
+            actor_id TEXT NOT NULL,
+            cache_key TEXT NOT NULL,
+            data_fingerprint TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (actor_id, cache_key)
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_notebook_cache_actor_updated
+        ON notebook_cache(actor_id, updated_at DESC)
         '''
     )
     connection.execute(

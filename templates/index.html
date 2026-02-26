@@ -992,10 +992,16 @@
           {% elif why_now_signal and why_now_signal.change_summary %}
             {% set why_now_text = why_now_signal.change_summary %}
           {% else %}
-            {% set why_now_text = recent_change.new_reports ~ ' recent report(s) were added for this actor, with observed impact reported as ' ~ recent_change.damage ~ '.' %}
+            {% set llm_msg = (ollama_status.message if ollama_status and ollama_status.message else '')|lower %}
+            {% set llm_ready = (ollama_status and ollama_status.available and ('not found' not in llm_msg)) %}
+            {% if llm_ready %}
+              {% set why_now_text = 'No validated LLM synthesis is available for this actor yet. Refresh after additional actor-linked evidence is ingested.' %}
+            {% else %}
+              {% set why_now_text = 'LLM synthesis is unavailable right now. Confirm Ollama/model status, then refresh this actor notebook.' %}
+            {% endif %}
           {% endif %}
           <div class="who-why">
-            <strong>Why this matters now:</strong> {{ why_now_text }}
+            <strong>What changed and why you should care:</strong> {{ why_now_text }}
             {% if why_now_signal and why_now_signal.validated_source_count %}
             <div class="who-meta">Supported by {{ why_now_signal.validated_source_count }} corroborated source(s).</div>
             {% endif %}
@@ -1081,6 +1087,7 @@
           <p class="inline-note"><strong>How to read:</strong> left to right = change, affected area, and recommended first action.</p>
           <div class="snapshot-grid">
             {% for synthesis in notebook.recent_activity_synthesis %}
+            {% if synthesis.label != 'What changed' %}
             <div class="snapshot-card conf-{{ (synthesis.confidence or 'low') | lower }}">
               <h3 class="snapshot-title">{{ synthesis.label }}</h3>
               <p class="snapshot-text">{{ synthesis.text }}</p>
@@ -1089,6 +1096,7 @@
                 <span>{{ synthesis.lineage }}</span>
               </div>
             </div>
+            {% endif %}
             {% endfor %}
           </div>
           {% endif %}

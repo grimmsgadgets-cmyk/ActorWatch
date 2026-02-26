@@ -1,3 +1,141 @@
+import hashlib
+import json
+import sqlite3
+from datetime import datetime, timezone
+
+
+NOTEBOOK_CACHE_FORMAT_VERSION = '2026-02-26.1'
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _cache_key_core(
+    *,
+    source_tier: object = None,
+    min_confidence_weight: object = None,
+    source_days: object = None,
+    enforce_ollama_synthesis: object = None,
+    backfill_debug_ui_enabled: object = None,
+) -> str:
+    parts = [
+        f'fmt={NOTEBOOK_CACHE_FORMAT_VERSION}',
+        f'tier={str(source_tier or "").strip().lower()}',
+        f'min_conf={str(min_confidence_weight or "").strip()}',
+        f'source_days={str(source_days or "").strip()}',
+        f'enforce_ollama={1 if bool(enforce_ollama_synthesis) else 0}',
+        f'backfill_debug={1 if bool(backfill_debug_ui_enabled) else 0}',
+    ]
+    return '|'.join(parts)
+
+
+def _actor_data_fingerprint_core(connection: sqlite3.Connection, actor_id: str) -> str:
+    row = connection.execute(
+        '''
+        SELECT
+            COALESCE((SELECT MAX(COALESCE(published_at, ingested_at, retrieved_at, '')) FROM sources WHERE actor_id = ?), ''),
+            COALESCE((SELECT COUNT(*) FROM sources WHERE actor_id = ?), 0),
+            COALESCE((SELECT MAX(COALESCE(occurred_at, '')) FROM timeline_events WHERE actor_id = ?), ''),
+            COALESCE((SELECT COUNT(*) FROM timeline_events WHERE actor_id = ?), 0),
+            COALESCE((SELECT MAX(COALESCE(updated_at, created_at, '')) FROM question_threads WHERE actor_id = ?), ''),
+            COALESCE((SELECT COUNT(*) FROM question_threads WHERE actor_id = ?), 0),
+            COALESCE((
+                SELECT MAX(COALESCE(qu.created_at, ''))
+                FROM question_updates qu
+                JOIN question_threads qt ON qt.id = qu.thread_id
+                WHERE qt.actor_id = ?
+            ), ''),
+            COALESCE((
+                SELECT COUNT(*)
+                FROM question_updates qu
+                JOIN question_threads qt ON qt.id = qu.thread_id
+                WHERE qt.actor_id = ?
+            ), 0),
+            COALESCE((SELECT MAX(COALESCE(updated_at, last_seen_at, created_at, '')) FROM ioc_items WHERE actor_id = ?), ''),
+            COALESCE((SELECT COUNT(*) FROM ioc_items WHERE actor_id = ?), 0),
+            COALESCE((SELECT MAX(COALESCE(created_at, '')) FROM requirement_items WHERE actor_id = ?), ''),
+            COALESCE((SELECT COUNT(*) FROM requirement_items WHERE actor_id = ?), 0),
+            COALESCE((SELECT MAX(COALESCE(updated_at, '')) FROM analyst_observations WHERE actor_id = ?), ''),
+            COALESCE((SELECT COUNT(*) FROM analyst_observations WHERE actor_id = ?), 0),
+            COALESCE((SELECT MAX(COALESCE(generated_at, '')) FROM quick_check_overrides WHERE actor_id = ?), ''),
+            COALESCE((SELECT COUNT(*) FROM quick_check_overrides WHERE actor_id = ?), 0)
+        ''',
+        (
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+            actor_id,
+        ),
+    ).fetchone()
+    fingerprint_source = '|'.join(str(value or '') for value in (row or ()))
+    return hashlib.sha256(fingerprint_source.encode('utf-8')).hexdigest()
+
+
+def _load_cached_notebook_core(
+    connection: sqlite3.Connection,
+    *,
+    actor_id: str,
+    cache_key: str,
+    data_fingerprint: str,
+) -> dict[str, object] | None:
+    row = connection.execute(
+        '''
+        SELECT payload_json
+        FROM notebook_cache
+        WHERE actor_id = ? AND cache_key = ? AND data_fingerprint = ?
+        ''',
+        (actor_id, cache_key, data_fingerprint),
+    ).fetchone()
+    if row is None:
+        return None
+    raw = str(row[0] or '').strip()
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _save_cached_notebook_core(
+    connection: sqlite3.Connection,
+    *,
+    actor_id: str,
+    cache_key: str,
+    data_fingerprint: str,
+    payload: dict[str, object],
+) -> None:
+    now = _utc_now_iso()
+    payload_json = json.dumps(payload, ensure_ascii=True, separators=(',', ':'), sort_keys=True)
+    connection.execute(
+        '''
+        INSERT INTO notebook_cache (
+            actor_id, cache_key, data_fingerprint, payload_json, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(actor_id, cache_key) DO UPDATE SET
+            data_fingerprint = excluded.data_fingerprint,
+            payload_json = excluded.payload_json,
+            updated_at = excluded.updated_at
+        ''',
+        (actor_id, cache_key, data_fingerprint, payload_json, now, now),
+    )
+
+
 def build_notebook_wrapper_core(
     *,
     actor_id: str,
@@ -35,62 +173,97 @@ def build_notebook_wrapper_core(
 def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object]) -> dict[str, object]:
     _pipeline_fetch_actor_notebook_core = deps['pipeline_fetch_actor_notebook_core']
     _db_path = deps['db_path']
+    pipeline_deps = {
+        'parse_published_datetime': deps['parse_published_datetime'],
+        'safe_json_string_list': deps['safe_json_string_list'],
+        'actor_signal_categories': deps['actor_signal_categories'],
+        'question_actor_relevance': deps['question_actor_relevance'],
+        'priority_update_evidence_dt': deps['priority_update_evidence_dt'],
+        'question_org_alignment': deps['question_org_alignment'],
+        'priority_rank_score': deps['priority_rank_score'],
+        'phase_label_for_question': deps['phase_label_for_question'],
+        'priority_where_to_check': deps['priority_where_to_check'],
+        'priority_confidence_label': deps['priority_confidence_label'],
+        'quick_check_title': deps['quick_check_title'],
+        'short_decision_trigger': deps['short_decision_trigger'],
+        'telemetry_anchor_line': deps['telemetry_anchor_line'],
+        'priority_next_best_action': deps['priority_next_best_action'],
+        'guidance_line': deps['guidance_line'],
+        'guidance_query_hint': deps['guidance_query_hint'],
+        'priority_disconfirming_signal': deps['priority_disconfirming_signal'],
+        'confidence_change_threshold_line': deps['confidence_change_threshold_line'],
+        'escalation_threshold_line': deps['escalation_threshold_line'],
+        'expected_output_line': deps['expected_output_line'],
+        'priority_update_recency_label': deps['priority_update_recency_label'],
+        'org_alignment_label': deps['org_alignment_label'],
+        'fallback_priority_questions': deps['fallback_priority_questions'],
+        'token_overlap': deps['token_overlap'],
+        'build_actor_profile_from_mitre': deps['build_actor_profile_from_mitre'],
+        'group_top_techniques': deps['group_top_techniques'],
+        'favorite_attack_vectors': deps['favorite_attack_vectors'],
+        'known_technique_ids_for_entity': deps['known_technique_ids_for_entity'],
+        'emerging_techniques_from_timeline': deps['emerging_techniques_from_timeline'],
+        'build_timeline_graph': deps['build_timeline_graph'],
+        'compact_timeline_rows': deps['compact_timeline_rows'],
+        'actor_terms': deps['actor_terms'],
+        'build_recent_activity_highlights': deps['build_recent_activity_highlights'],
+        'build_top_change_signals': deps['build_top_change_signals'],
+        'ollama_review_change_signals': deps.get('ollama_review_change_signals'),
+        'ollama_synthesize_recent_activity': deps.get('ollama_synthesize_recent_activity'),
+        'enforce_ollama_synthesis': deps.get('enforce_ollama_synthesis'),
+        'build_recent_activity_synthesis': deps['build_recent_activity_synthesis'],
+        'recent_change_summary': deps['recent_change_summary'],
+        'build_environment_checks': deps['build_environment_checks'],
+        'build_notebook_kpis': deps['build_notebook_kpis'],
+        'format_date_or_unknown': deps['format_date_or_unknown'],
+        'load_source_reliability_map': deps.get('load_source_reliability_map'),
+        'domain_from_url': deps.get('domain_from_url'),
+        'confidence_weight_adjustment': deps.get('confidence_weight_adjustment'),
+        'load_quick_check_overrides': deps.get('load_quick_check_overrides'),
+        'run_cold_actor_backfill': deps.get('run_cold_actor_backfill'),
+        'rebuild_notebook': deps.get('rebuild_notebook'),
+        'backfill_debug_ui_enabled': deps.get('backfill_debug_ui_enabled'),
+    }
+    source_tier = deps.get('source_tier')
+    min_confidence_weight = deps.get('min_confidence_weight')
+    source_days = deps.get('source_days')
+    cache_key = _cache_key_core(
+        source_tier=source_tier,
+        min_confidence_weight=min_confidence_weight,
+        source_days=source_days,
+        enforce_ollama_synthesis=pipeline_deps.get('enforce_ollama_synthesis'),
+        backfill_debug_ui_enabled=pipeline_deps.get('backfill_debug_ui_enabled'),
+    )
 
-    return _pipeline_fetch_actor_notebook_core(
+    with sqlite3.connect(_db_path()) as connection:
+        data_fingerprint = _actor_data_fingerprint_core(connection, actor_id)
+        cached = _load_cached_notebook_core(
+            connection,
+            actor_id=actor_id,
+            cache_key=cache_key,
+            data_fingerprint=data_fingerprint,
+        )
+        if isinstance(cached, dict):
+            return cached
+
+    notebook = _pipeline_fetch_actor_notebook_core(
         actor_id,
         db_path=_db_path(),
-        source_tier=deps.get('source_tier'),
-        min_confidence_weight=deps.get('min_confidence_weight'),
-        source_days=deps.get('source_days'),
-        deps={
-            'parse_published_datetime': deps['parse_published_datetime'],
-            'safe_json_string_list': deps['safe_json_string_list'],
-            'actor_signal_categories': deps['actor_signal_categories'],
-            'question_actor_relevance': deps['question_actor_relevance'],
-            'priority_update_evidence_dt': deps['priority_update_evidence_dt'],
-            'question_org_alignment': deps['question_org_alignment'],
-            'priority_rank_score': deps['priority_rank_score'],
-            'phase_label_for_question': deps['phase_label_for_question'],
-            'priority_where_to_check': deps['priority_where_to_check'],
-            'priority_confidence_label': deps['priority_confidence_label'],
-            'quick_check_title': deps['quick_check_title'],
-            'short_decision_trigger': deps['short_decision_trigger'],
-            'telemetry_anchor_line': deps['telemetry_anchor_line'],
-            'priority_next_best_action': deps['priority_next_best_action'],
-            'guidance_line': deps['guidance_line'],
-            'guidance_query_hint': deps['guidance_query_hint'],
-            'priority_disconfirming_signal': deps['priority_disconfirming_signal'],
-            'confidence_change_threshold_line': deps['confidence_change_threshold_line'],
-            'escalation_threshold_line': deps['escalation_threshold_line'],
-            'expected_output_line': deps['expected_output_line'],
-            'priority_update_recency_label': deps['priority_update_recency_label'],
-            'org_alignment_label': deps['org_alignment_label'],
-            'fallback_priority_questions': deps['fallback_priority_questions'],
-            'token_overlap': deps['token_overlap'],
-            'build_actor_profile_from_mitre': deps['build_actor_profile_from_mitre'],
-            'group_top_techniques': deps['group_top_techniques'],
-            'favorite_attack_vectors': deps['favorite_attack_vectors'],
-            'known_technique_ids_for_entity': deps['known_technique_ids_for_entity'],
-            'emerging_techniques_from_timeline': deps['emerging_techniques_from_timeline'],
-            'build_timeline_graph': deps['build_timeline_graph'],
-            'compact_timeline_rows': deps['compact_timeline_rows'],
-            'actor_terms': deps['actor_terms'],
-            'build_recent_activity_highlights': deps['build_recent_activity_highlights'],
-            'build_top_change_signals': deps['build_top_change_signals'],
-            'ollama_review_change_signals': deps.get('ollama_review_change_signals'),
-            'ollama_synthesize_recent_activity': deps.get('ollama_synthesize_recent_activity'),
-            'enforce_ollama_synthesis': deps.get('enforce_ollama_synthesis'),
-            'build_recent_activity_synthesis': deps['build_recent_activity_synthesis'],
-            'recent_change_summary': deps['recent_change_summary'],
-            'build_environment_checks': deps['build_environment_checks'],
-            'build_notebook_kpis': deps['build_notebook_kpis'],
-            'format_date_or_unknown': deps['format_date_or_unknown'],
-            'load_source_reliability_map': deps.get('load_source_reliability_map'),
-            'domain_from_url': deps.get('domain_from_url'),
-            'confidence_weight_adjustment': deps.get('confidence_weight_adjustment'),
-            'load_quick_check_overrides': deps.get('load_quick_check_overrides'),
-            'run_cold_actor_backfill': deps.get('run_cold_actor_backfill'),
-            'rebuild_notebook': deps.get('rebuild_notebook'),
-            'backfill_debug_ui_enabled': deps.get('backfill_debug_ui_enabled'),
-        },
+        source_tier=source_tier,
+        min_confidence_weight=min_confidence_weight,
+        source_days=source_days,
+        deps=pipeline_deps,
     )
+
+    if isinstance(notebook, dict):
+        with sqlite3.connect(_db_path()) as connection:
+            latest_fingerprint = _actor_data_fingerprint_core(connection, actor_id)
+            _save_cached_notebook_core(
+                connection,
+                actor_id=actor_id,
+                cache_key=cache_key,
+                data_fingerprint=latest_fingerprint,
+                payload=notebook,
+            )
+            connection.commit()
+    return notebook
