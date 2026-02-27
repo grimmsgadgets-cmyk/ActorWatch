@@ -21,6 +21,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'recover_stale_running_states': deps['recover_stale_running_states'],
                 'format_duration_ms': deps['format_duration_ms'],
                 'templates': deps['templates'],
+                'submit_actor_refresh_job': deps.get('submit_actor_refresh_job'),
             }
         )
     )
@@ -36,6 +37,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'db_path': deps['db_path'],
                 'actor_exists': deps['actor_exists'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
+                'submit_actor_refresh_job': deps.get('submit_actor_refresh_job'),
                 'run_actor_generation': deps['run_actor_generation'],
                 'enqueue_actor_generation': deps['enqueue_actor_generation'],
                 'metrics_snapshot': deps.get('metrics_snapshot'),
@@ -50,6 +52,7 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'default_body_limit_bytes': deps['default_body_limit_bytes'],
                 'create_actor_profile': deps['create_actor_profile'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
+                'submit_actor_refresh_job': deps.get('submit_actor_refresh_job'),
                 'run_actor_generation': deps['run_actor_generation'],
                 'enqueue_actor_generation': deps['enqueue_actor_generation'],
                 'list_actor_profiles': deps['list_actor_profiles'],
@@ -76,6 +79,9 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'utc_now_iso': deps['utc_now_iso'],
                 'set_actor_notebook_status': deps['set_actor_notebook_status'],
                 'get_actor_refresh_stats': deps['get_actor_refresh_stats'],
+                'get_actor_refresh_timeline': deps['get_actor_refresh_timeline'],
+                'submit_actor_refresh_job': deps.get('submit_actor_refresh_job'),
+                'get_actor_refresh_job': deps.get('get_actor_refresh_job'),
                 'run_actor_generation': deps['run_actor_generation'],
                 'enqueue_actor_generation': deps['enqueue_actor_generation'],
             }
@@ -102,6 +108,11 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'upsert_environment_profile': deps['upsert_environment_profile'],
                 'load_environment_profile': deps['load_environment_profile'],
                 'apply_feedback_to_source_domains': deps['apply_feedback_to_source_domains'],
+                'get_tracking_intent': deps['get_tracking_intent'],
+                'upsert_tracking_intent': deps['upsert_tracking_intent'],
+                'confirm_actor_assessment': deps['confirm_actor_assessment'],
+                'dispatch_alert_deliveries': deps.get('dispatch_alert_deliveries'),
+                'recover_stale_running_states': deps.get('recover_stale_running_states'),
             }
         )
     )

@@ -1,5 +1,5 @@
 def ensure_schema(connection) -> None:
-    schema_version = '2026-02-26.1'
+    schema_version = '2026-02-27.2'
     connection.execute(
         '''
         CREATE TABLE IF NOT EXISTS schema_meta (
@@ -83,6 +83,18 @@ def ensure_schema(connection) -> None:
         connection.execute(
             "ALTER TABLE actor_profiles ADD COLUMN auto_refresh_last_status TEXT"
         )
+    if not any(col[1] == 'last_confirmed_at' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN last_confirmed_at TEXT"
+        )
+    if not any(col[1] == 'last_confirmed_by' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN last_confirmed_by TEXT"
+        )
+    if not any(col[1] == 'last_confirmed_note' for col in actor_cols):
+        connection.execute(
+            "ALTER TABLE actor_profiles ADD COLUMN last_confirmed_note TEXT"
+        )
 
     connection.execute(
         '''
@@ -140,6 +152,245 @@ def ensure_schema(connection) -> None:
             action TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
+        '''
+    )
+
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS tracking_intent_register (
+            actor_id TEXT PRIMARY KEY,
+            why_track TEXT NOT NULL DEFAULT '',
+            mission_impact TEXT NOT NULL DEFAULT '',
+            intelligence_focus TEXT NOT NULL DEFAULT '',
+            key_questions_json TEXT NOT NULL DEFAULT '[]',
+            priority TEXT NOT NULL DEFAULT 'medium',
+            impact TEXT NOT NULL DEFAULT 'medium',
+            review_cadence_days INTEGER NOT NULL DEFAULT 30,
+            confirmation_min_sources INTEGER NOT NULL DEFAULT 2,
+            confirmation_max_age_days INTEGER NOT NULL DEFAULT 90,
+            confirmation_criteria TEXT NOT NULL DEFAULT '',
+            updated_by TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_collection_plans (
+            actor_id TEXT PRIMARY KEY,
+            monitored_sources_json TEXT NOT NULL DEFAULT '[]',
+            monitor_frequency TEXT NOT NULL DEFAULT 'daily',
+            trigger_conditions_json TEXT NOT NULL DEFAULT '[]',
+            alert_subscriptions_json TEXT NOT NULL DEFAULT '[]',
+            alert_notifications_enabled INTEGER NOT NULL DEFAULT 1,
+            updated_by TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    collection_plan_cols = connection.execute('PRAGMA table_info(actor_collection_plans)').fetchall()
+    if not any(col[1] == 'alert_notifications_enabled' for col in collection_plan_cols):
+        connection.execute(
+            "ALTER TABLE actor_collection_plans ADD COLUMN alert_notifications_enabled INTEGER NOT NULL DEFAULT 1"
+        )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_relationship_edges (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            src_entity_type TEXT NOT NULL,
+            src_entity_key TEXT NOT NULL,
+            relationship_type TEXT NOT NULL,
+            dst_entity_type TEXT NOT NULL,
+            dst_entity_key TEXT NOT NULL,
+            source_ref TEXT NOT NULL DEFAULT '',
+            observed_on TEXT NOT NULL DEFAULT '',
+            confidence TEXT NOT NULL DEFAULT 'moderate',
+            analyst TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_relationship_edges_actor
+        ON actor_relationship_edges(actor_id, relationship_type, updated_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_change_items (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            change_summary TEXT NOT NULL,
+            change_type TEXT NOT NULL DEFAULT 'other',
+            ttp_tag INTEGER NOT NULL DEFAULT 0,
+            infra_tag INTEGER NOT NULL DEFAULT 0,
+            tooling_tag INTEGER NOT NULL DEFAULT 0,
+            targeting_tag INTEGER NOT NULL DEFAULT 0,
+            timing_tag INTEGER NOT NULL DEFAULT 0,
+            access_vector_tag INTEGER NOT NULL DEFAULT 0,
+            confidence TEXT NOT NULL DEFAULT 'moderate',
+            source_ref TEXT NOT NULL DEFAULT '',
+            observed_on TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_change_items_actor_created
+        ON actor_change_items(actor_id, created_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_change_conflicts (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            conflict_topic TEXT NOT NULL,
+            source_a_ref TEXT NOT NULL,
+            source_b_ref TEXT NOT NULL,
+            arbitration_outcome TEXT NOT NULL,
+            confidence TEXT NOT NULL DEFAULT 'moderate',
+            analyst TEXT NOT NULL DEFAULT '',
+            resolved_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_change_conflicts_actor_resolved
+        ON actor_change_conflicts(actor_id, resolved_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_technique_coverage (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            technique_id TEXT NOT NULL,
+            technique_name TEXT NOT NULL DEFAULT '',
+            detection_name TEXT NOT NULL DEFAULT '',
+            control_name TEXT NOT NULL DEFAULT '',
+            coverage_status TEXT NOT NULL DEFAULT 'unknown',
+            validation_status TEXT NOT NULL DEFAULT 'unknown',
+            validation_evidence TEXT NOT NULL DEFAULT '',
+            updated_by TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_alert_events (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            alert_type TEXT NOT NULL DEFAULT 'change_detection',
+            severity TEXT NOT NULL DEFAULT 'medium',
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            source_ref TEXT NOT NULL DEFAULT '',
+            channel_targets_json TEXT NOT NULL DEFAULT '[]',
+            change_item_id TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            acknowledged_at TEXT NOT NULL DEFAULT '',
+            acknowledged_by TEXT NOT NULL DEFAULT ''
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_actor_alert_events_actor_status_created
+        ON actor_alert_events(actor_id, status, created_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_alert_delivery_events (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            alert_id TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            target TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'queued',
+            response_summary TEXT NOT NULL DEFAULT '',
+            error_detail TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_report_preferences (
+            actor_id TEXT PRIMARY KEY,
+            delta_brief_enabled INTEGER NOT NULL DEFAULT 1,
+            delta_brief_period TEXT NOT NULL DEFAULT 'weekly',
+            delta_brief_window_days INTEGER NOT NULL DEFAULT 7,
+            updated_by TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_alert_delivery_actor_alert_created
+        ON actor_alert_delivery_events(actor_id, alert_id, created_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_technique_coverage_actor_technique
+        ON actor_technique_coverage(actor_id, technique_id)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_tasks (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '',
+            priority TEXT NOT NULL DEFAULT 'medium',
+            status TEXT NOT NULL DEFAULT 'open',
+            owner TEXT NOT NULL DEFAULT '',
+            due_date TEXT NOT NULL DEFAULT '',
+            linked_type TEXT NOT NULL DEFAULT '',
+            linked_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_actor_tasks_actor_status_due
+        ON actor_tasks(actor_id, status, due_date, updated_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_operational_outcomes (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            outcome_type TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            result TEXT NOT NULL DEFAULT '',
+            linked_task_id TEXT NOT NULL DEFAULT '',
+            linked_technique_id TEXT NOT NULL DEFAULT '',
+            evidence_ref TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_actor_outcomes_actor_created
+        ON actor_operational_outcomes(actor_id, created_at DESC)
         '''
     )
 
@@ -540,9 +791,29 @@ def ensure_schema(connection) -> None:
             confidence TEXT NOT NULL DEFAULT 'moderate',
             source_reliability TEXT NOT NULL DEFAULT '',
             information_credibility TEXT NOT NULL DEFAULT '',
+            claim_type TEXT NOT NULL DEFAULT 'assessment',
+            citation_url TEXT NOT NULL DEFAULT '',
+            observed_on TEXT NOT NULL DEFAULT '',
             updated_by TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         )
+        '''
+    )
+    obs_cols = connection.execute('PRAGMA table_info(analyst_observations)').fetchall()
+    if not any(col[1] == 'claim_type' for col in obs_cols):
+        connection.execute("ALTER TABLE analyst_observations ADD COLUMN claim_type TEXT NOT NULL DEFAULT 'assessment'")
+    if not any(col[1] == 'citation_url' for col in obs_cols):
+        connection.execute("ALTER TABLE analyst_observations ADD COLUMN citation_url TEXT NOT NULL DEFAULT ''")
+    if not any(col[1] == 'observed_on' for col in obs_cols):
+        connection.execute("ALTER TABLE analyst_observations ADD COLUMN observed_on TEXT NOT NULL DEFAULT ''")
+    connection.execute(
+        '''
+        UPDATE analyst_observations
+        SET claim_type = CASE
+            WHEN LOWER(TRIM(COALESCE(claim_type, ''))) IN ('evidence', 'assessment')
+                THEN LOWER(TRIM(claim_type))
+            ELSE 'assessment'
+        END
         '''
     )
     connection.execute(
@@ -563,9 +834,29 @@ def ensure_schema(connection) -> None:
             confidence TEXT NOT NULL DEFAULT 'moderate',
             source_reliability TEXT NOT NULL DEFAULT '',
             information_credibility TEXT NOT NULL DEFAULT '',
+            claim_type TEXT NOT NULL DEFAULT 'assessment',
+            citation_url TEXT NOT NULL DEFAULT '',
+            observed_on TEXT NOT NULL DEFAULT '',
             updated_by TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         )
+        '''
+    )
+    obs_hist_cols = connection.execute('PRAGMA table_info(analyst_observation_history)').fetchall()
+    if not any(col[1] == 'claim_type' for col in obs_hist_cols):
+        connection.execute("ALTER TABLE analyst_observation_history ADD COLUMN claim_type TEXT NOT NULL DEFAULT 'assessment'")
+    if not any(col[1] == 'citation_url' for col in obs_hist_cols):
+        connection.execute("ALTER TABLE analyst_observation_history ADD COLUMN citation_url TEXT NOT NULL DEFAULT ''")
+    if not any(col[1] == 'observed_on' for col in obs_hist_cols):
+        connection.execute("ALTER TABLE analyst_observation_history ADD COLUMN observed_on TEXT NOT NULL DEFAULT ''")
+    connection.execute(
+        '''
+        UPDATE analyst_observation_history
+        SET claim_type = CASE
+            WHEN LOWER(TRIM(COALESCE(claim_type, ''))) IN ('evidence', 'assessment')
+                THEN LOWER(TRIM(claim_type))
+            ELSE 'assessment'
+        END
         '''
     )
     connection.execute(
@@ -643,6 +934,81 @@ def ensure_schema(connection) -> None:
         '''
         CREATE INDEX IF NOT EXISTS idx_source_reliability_actor_score
         ON source_reliability(actor_id, reliability_score DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS notebook_generation_jobs (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            trigger_type TEXT NOT NULL DEFAULT 'manual_refresh',
+            status TEXT NOT NULL DEFAULT 'queued',
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            duration_ms INTEGER,
+            imported_sources INTEGER NOT NULL DEFAULT 0,
+            final_message TEXT NOT NULL DEFAULT '',
+            error_message TEXT NOT NULL DEFAULT ''
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_generation_jobs_actor_created
+        ON notebook_generation_jobs(actor_id, created_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS notebook_generation_phases (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            actor_id TEXT NOT NULL,
+            phase_key TEXT NOT NULL,
+            phase_label TEXT NOT NULL,
+            attempt INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            error_detail TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            duration_ms INTEGER
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_generation_phases_job_started
+        ON notebook_generation_phases(job_id, started_at ASC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_generation_phases_actor_started
+        ON notebook_generation_phases(actor_id, started_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS llm_synthesis_cache (
+            actor_key TEXT NOT NULL,
+            cache_kind TEXT NOT NULL,
+            input_fingerprint TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            estimated_cost_ms INTEGER NOT NULL DEFAULT 0,
+            hit_count INTEGER NOT NULL DEFAULT 0,
+            saved_ms_total INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (actor_key, cache_kind, input_fingerprint)
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_llm_cache_actor_updated
+        ON llm_synthesis_cache(actor_key, updated_at DESC)
         '''
     )
     connection.commit()

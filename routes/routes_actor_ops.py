@@ -25,6 +25,9 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
     _utc_now_iso = deps['utc_now_iso']
     _set_actor_notebook_status = deps['set_actor_notebook_status']
     _get_actor_refresh_stats = deps['get_actor_refresh_stats']
+    _get_actor_refresh_timeline = deps.get('get_actor_refresh_timeline')
+    _submit_actor_refresh_job = deps.get('submit_actor_refresh_job')
+    _get_actor_refresh_job = deps.get('get_actor_refresh_job')
     _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
 
     @router.post('/actors/{actor_id}/sources')
@@ -239,11 +242,30 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
             'running',
             'Refreshing sources, questions, and timeline entries...',
         )
-        _enqueue_actor_generation(actor_id)
+        if callable(_submit_actor_refresh_job):
+            _submit_actor_refresh_job(actor_id, trigger_type='manual_refresh')
+        else:
+            _enqueue_actor_generation(actor_id)
         return RedirectResponse(
             url=f'/?actor_id={actor_id}&notice=Notebook refresh started',
             status_code=303,
         )
+
+    @router.post(route_paths.ACTOR_REFRESH_JOBS, response_class=JSONResponse)
+    def submit_refresh_job(actor_id: str) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+        if callable(_submit_actor_refresh_job):
+            return _submit_actor_refresh_job(actor_id, trigger_type='manual_refresh')
+        queued = bool(_enqueue_actor_generation(actor_id))
+        return {
+            'actor_id': actor_id,
+            'job_id': '',
+            'status': 'queued' if queued else 'running',
+            'queued': queued,
+            'message': 'Refresh job queued.' if queued else 'Refresh already in progress.',
+        }
 
     @router.get('/actors/{actor_id}/refresh/stats')
     def actor_refresh_stats(actor_id: str) -> dict[str, object]:
@@ -251,6 +273,32 @@ def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
             if not _actor_exists(connection, actor_id):
                 raise HTTPException(status_code=404, detail='actor not found')
         return _get_actor_refresh_stats(actor_id)
+
+    @router.get(route_paths.ACTOR_REFRESH_TIMELINE, response_class=JSONResponse)
+    def actor_refresh_timeline(actor_id: str) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+        if callable(_get_actor_refresh_timeline):
+            return _get_actor_refresh_timeline(actor_id)
+        stats = _get_actor_refresh_stats(actor_id)
+        return {
+            'actor_id': actor_id,
+            'recent_generation_runs': stats.get('recent_generation_runs', []),
+            'eta_seconds': stats.get('eta_seconds'),
+            'avg_duration_ms': stats.get('avg_duration_ms'),
+            'llm_cache_state': stats.get('llm_cache_state', {}),
+            'queue_state': {},
+        }
+
+    @router.get(route_paths.ACTOR_REFRESH_JOB_DETAIL, response_class=JSONResponse)
+    def actor_refresh_job_detail(actor_id: str, job_id: str) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+        if not callable(_get_actor_refresh_job):
+            raise HTTPException(status_code=404, detail='refresh job endpoint unavailable')
+        return _get_actor_refresh_job(actor_id, job_id)
 
     @router.get(route_paths.ACTOR_STIX_EXPORT, response_class=JSONResponse)
     def export_stix_bundle(actor_id: str) -> dict[str, object]:

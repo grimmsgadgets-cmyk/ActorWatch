@@ -93,6 +93,9 @@ def observation_quality_guidance_core(
     confidence: str,
     source_reliability: str,
     information_credibility: str,
+    claim_type: str = 'assessment',
+    citation_url: str = '',
+    observed_on: str = '',
 ) -> list[str]:
     cleaned_note = ' '.join(str(note or '').split())
     lowered_note = cleaned_note.lower()
@@ -100,10 +103,18 @@ def observation_quality_guidance_core(
     source_ref_value = str(source_ref or '').strip()
     source_reliability_value = str(source_reliability or '').strip().upper()
     info_credibility_value = str(information_credibility or '').strip()
+    claim_type_value = str(claim_type or 'assessment').strip().lower()
+    citation_url_value = str(citation_url or '').strip()
+    observed_on_value = str(observed_on or '').strip()
 
     guidance: list[str] = []
     if confidence_value == 'high' and not source_ref_value:
         guidance.append('High confidence should include a source reference (case/report/ticket id).')
+
+    if claim_type_value == 'evidence' and not citation_url_value:
+        guidance.append('Evidence-backed claims should include a citation URL.')
+    if claim_type_value == 'evidence' and not observed_on_value:
+        guidance.append('Evidence-backed claims should include an observed date (YYYY-MM-DD).')
 
     if confidence_value == 'high' and (not source_reliability_value or not info_credibility_value):
         guidance.append('High confidence should include source reliability (A-F) and information credibility (1-6).')
@@ -146,14 +157,20 @@ def map_observation_rows_core(
             'confidence': row[4] or 'moderate',
             'source_reliability': row[5] or '',
             'information_credibility': row[6] or '',
-            'updated_by': row[7] or '',
-            'updated_at': row[8] or '',
+            'claim_type': row[7] or 'assessment',
+            'citation_url': row[8] or '',
+            'observed_on': row[9] or '',
+            'updated_by': row[10] or '',
+            'updated_at': row[11] or '',
             'quality_guidance': observation_quality_guidance_core(
                 note=str(row[2] or ''),
                 source_ref=str(row[3] or ''),
                 confidence=str(row[4] or 'moderate'),
                 source_reliability=str(row[5] or ''),
                 information_credibility=str(row[6] or ''),
+                claim_type=str(row[7] or 'assessment'),
+                citation_url=str(row[8] or ''),
+                observed_on=str(row[9] or ''),
             ),
             'source_name': source_lookup.get(str(row[1]), {}).get('source_name', ''),
             'source_url': source_lookup.get(str(row[1]), {}).get('source_url', ''),

@@ -12,6 +12,7 @@ def run_tracked_actor_auto_refresh_once_core(
 ) -> int:
     _parse_published_datetime = deps['parse_published_datetime']
     _enqueue_actor_generation = deps['enqueue_actor_generation']
+    _submit_actor_refresh_job = deps.get('submit_actor_refresh_job')
     _on_actor_queued = deps.get('on_actor_queued')
     now_utc = datetime.now(timezone.utc)
     cutoff = now_utc - timedelta(hours=max(1, int(min_interval_hours)))
@@ -48,7 +49,10 @@ def run_tracked_actor_auto_refresh_once_core(
             )
         connection.commit()
     for actor_id in queued_actor_ids:
-        _enqueue_actor_generation(actor_id)
+        if callable(_submit_actor_refresh_job):
+            _submit_actor_refresh_job(actor_id, trigger_type='auto_refresh')
+        else:
+            _enqueue_actor_generation(actor_id, trigger_type='auto_refresh')
         if _on_actor_queued is not None:
             try:
                 _on_actor_queued(actor_id)
@@ -77,8 +81,23 @@ def actor_refresh_stats_core(
     db_path: str,
     now_utc: datetime | None = None,
 ) -> dict[str, object]:
+    def _parse_iso(raw: str) -> datetime | None:
+        value = str(raw or '').strip()
+        if not value:
+            return None
+        normalized = value.replace('Z', '+00:00')
+        try:
+            dt = datetime.fromisoformat(normalized)
+        except Exception:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
     reference_now = now_utc or datetime.now(timezone.utc)
     freshness_cutoff = reference_now - timedelta(hours=24)
+    eta_seconds: int | None = None
+    avg_duration_ms: int | None = None
     with sqlite3.connect(db_path) as connection:
         actor_row = connection.execute(
             '''
@@ -121,6 +140,75 @@ def actor_refresh_stats_core(
             ''',
             (freshness_cutoff.isoformat(), actor_id),
         ).fetchone()
+        actor_key = ' '.join(str(actor_row[0] or '').strip().lower().split())
+        llm_cache_row = connection.execute(
+            '''
+            SELECT
+                COALESCE(SUM(hit_count), 0),
+                COALESCE(SUM(saved_ms_total), 0)
+            FROM llm_synthesis_cache
+            WHERE actor_key = ?
+            ''',
+            (actor_key,),
+        ).fetchone()
+        recent_job_rows = connection.execute(
+            '''
+            SELECT
+                id,
+                trigger_type,
+                status,
+                created_at,
+                started_at,
+                finished_at,
+                duration_ms,
+                imported_sources,
+                final_message,
+                error_message
+            FROM notebook_generation_jobs
+            WHERE actor_id = ?
+            ORDER BY created_at DESC
+            LIMIT 5
+            ''',
+            (actor_id,),
+        ).fetchall()
+        completed_duration_rows = connection.execute(
+            '''
+            SELECT duration_ms
+            FROM notebook_generation_jobs
+            WHERE actor_id = ?
+              AND status = 'completed'
+              AND duration_ms IS NOT NULL
+              AND duration_ms > 0
+            ORDER BY created_at DESC
+            LIMIT 10
+            ''',
+            (actor_id,),
+        ).fetchall()
+        recent_job_ids = [str(row[0] or '') for row in recent_job_rows if str(row[0] or '').strip()]
+        phase_rows = []
+        if recent_job_ids:
+            placeholders = ','.join('?' for _ in recent_job_ids)
+            phase_rows = connection.execute(
+                f'''
+                SELECT
+                    id,
+                    job_id,
+                    phase_key,
+                    phase_label,
+                    attempt,
+                    status,
+                    message,
+                    error_detail,
+                    started_at,
+                    finished_at,
+                    duration_ms
+                FROM notebook_generation_phases
+                WHERE actor_id = ?
+                  AND job_id IN ({placeholders})
+                ORDER BY started_at DESC
+                ''',
+                (actor_id, *recent_job_ids),
+            ).fetchall()
     failing = [row for row in feed_rows if int(row[7] or 0) > 0]
     backoff = [row for row in feed_rows if int(row[7] or 0) >= 3]
     top_failures = [
@@ -142,6 +230,51 @@ def actor_refresh_stats_core(
         (str(row[2]) for row in feed_rows if str(row[2] or '').strip()),
         None,
     )
+    phases_by_job: dict[str, list[dict[str, object]]] = {}
+    for row in phase_rows:
+        job_id = str(row[1] or '')
+        if not job_id:
+            continue
+        phases_by_job.setdefault(job_id, []).append(
+            {
+                'phase_id': str(row[0] or ''),
+                'phase_key': str(row[2] or ''),
+                'phase_label': str(row[3] or ''),
+                'attempt': int(row[4] or 1),
+                'status': str(row[5] or ''),
+                'message': str(row[6] or ''),
+                'error_detail': str(row[7] or ''),
+                'started_at': str(row[8] or ''),
+                'finished_at': str(row[9] or ''),
+                'duration_ms': row[10],
+            }
+        )
+    recent_runs = [
+        {
+            'job_id': str(row[0] or ''),
+            'trigger_type': str(row[1] or ''),
+            'status': str(row[2] or ''),
+            'created_at': str(row[3] or ''),
+            'started_at': str(row[4] or ''),
+            'finished_at': str(row[5] or ''),
+            'duration_ms': row[6],
+            'imported_sources': int(row[7] or 0),
+            'final_message': str(row[8] or ''),
+            'error_message': str(row[9] or ''),
+            'phases': phases_by_job.get(str(row[0] or ''), []),
+        }
+        for row in recent_job_rows
+    ]
+    duration_values = [int(row[0] or 0) for row in completed_duration_rows if int(row[0] or 0) > 0]
+    if duration_values:
+        avg_duration_ms = max(1000, int(sum(duration_values) / len(duration_values)))
+    running_run = next((run for run in recent_runs if str(run.get('status') or '') == 'running'), None)
+    if running_run is not None and avg_duration_ms is not None:
+        started_dt = _parse_iso(str(running_run.get('started_at') or running_run.get('created_at') or ''))
+        if started_dt is not None:
+            elapsed_ms = max(0, int((reference_now - started_dt).total_seconds() * 1000))
+            running_run['elapsed_ms'] = elapsed_ms
+            eta_seconds = max(0, int((avg_duration_ms - elapsed_ms) / 1000))
     return {
         'actor_id': actor_id,
         'actor_name': str(actor_row[0]),
@@ -162,4 +295,11 @@ def actor_refresh_stats_core(
             'high_confidence_sources': int(source_stats[1] or 0) if source_stats else 0,
             'recent_high_confidence_sources_24h': int(source_stats[2] or 0) if source_stats else 0,
         },
+        'llm_cache_state': {
+            'cache_hits': int(llm_cache_row[0] or 0) if llm_cache_row else 0,
+            'saved_ms_total': int(llm_cache_row[1] or 0) if llm_cache_row else 0,
+        },
+        'eta_seconds': eta_seconds,
+        'avg_duration_ms': avg_duration_ms,
+        'recent_generation_runs': recent_runs,
     }

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import os
 import re
@@ -19,6 +20,7 @@ import services.actor_state_service as actor_state_service
 import services.actor_profile_service as actor_profile_service
 import guidance_catalog
 import services.generation_service as generation_service
+import services.generation_journal_service as generation_journal_service
 import services.feed_import_service as feed_import_service
 import legacy_ui
 import mitre_store
@@ -55,6 +57,8 @@ import services.source_reliability_service as source_reliability_service
 import services.requirements_service as requirements_service
 import services.status_service as status_service
 import services.metrics_service as metrics_service
+import services.llm_cache_service as llm_cache_service
+import services.alert_delivery_service as alert_delivery_service
 import pipelines.timeline_extraction as timeline_extraction
 import services.timeline_analytics_service as timeline_analytics_service
 import services.timeline_view_service as timeline_view_service
@@ -83,8 +87,16 @@ from pipelines.source_derivation import strip_html as pipeline_strip_html
 
 @asynccontextmanager
 async def app_lifespan(_: FastAPI):
-    global AUTO_REFRESH_STOP_EVENT, AUTO_REFRESH_THREAD
+    global AUTO_REFRESH_STOP_EVENT, AUTO_REFRESH_THREAD, GENERATION_WORKER_STOP_EVENT
     initialize_sqlite()
+    GENERATION_WORKER_STOP_EVENT = Event()
+    generation_service.start_generation_workers_core(
+        deps={
+            'run_actor_generation': run_actor_generation,
+            'run_actor_llm_enrichment': run_actor_llm_enrichment,
+            'stop_event': GENERATION_WORKER_STOP_EVENT,
+        }
+    )
     if AUTO_REFRESH_ENABLED:
         AUTO_REFRESH_STOP_EVENT = Event()
         AUTO_REFRESH_THREAD = Thread(
@@ -101,8 +113,12 @@ async def app_lifespan(_: FastAPI):
             AUTO_REFRESH_STOP_EVENT.set()
         if AUTO_REFRESH_THREAD is not None:
             AUTO_REFRESH_THREAD.join(timeout=2.0)
+        if GENERATION_WORKER_STOP_EVENT is not None:
+            GENERATION_WORKER_STOP_EVENT.set()
+            generation_service.stop_generation_workers_core()
         AUTO_REFRESH_STOP_EVENT = None
         AUTO_REFRESH_THREAD = None
+        GENERATION_WORKER_STOP_EVENT = None
 
 
 app = FastAPI(lifespan=app_lifespan)
@@ -584,6 +600,7 @@ _RATE_LIMIT_REQUEST_COUNTER = 0
 _RATE_LIMIT_CLEANUP_EVERY = 512
 AUTO_REFRESH_STOP_EVENT: Event | None = None
 AUTO_REFRESH_THREAD: Thread | None = None
+GENERATION_WORKER_STOP_EVENT: Event | None = None
 LOGGER = logging.getLogger('actorwatch')
 if not LOGGER.handlers:
     _handler = logging.StreamHandler()
@@ -609,6 +626,7 @@ def _run_tracked_actor_auto_refresh_once(*, limit: int = 3) -> int:
             deps={
                 'parse_published_datetime': _parse_published_datetime,
                 'enqueue_actor_generation': enqueue_actor_generation,
+                'submit_actor_refresh_job': submit_actor_refresh_job,
                 'on_actor_queued': lambda actor_id: _log_event('auto_refresh_actor_queued', actor_id=actor_id),
             },
         )
@@ -872,11 +890,11 @@ async def add_security_headers(request: Request, call_next):
         raise
     csp_policy = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://unpkg.com; "
         "img-src 'self' data: https:; "
         "font-src 'self' data:; "
-        "connect-src 'self'; "
+        "connect-src 'self' https://nominatim.openstreetmap.org; "
         "object-src 'none'; "
         "base-uri 'self'; "
         "form-action 'self'; "
@@ -1842,7 +1860,48 @@ def _ollama_review_change_signals(
     source_items: list[dict[str, object]],
     recent_activity_highlights: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    return analyst_text_service.ollama_review_change_signals_core(
+    actor_key = llm_cache_service.actor_key_core(actor_name)
+    cache_payload = {
+        'actor_key': actor_key,
+        'source_items': [
+            {
+                'id': str(item.get('id') or ''),
+                'url': str(item.get('url') or ''),
+                'published_at': str(item.get('published_at') or ''),
+                'retrieved_at': str(item.get('retrieved_at') or ''),
+                'fingerprint': str(item.get('source_fingerprint') or ''),
+            }
+            for item in source_items[:120]
+            if isinstance(item, dict)
+        ],
+        'recent_activity_highlights': [
+            {
+                'source_url': str(item.get('source_url') or ''),
+                'date': str(item.get('date') or ''),
+                'text': str(item.get('text') or '')[:260],
+            }
+            for item in recent_activity_highlights[:60]
+            if isinstance(item, dict)
+        ],
+    }
+    cache_fp = llm_cache_service.input_fingerprint_core(
+        cache_payload,
+        deps={'sha256': hashlib.sha256},
+    )
+    if os.environ.get('LLM_CACHE_ENABLED', '1').strip().lower() not in {'0', 'false', 'off', 'no'}:
+        cached = llm_cache_service.load_cached_payload_core(
+            actor_key=actor_key,
+            cache_kind='review_change_signals',
+            input_fingerprint=cache_fp,
+            deps={
+                'db_path': lambda: DB_PATH,
+                'utc_now_iso': utc_now_iso,
+            },
+        )
+        if isinstance(cached, list):
+            return [item for item in cached if isinstance(item, dict)]
+    started = time.perf_counter()
+    result = analyst_text_service.ollama_review_change_signals_core(
         actor_name,
         source_items,
         recent_activity_highlights,
@@ -1853,13 +1912,61 @@ def _ollama_review_change_signals(
             'parse_published_datetime': _parse_published_datetime,
         },
     )
+    if (
+        os.environ.get('LLM_CACHE_ENABLED', '1').strip().lower() not in {'0', 'false', 'off', 'no'}
+        and isinstance(result, list)
+        and len(result) > 0
+    ):
+        llm_cache_service.save_cached_payload_core(
+            actor_key=actor_key,
+            cache_kind='review_change_signals',
+            input_fingerprint=cache_fp,
+            payload=[item for item in result if isinstance(item, dict)],
+            estimated_cost_ms=int((time.perf_counter() - started) * 1000),
+            deps={
+                'db_path': lambda: DB_PATH,
+                'utc_now_iso': utc_now_iso,
+            },
+        )
+    return result
 
 
 def _ollama_synthesize_recent_activity(
     actor_name: str,
     highlights: list[dict[str, object]],
 ) -> list[dict[str, str]]:
-    return analyst_text_service.ollama_synthesize_recent_activity_core(
+    actor_key = llm_cache_service.actor_key_core(actor_name)
+    cache_payload = {
+        'actor_key': actor_key,
+        'highlights': [
+            {
+                'source_url': str(item.get('source_url') or ''),
+                'date': str(item.get('date') or ''),
+                'text': str(item.get('text') or '')[:320],
+                'category': str(item.get('category') or ''),
+            }
+            for item in highlights[:80]
+            if isinstance(item, dict)
+        ],
+    }
+    cache_fp = llm_cache_service.input_fingerprint_core(
+        cache_payload,
+        deps={'sha256': hashlib.sha256},
+    )
+    if os.environ.get('LLM_CACHE_ENABLED', '1').strip().lower() not in {'0', 'false', 'off', 'no'}:
+        cached = llm_cache_service.load_cached_payload_core(
+            actor_key=actor_key,
+            cache_kind='recent_activity_synthesis',
+            input_fingerprint=cache_fp,
+            deps={
+                'db_path': lambda: DB_PATH,
+                'utc_now_iso': utc_now_iso,
+            },
+        )
+        if isinstance(cached, list):
+            return [item for item in cached if isinstance(item, dict)]
+    started = time.perf_counter()
+    result = analyst_text_service.ollama_synthesize_recent_activity_core(
         actor_name,
         highlights,
         deps={
@@ -1868,6 +1975,23 @@ def _ollama_synthesize_recent_activity(
             'http_post': httpx.post,
         },
     )
+    if (
+        os.environ.get('LLM_CACHE_ENABLED', '1').strip().lower() not in {'0', 'false', 'off', 'no'}
+        and isinstance(result, list)
+        and len(result) > 0
+    ):
+        llm_cache_service.save_cached_payload_core(
+            actor_key=actor_key,
+            cache_kind='recent_activity_synthesis',
+            input_fingerprint=cache_fp,
+            payload=[item for item in result if isinstance(item, dict)],
+            estimated_cost_ms=int((time.perf_counter() - started) * 1000),
+            deps={
+                'db_path': lambda: DB_PATH,
+                'utc_now_iso': utc_now_iso,
+            },
+        )
+    return result
 
 
 def _ollama_enrich_quick_checks(
@@ -1945,7 +2069,89 @@ def _mark_actor_generation_finished(actor_id: str) -> None:
     generation_service.mark_actor_generation_finished_core(actor_id)
 
 
-def run_actor_generation(actor_id: str) -> None:
+def _generation_journal_deps() -> dict[str, object]:
+    return {
+        'db_path': lambda: DB_PATH,
+        'new_id': lambda: str(uuid.uuid4()),
+        'utc_now_iso': utc_now_iso,
+    }
+
+
+def _create_generation_job(*, actor_id: str, trigger_type: str, initial_status: str = 'running') -> str:
+    return generation_journal_service.create_generation_job_core(
+        actor_id=actor_id,
+        trigger_type=trigger_type,
+        initial_status=initial_status,
+        deps=_generation_journal_deps(),
+    )
+
+
+def _mark_generation_job_started(*, job_id: str) -> None:
+    generation_journal_service.mark_generation_job_started_core(
+        job_id=job_id,
+        deps=_generation_journal_deps(),
+    )
+
+
+def _finalize_generation_job(
+    *,
+    job_id: str,
+    status: str,
+    imported_sources: int,
+    duration_ms: int,
+    final_message: str = '',
+    error_message: str = '',
+) -> None:
+    generation_journal_service.finalize_generation_job_core(
+        job_id=job_id,
+        status=status,
+        imported_sources=imported_sources,
+        duration_ms=duration_ms,
+        final_message=final_message,
+        error_message=error_message,
+        deps=_generation_journal_deps(),
+    )
+
+
+def _start_generation_phase(
+    *,
+    actor_id: str,
+    job_id: str,
+    phase_key: str,
+    phase_label: str,
+    attempt: int,
+    message: str,
+) -> str:
+    return generation_journal_service.start_generation_phase_core(
+        job_id=job_id,
+        actor_id=actor_id,
+        phase_key=phase_key,
+        phase_label=phase_label,
+        attempt=attempt,
+        message=message,
+        deps=_generation_journal_deps(),
+    )
+
+
+def _finish_generation_phase(
+    *,
+    phase_id: str,
+    status: str,
+    message: str = '',
+    error_detail: str = '',
+    duration_ms: int | None = None,
+) -> None:
+    generation_journal_service.finish_generation_phase_core(
+        phase_id=phase_id,
+        status=status,
+        message=message,
+        error_detail=error_detail,
+        duration_ms=duration_ms,
+        deps=_generation_journal_deps(),
+    )
+
+
+def run_actor_generation(actor_id: str, *, trigger_type: str = 'manual_refresh', job_id: str = '') -> None:
     started = time.perf_counter()
     success = False
     _log_event('generation_started', actor_id=actor_id)
@@ -1960,6 +2166,14 @@ def run_actor_generation(actor_id: str) -> None:
                 'set_actor_notebook_status': set_actor_notebook_status,
                 'import_default_feeds_for_actor': import_default_feeds_for_actor,
                 'build_notebook': build_notebook,
+                'enqueue_actor_llm_enrichment': enqueue_actor_llm_enrichment,
+                'create_generation_job': _create_generation_job,
+                'mark_generation_job_started': _mark_generation_job_started,
+                'start_generation_phase': _start_generation_phase,
+                'finish_generation_phase': _finish_generation_phase,
+                'finalize_generation_job': _finalize_generation_job,
+                'trigger_type': trigger_type,
+                'job_id': job_id,
             },
         )
         success = True
@@ -1976,12 +2190,51 @@ def run_actor_generation(actor_id: str) -> None:
         )
 
 
-def enqueue_actor_generation(actor_id: str) -> None:
+def enqueue_actor_generation(
+    actor_id: str,
+    *,
+    trigger_type: str = 'manual_refresh',
+    job_id: str = '',
+    priority: int | None = None,
+) -> bool:
     _log_event('generation_enqueued', actor_id=actor_id)
-    generation_service.enqueue_actor_generation_core(
+    deps: dict[str, object] = {
+        'run_actor_generation': run_actor_generation,
+        'trigger_type': trigger_type,
+        'job_id': job_id,
+    }
+    if priority is not None:
+        deps['priority'] = int(priority)
+    return generation_service.enqueue_actor_generation_core(
+        actor_id=actor_id,
+        deps=deps,
+    )
+
+
+def run_actor_llm_enrichment(actor_id: str, *, job_id: str = '') -> None:
+    generation_service.run_actor_llm_enrichment_core(
         actor_id=actor_id,
         deps={
-            'run_actor_generation': run_actor_generation,
+            'mark_started': generation_service.mark_actor_llm_enrichment_started_core,
+            'mark_finished': generation_service.mark_actor_llm_enrichment_finished_core,
+            'set_actor_notebook_status': set_actor_notebook_status,
+            'refresh_actor_notebook_uncached': _refresh_actor_notebook_uncached,
+            'start_phase': _start_generation_phase,
+            'finish_phase': _finish_generation_phase,
+            'job_id': job_id,
+            'max_attempts': int(os.environ.get('LLM_ENRICHMENT_MAX_ATTEMPTS', '2')),
+            'retry_sleep_seconds': float(os.environ.get('LLM_ENRICHMENT_RETRY_SECONDS', '2')),
+        },
+    )
+
+
+def enqueue_actor_llm_enrichment(actor_id: str, *, job_id: str = '') -> None:
+    _log_event('llm_enrichment_enqueued', actor_id=actor_id)
+    generation_service.enqueue_actor_llm_enrichment_core(
+        actor_id=actor_id,
+        deps={
+            'run_actor_llm_enrichment': run_actor_llm_enrichment,
+            'job_id': job_id,
         },
     )
 
@@ -2024,6 +2277,95 @@ def merge_actor_profiles(target_actor_id: str, source_actor_id: str) -> dict[str
     )
 
 
+def get_tracking_intent(actor_id: str) -> dict[str, object]:
+    with sqlite3.connect(DB_PATH) as connection:
+        if not actor_exists(connection, actor_id):
+            raise HTTPException(status_code=404, detail='actor not found')
+        return actor_profile_service.load_tracking_intent_core(connection, actor_id)
+
+
+def upsert_tracking_intent(
+    *,
+    actor_id: str,
+    why_track: str,
+    mission_impact: str,
+    intelligence_focus: str,
+    key_questions: list[str],
+    priority: str,
+    impact: str,
+    review_cadence_days: int,
+    confirmation_min_sources: int,
+    confirmation_max_age_days: int,
+    confirmation_criteria: str,
+    updated_by: str,
+) -> dict[str, object]:
+    return actor_profile_service.upsert_tracking_intent_core(
+        actor_id=actor_id,
+        why_track=why_track,
+        mission_impact=mission_impact,
+        intelligence_focus=intelligence_focus,
+        key_questions=key_questions,
+        priority=priority,
+        impact=impact,
+        review_cadence_days=review_cadence_days,
+        confirmation_min_sources=confirmation_min_sources,
+        confirmation_max_age_days=confirmation_max_age_days,
+        confirmation_criteria=confirmation_criteria,
+        updated_by=updated_by,
+        deps={
+            'db_path': lambda: DB_PATH,
+            'utc_now_iso': utc_now_iso,
+            'actor_exists': actor_exists,
+        },
+    )
+
+
+def confirm_actor_assessment(actor_id: str, analyst: str, note: str) -> dict[str, object]:
+    return actor_profile_service.confirm_actor_assessment_core(
+        actor_id=actor_id,
+        analyst=analyst,
+        note=note,
+        deps={
+            'db_path': lambda: DB_PATH,
+            'utc_now_iso': utc_now_iso,
+            'actor_exists': actor_exists,
+        },
+    )
+
+
+def dispatch_alert_deliveries(
+    *,
+    actor_id: str,
+    alert_id: str,
+    title: str,
+    detail: str,
+    severity: str,
+    subscriptions: list[str],
+) -> dict[str, int]:
+    return alert_delivery_service.dispatch_alert_deliveries_core(
+        actor_id=actor_id,
+        alert_id=alert_id,
+        title=title,
+        detail=detail,
+        severity=severity,
+        subscriptions=subscriptions,
+        db_path=DB_PATH,
+        http_post=httpx.post,
+    )
+
+
+def seed_actor_profiles_from_mitre_groups() -> dict[str, int]:
+    return actor_profile_service.seed_actor_profiles_from_mitre_groups_core(
+        deps={
+            'db_path': lambda: DB_PATH,
+            'utc_now_iso': utc_now_iso,
+            'new_id': lambda: str(uuid.uuid4()),
+            'normalize_actor_name': actor_profile_service.normalize_actor_name_core,
+            'load_mitre_groups': _load_mitre_groups,
+        }
+    )
+
+
 def get_actor_refresh_stats(actor_id: str) -> dict[str, object]:
     try:
         return refresh_ops_service.actor_refresh_stats_core(
@@ -2032,6 +2374,89 @@ def get_actor_refresh_stats(actor_id: str) -> dict[str, object]:
         )
     except ValueError:
         raise HTTPException(status_code=404, detail='actor not found')
+
+
+def get_actor_refresh_timeline(actor_id: str) -> dict[str, object]:
+    stats = get_actor_refresh_stats(actor_id)
+    return {
+        'actor_id': actor_id,
+        'recent_generation_runs': stats.get('recent_generation_runs', []),
+        'eta_seconds': stats.get('eta_seconds'),
+        'avg_duration_ms': stats.get('avg_duration_ms'),
+        'llm_cache_state': stats.get('llm_cache_state', {}),
+        'queue_state': generation_service.queue_snapshot_core(),
+    }
+
+
+def submit_actor_refresh_job(actor_id: str, *, trigger_type: str = 'manual_refresh') -> dict[str, object]:
+    active = generation_journal_service.active_generation_job_for_actor_core(
+        actor_id=actor_id,
+        deps=_generation_journal_deps(),
+    )
+    if isinstance(active, dict) and str(active.get('job_id') or '').strip():
+        set_actor_notebook_status(
+            actor_id,
+            'running',
+            'Refresh is already in progress for this actor.',
+        )
+        return {
+            'actor_id': actor_id,
+            'job_id': str(active.get('job_id') or ''),
+            'status': str(active.get('status') or 'running'),
+            'queued': False,
+            'message': 'A refresh job is already in progress for this actor.',
+        }
+    job_id = _create_generation_job(actor_id=actor_id, trigger_type=trigger_type, initial_status='queued')
+    set_actor_notebook_status(
+        actor_id,
+        'running',
+        'Refresh queued. Waiting for worker slot...',
+    )
+    queue_priority = 2 if str(trigger_type or '').strip().lower() == 'auto_refresh' else 0
+    enqueued = enqueue_actor_generation(
+        actor_id,
+        trigger_type=trigger_type,
+        job_id=job_id,
+        priority=queue_priority,
+    )
+    if not enqueued:
+        _finalize_generation_job(
+            job_id=job_id,
+            status='skipped',
+            imported_sources=0,
+            duration_ms=0,
+            final_message='Skipped because another refresh was already queued.',
+            error_message='',
+        )
+        active = generation_journal_service.active_generation_job_for_actor_core(
+            actor_id=actor_id,
+            deps=_generation_journal_deps(),
+        )
+        return {
+            'actor_id': actor_id,
+            'job_id': str((active or {}).get('job_id') or job_id),
+            'status': str((active or {}).get('status') or 'queued'),
+            'queued': False,
+            'message': 'Refresh already queued for this actor.',
+        }
+    return {
+        'actor_id': actor_id,
+        'job_id': str(job_id),
+        'status': 'queued',
+        'queued': True,
+        'message': 'Refresh job queued.',
+    }
+
+
+def get_actor_refresh_job(actor_id: str, job_id: str) -> dict[str, object]:
+    item = generation_journal_service.generation_job_detail_core(
+        actor_id=actor_id,
+        job_id=job_id,
+        deps=_generation_journal_deps(),
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail='refresh job not found')
+    return item
 
 
 def _upsert_source_for_actor(
@@ -2426,6 +2851,8 @@ def _fetch_actor_notebook(
     source_tier: str | None = None,
     min_confidence_weight: int | None = None,
     source_days: int | None = None,
+    prefer_cached: bool = True,
+    build_on_cache_miss: bool = True,
 ) -> dict[str, object]:
     return notebook_service.fetch_actor_notebook_wrapper_core(
         actor_id=actor_id,
@@ -2433,6 +2860,8 @@ def _fetch_actor_notebook(
             source_tier=source_tier,
             min_confidence_weight=min_confidence_weight,
             source_days=source_days,
+            prefer_cached=prefer_cached,
+            build_on_cache_miss=build_on_cache_miss,
         ),
     )
 
@@ -2442,6 +2871,8 @@ def _fetch_actor_notebook_deps(
     source_tier: str | None = None,
     min_confidence_weight: int | None = None,
     source_days: int | None = None,
+    prefer_cached: bool = True,
+    build_on_cache_miss: bool = True,
 ) -> dict[str, object]:
     return {
         'pipeline_fetch_actor_notebook_core': pipeline_fetch_actor_notebook_core,
@@ -2449,6 +2880,8 @@ def _fetch_actor_notebook_deps(
         'source_tier': source_tier,
         'min_confidence_weight': min_confidence_weight,
         'source_days': source_days,
+        'prefer_cached': prefer_cached,
+        'build_on_cache_miss': build_on_cache_miss,
         'parse_published_datetime': _parse_published_datetime,
         'safe_json_string_list': _safe_json_string_list,
         'actor_signal_categories': _actor_signal_categories,
@@ -2504,6 +2937,10 @@ def _fetch_actor_notebook_deps(
     }
 
 
+def _refresh_actor_notebook_uncached(actor_id: str) -> dict[str, object]:
+    return _fetch_actor_notebook(actor_id, prefer_cached=False)
+
+
 def _initialize_sqlite_deps() -> dict[str, object]:
     return {
         'resolve_startup_db_path': _resolve_startup_db_path,
@@ -2530,6 +2967,11 @@ def initialize_sqlite() -> None:
                     'new_id': lambda: str(uuid.uuid4()),
                 }
             )
+        except Exception:
+            pass
+    if str(os.environ.get('MITRE_AUTO_SEED_ACTORS', '0')).strip().lower() in {'1', 'true', 'yes', 'on'}:
+        try:
+            seed_actor_profiles_from_mitre_groups()
         except Exception:
             pass
     _recover_stale_running_states()
@@ -2574,6 +3016,9 @@ def _register_routers() -> None:
             'import_actor_stix_bundle': _import_actor_stix_bundle,
             'utc_now_iso': utc_now_iso,
             'get_actor_refresh_stats': get_actor_refresh_stats,
+            'get_actor_refresh_timeline': get_actor_refresh_timeline,
+            'submit_actor_refresh_job': submit_actor_refresh_job,
+            'get_actor_refresh_job': get_actor_refresh_job,
             'generate_actor_requirements': generate_actor_requirements,
             'safe_json_string_list': _safe_json_string_list,
             'generate_ioc_hunt_queries': _ollama_generate_ioc_hunt_queries,
@@ -2583,6 +3028,10 @@ def _register_routers() -> None:
             'upsert_environment_profile': _upsert_environment_profile,
             'load_environment_profile': _load_environment_profile,
             'apply_feedback_to_source_domains': _apply_feedback_to_source_domains,
+            'get_tracking_intent': get_tracking_intent,
+            'upsert_tracking_intent': upsert_tracking_intent,
+            'confirm_actor_assessment': confirm_actor_assessment,
+            'dispatch_alert_deliveries': dispatch_alert_deliveries,
             'observation_body_limit_bytes': OBSERVATION_BODY_LIMIT_BYTES,
             'normalize_technique_id': _normalize_technique_id,
             'normalize_string_list': normalize_string_list,

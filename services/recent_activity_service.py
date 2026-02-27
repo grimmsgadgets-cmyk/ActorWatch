@@ -36,6 +36,16 @@ _SECTOR_HINT_PATTERNS: dict[str, tuple[str, ...]] = {
     'Transportation': ('transportation', 'logistics', 'shipping', 'aviation', 'rail'),
 }
 
+_GENERIC_ACTIVITY_PATTERNS = (
+    'provides protection against this threat',
+    'provides protection against',
+    'threat emulation',
+    'threat prevention',
+    'ips provides protection',
+    'signature update',
+    'security vendor advisory',
+)
+
 
 def _clean_target_fragment(raw_value: str) -> str:
     value = re.sub(r'\s+', ' ', str(raw_value or '')).strip(" \t\r\n.,;:-")
@@ -100,6 +110,25 @@ def build_recent_activity_synthesis_core(
 
     if not highlights:
         return []
+
+    filtered_highlights = [
+        item
+        for item in highlights
+        if not any(
+            pattern in (
+                ' '.join(
+                    [
+                        str(item.get('title') or ''),
+                        str(item.get('summary') or ''),
+                        str(item.get('text') or ''),
+                    ]
+                ).lower()
+            )
+            for pattern in _GENERIC_ACTIVITY_PATTERNS
+        )
+    ]
+    if filtered_highlights:
+        highlights = filtered_highlights
 
     category_counts: dict[str, int] = {}
     targets: list[str] = []

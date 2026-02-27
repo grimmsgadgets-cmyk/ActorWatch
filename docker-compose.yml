@@ -10,6 +10,7 @@ services:
       - TRUST_PROXY_HEADERS=0
       - UVICORN_RELOAD=1
       - PAGE_REFRESH_AUTO_TRIGGER_MINUTES=0
+      - MITRE_AUTO_SEED_ACTORS=1
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

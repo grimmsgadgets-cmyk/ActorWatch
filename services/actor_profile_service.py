@@ -1,4 +1,6 @@
+import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
@@ -37,7 +39,8 @@ def list_actor_profiles_core(*, deps: dict[str, object]) -> list[dict[str, objec
             SELECT
                 id, display_name, scope_statement, created_at, is_tracked, aliases_csv,
                 notebook_status, notebook_message, notebook_updated_at,
-                last_refresh_duration_ms, last_refresh_sources_processed
+                last_refresh_duration_ms, last_refresh_sources_processed,
+                last_confirmed_at, last_confirmed_by, last_confirmed_note
             FROM actor_profiles
             ORDER BY created_at DESC
             '''
@@ -55,9 +58,284 @@ def list_actor_profiles_core(*, deps: dict[str, object]) -> list[dict[str, objec
             'notebook_updated_at': row[8],
             'last_refresh_duration_ms': row[9],
             'last_refresh_sources_processed': row[10],
+            'last_confirmed_at': row[11],
+            'last_confirmed_by': row[12],
+            'last_confirmed_note': row[13],
         }
         for row in rows
     ]
+
+
+def load_tracking_intent_core(connection: sqlite3.Connection, actor_id: str) -> dict[str, object]:
+    row = connection.execute(
+        '''
+        SELECT
+            why_track, mission_impact, intelligence_focus, key_questions_json,
+            priority, impact, review_cadence_days,
+            confirmation_min_sources, confirmation_max_age_days,
+            confirmation_criteria, updated_by, updated_at
+        FROM tracking_intent_register
+        WHERE actor_id = ?
+        ''',
+        (actor_id,),
+    ).fetchone()
+    if row is None:
+        return {
+            'why_track': '',
+            'mission_impact': '',
+            'intelligence_focus': '',
+            'key_questions': [],
+            'priority': 'medium',
+            'impact': 'medium',
+            'review_cadence_days': 30,
+            'confirmation_min_sources': 2,
+            'confirmation_max_age_days': 90,
+            'confirmation_criteria': '',
+            'updated_by': '',
+            'updated_at': '',
+        }
+    try:
+        key_questions = json.loads(str(row[3] or '[]'))
+        if not isinstance(key_questions, list):
+            key_questions = []
+    except Exception:
+        key_questions = []
+    return {
+        'why_track': str(row[0] or ''),
+        'mission_impact': str(row[1] or ''),
+        'intelligence_focus': str(row[2] or ''),
+        'key_questions': [str(item).strip() for item in key_questions if str(item).strip()],
+        'priority': str(row[4] or 'medium').lower(),
+        'impact': str(row[5] or 'medium').lower(),
+        'review_cadence_days': int(row[6] or 30),
+        'confirmation_min_sources': int(row[7] or 2),
+        'confirmation_max_age_days': int(row[8] or 90),
+        'confirmation_criteria': str(row[9] or ''),
+        'updated_by': str(row[10] or ''),
+        'updated_at': str(row[11] or ''),
+    }
+
+
+def upsert_tracking_intent_core(
+    *,
+    actor_id: str,
+    why_track: str,
+    mission_impact: str,
+    intelligence_focus: str,
+    key_questions: list[str],
+    priority: str,
+    impact: str,
+    review_cadence_days: int,
+    confirmation_min_sources: int,
+    confirmation_max_age_days: int,
+    confirmation_criteria: str,
+    updated_by: str,
+    deps: dict[str, object],
+) -> dict[str, object]:
+    _db_path = deps['db_path']
+    _utc_now_iso = deps['utc_now_iso']
+    _actor_exists = deps['actor_exists']
+
+    normalized_priority = str(priority or '').strip().lower()
+    if normalized_priority not in {'low', 'medium', 'high', 'critical'}:
+        normalized_priority = 'medium'
+    normalized_impact = str(impact or '').strip().lower()
+    if normalized_impact not in {'low', 'medium', 'high', 'critical'}:
+        normalized_impact = 'medium'
+    safe_cadence = max(1, min(365, int(review_cadence_days)))
+    safe_min_sources = max(1, min(20, int(confirmation_min_sources)))
+    safe_max_age = max(1, min(3650, int(confirmation_max_age_days)))
+    safe_questions = [
+        ' '.join(str(item).split()).strip()[:220]
+        for item in (key_questions or [])
+        if ' '.join(str(item).split()).strip()
+    ][:12]
+    now_iso = _utc_now_iso()
+    with sqlite3.connect(_db_path()) as connection:
+        if not _actor_exists(connection, actor_id):
+            raise HTTPException(status_code=404, detail='actor not found')
+        connection.execute(
+            '''
+            INSERT INTO tracking_intent_register (
+                actor_id, why_track, mission_impact, intelligence_focus, key_questions_json,
+                priority, impact, review_cadence_days,
+                confirmation_min_sources, confirmation_max_age_days,
+                confirmation_criteria, updated_by, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(actor_id) DO UPDATE SET
+                why_track = excluded.why_track,
+                mission_impact = excluded.mission_impact,
+                intelligence_focus = excluded.intelligence_focus,
+                key_questions_json = excluded.key_questions_json,
+                priority = excluded.priority,
+                impact = excluded.impact,
+                review_cadence_days = excluded.review_cadence_days,
+                confirmation_min_sources = excluded.confirmation_min_sources,
+                confirmation_max_age_days = excluded.confirmation_max_age_days,
+                confirmation_criteria = excluded.confirmation_criteria,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+            ''',
+            (
+                actor_id,
+                str(why_track or '').strip()[:2000],
+                str(mission_impact or '').strip()[:2000],
+                str(intelligence_focus or '').strip()[:2000],
+                json.dumps(safe_questions),
+                normalized_priority,
+                normalized_impact,
+                safe_cadence,
+                safe_min_sources,
+                safe_max_age,
+                str(confirmation_criteria or '').strip()[:2000],
+                str(updated_by or '').strip()[:120],
+                now_iso,
+            ),
+        )
+        connection.commit()
+        return load_tracking_intent_core(connection, actor_id)
+
+
+def confirm_actor_assessment_core(
+    *,
+    actor_id: str,
+    analyst: str,
+    note: str,
+    deps: dict[str, object],
+) -> dict[str, object]:
+    _db_path = deps['db_path']
+    _utc_now_iso = deps['utc_now_iso']
+    _actor_exists = deps['actor_exists']
+
+    analyst_name = str(analyst or '').strip()[:120]
+    if not analyst_name:
+        raise HTTPException(status_code=400, detail='analyst is required')
+    confirm_note = str(note or '').strip()[:1000]
+    now_iso = _utc_now_iso()
+    with sqlite3.connect(_db_path()) as connection:
+        if not _actor_exists(connection, actor_id):
+            raise HTTPException(status_code=404, detail='actor not found')
+        intent = load_tracking_intent_core(connection, actor_id)
+        min_sources = max(1, int(intent.get('confirmation_min_sources') or 2))
+        max_age_days = max(1, int(intent.get('confirmation_max_age_days') or 90))
+        cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        source_count_row = connection.execute(
+            '''
+            SELECT COUNT(DISTINCT id)
+            FROM sources
+            WHERE actor_id = ?
+              AND COALESCE(published_at, ingested_at, retrieved_at, '') >= ?
+            ''',
+            (actor_id, cutoff_iso),
+        ).fetchone()
+        qualifying_sources = int(source_count_row[0] or 0) if source_count_row else 0
+        if qualifying_sources < min_sources:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'confirmation criteria not met: need at least {min_sources} '
+                    f'sources in the last {max_age_days} days (found {qualifying_sources})'
+                ),
+            )
+        connection.execute(
+            '''
+            UPDATE actor_profiles
+            SET last_confirmed_at = ?, last_confirmed_by = ?, last_confirmed_note = ?
+            WHERE id = ?
+            ''',
+            (now_iso, analyst_name, confirm_note, actor_id),
+        )
+        connection.commit()
+        return {
+            'actor_id': actor_id,
+            'last_confirmed_at': now_iso,
+            'last_confirmed_by': analyst_name,
+            'last_confirmed_note': confirm_note,
+            'criteria': {
+                'confirmation_min_sources': min_sources,
+                'confirmation_max_age_days': max_age_days,
+                'qualifying_sources': qualifying_sources,
+            },
+        }
+
+
+def seed_actor_profiles_from_mitre_groups_core(*, deps: dict[str, object]) -> dict[str, int]:
+    _db_path = deps['db_path']
+    _utc_now_iso = deps['utc_now_iso']
+    _new_id = deps['new_id']
+    _normalize_actor_name = deps.get('normalize_actor_name', normalize_actor_name_core)
+    _load_mitre_groups = deps.get('load_mitre_groups')
+
+    if not callable(_load_mitre_groups):
+        return {'total': 0, 'seeded': 0, 'existing': 0}
+
+    groups_raw = _load_mitre_groups()
+    groups = groups_raw if isinstance(groups_raw, list) else []
+    if not groups:
+        return {'total': 0, 'seeded': 0, 'existing': 0}
+
+    seeded = 0
+    existing = 0
+    now_iso = _utc_now_iso()
+    with sqlite3.connect(_db_path()) as connection:
+        existing_rows = connection.execute(
+            'SELECT canonical_name, display_name FROM actor_profiles'
+        ).fetchall()
+        existing_canonical: set[str] = set()
+        for row in existing_rows:
+            canonical = str(row[0] or '').strip()
+            if canonical:
+                existing_canonical.add(canonical)
+                continue
+            existing_canonical.add(_normalize_actor_name(str(row[1] or '')))
+
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            name = ' '.join(str(group.get('name') or '').split()).strip()
+            if not name:
+                continue
+            canonical = _normalize_actor_name(name)
+            if not canonical:
+                continue
+            if canonical in existing_canonical:
+                existing += 1
+                continue
+
+            aliases_raw = group.get('aliases')
+            aliases = aliases_raw if isinstance(aliases_raw, list) else []
+            alias_values = [
+                ' '.join(str(alias).split()).strip()
+                for alias in aliases
+                if str(alias).strip()
+            ]
+            aliases_csv = ', '.join(alias_values)
+
+            scope_statement = str(group.get('description') or '').strip() or None
+            connection.execute(
+                '''
+                INSERT INTO actor_profiles (
+                    id, display_name, canonical_name, aliases_csv, scope_statement,
+                    created_at, is_tracked, notebook_status, notebook_message, notebook_updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 0, 'idle', 'Waiting for tracking action.', ?)
+                ''',
+                (
+                    _new_id(),
+                    name,
+                    canonical,
+                    aliases_csv,
+                    scope_statement,
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            existing_canonical.add(canonical)
+            seeded += 1
+        connection.commit()
+
+    return {'total': len(groups), 'seeded': seeded, 'existing': existing}
 
 
 def create_actor_profile_core(

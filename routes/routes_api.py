@@ -15,6 +15,7 @@ def create_api_router(*, deps: dict[str, object]) -> APIRouter:
     _db_path = deps['db_path']
     _actor_exists = deps['actor_exists']
     _set_actor_notebook_status = deps['set_actor_notebook_status']
+    _submit_actor_refresh_job = deps.get('submit_actor_refresh_job')
     _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
     _metrics_snapshot = deps.get('metrics_snapshot')
 
@@ -29,7 +30,7 @@ def create_api_router(*, deps: dict[str, object]) -> APIRouter:
         return _metrics_snapshot()
 
     @router.get('/actors')
-    def get_actors() -> list[dict[str, str | None]]:
+    def get_actors() -> list[dict[str, str | bool | None]]:
         actors = _list_actor_profiles()
         return [
             {
@@ -37,6 +38,7 @@ def create_api_router(*, deps: dict[str, object]) -> APIRouter:
                 'display_name': str(actor['display_name']),
                 'scope_statement': actor['scope_statement'],
                 'created_at': str(actor['created_at']),
+                'is_tracked': bool(actor.get('is_tracked')),
             }
             for actor in actors
         ]
@@ -77,7 +79,10 @@ def create_api_router(*, deps: dict[str, object]) -> APIRouter:
             'running',
             'Fetching sources and generating open analytic questions and timeline entries...',
         )
-        _enqueue_actor_generation(actor_id)
+        if callable(_submit_actor_refresh_job):
+            _submit_actor_refresh_job(actor_id, trigger_type='manual_refresh')
+        else:
+            _enqueue_actor_generation(actor_id)
         return RedirectResponse(
             url=f'/?actor_id={actor_id}&notice=Notebook generation started',
             status_code=303,

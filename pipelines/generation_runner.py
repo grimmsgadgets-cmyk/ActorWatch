@@ -7,31 +7,94 @@ def run_actor_generation_core(
     *,
     db_path: str,
     deps: dict[str, object],
-) -> None:
+) -> dict[str, object]:
     _set_actor_notebook_status = deps['set_actor_notebook_status']
     _import_default_feeds_for_actor = deps['import_default_feeds_for_actor']
     _build_notebook = deps['build_notebook']
+    _enqueue_actor_llm_enrichment = deps.get('enqueue_actor_llm_enrichment')
+    _job_id = str(deps.get('job_id') or '')
+    _trigger_type = str(deps.get('trigger_type') or 'manual_refresh')
+    _start_phase = deps.get('start_phase')
+    _finish_phase = deps.get('finish_phase')
+
+    def _phase_start(*, key: str, label: str, message: str, attempt: int = 1) -> str | None:
+        if not callable(_start_phase):
+            return None
+        return str(
+            _start_phase(
+                actor_id=actor_id,
+                job_id=_job_id,
+                phase_key=key,
+                phase_label=label,
+                attempt=attempt,
+                message=message,
+            )
+        )
+
+    def _phase_finish(phase_id: str | None, *, status: str, message: str = '', error_detail: str = '', duration_ms: int | None = None) -> None:
+        if not phase_id or not callable(_finish_phase):
+            return
+        _finish_phase(
+            phase_id=phase_id,
+            status=status,
+            message=message,
+            error_detail=error_detail,
+            duration_ms=duration_ms,
+        )
 
     started_at = time.perf_counter()
     try:
+        phase_started_at = time.perf_counter()
+        source_phase_id = _phase_start(
+            key='source_collection',
+            label='Source Updates',
+            message='Checking trusted sources for new updates...',
+        )
         _set_actor_notebook_status(
             actor_id,
             'running',
-            'Collecting sources...',
+            'Checking trusted sources for new updates...',
         )
         imported = _import_default_feeds_for_actor(actor_id)
-        _set_actor_notebook_status(
-            actor_id,
-            'running',
-            f'Sources collected ({imported}). Building timeline preview...',
+        _phase_finish(
+            source_phase_id,
+            status='completed',
+            message=f'Checked sources and imported {imported} update(s).',
+            duration_ms=int((time.perf_counter() - phase_started_at) * 1000),
         )
-        _build_notebook(actor_id, generate_questions=False, rebuild_timeline=True)
-        _set_actor_notebook_status(
-            actor_id,
-            'running',
-            'Timeline ready. Generating question threads and guidance...',
+        skip_heavy_recompute = imported == 0 and _trigger_type == 'auto_refresh'
+        phase_started_at = time.perf_counter()
+        deterministic_phase_id = _phase_start(
+            key='deterministic_build',
+            label='Source-Based Notebook',
+            message='Updating notebook from source evidence...',
         )
-        _build_notebook(actor_id, generate_questions=True, rebuild_timeline=False)
+        if skip_heavy_recompute:
+            _set_actor_notebook_status(
+                actor_id,
+                'running',
+                'No new source updates found. Running quick consistency check...',
+            )
+            _build_notebook(actor_id, generate_questions=False, rebuild_timeline=False)
+        else:
+            _set_actor_notebook_status(
+                actor_id,
+                'running',
+                f'Sources collected ({imported}). Building timeline preview...',
+            )
+            _build_notebook(actor_id, generate_questions=False, rebuild_timeline=True)
+            _set_actor_notebook_status(
+                actor_id,
+                'running',
+                'Timeline ready. Generating question threads and guidance...',
+            )
+            _build_notebook(actor_id, generate_questions=True, rebuild_timeline=False)
+        _phase_finish(
+            deterministic_phase_id,
+            status='completed',
+            message='Notebook sections are ready.',
+            duration_ms=int((time.perf_counter() - phase_started_at) * 1000),
+        )
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         with sqlite3.connect(db_path) as connection:
             connection.execute(
@@ -48,10 +111,32 @@ def run_actor_generation_core(
         _set_actor_notebook_status(
             actor_id,
             'ready',
-            f'Notebook ready. Imported {imported} feed source(s).',
+            f'Notebook is ready with source-based analysis. Imported {imported} source update(s).',
         )
+        if callable(_enqueue_actor_llm_enrichment) and not skip_heavy_recompute:
+            _enqueue_actor_llm_enrichment(actor_id, job_id=_job_id)
+        return {
+            'success': True,
+            'imported': int(imported),
+            'duration_ms': int(elapsed_ms),
+            'message': f'Notebook is ready with source-based analysis. Imported {imported} source update(s).',
+        }
     except Exception as exc:
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        _phase_finish(
+            locals().get('source_phase_id'),
+            status='error',
+            message='Source collection failed.',
+            error_detail=str(exc),
+            duration_ms=int((time.perf_counter() - locals().get('phase_started_at', started_at)) * 1000),
+        )
+        _phase_finish(
+            locals().get('deterministic_phase_id'),
+            status='error',
+            message='Source-based notebook build failed.',
+            error_detail=str(exc),
+            duration_ms=int((time.perf_counter() - locals().get('phase_started_at', started_at)) * 1000),
+        )
         try:
             with sqlite3.connect(db_path) as connection:
                 connection.execute(
@@ -68,3 +153,10 @@ def run_actor_generation_core(
         except Exception:
             pass
         _set_actor_notebook_status(actor_id, 'error', f'Notebook generation failed: {exc}')
+        return {
+            'success': False,
+            'imported': 0,
+            'duration_ms': int(elapsed_ms),
+            'message': f'Notebook generation failed: {exc}',
+            'error': str(exc),
+        }

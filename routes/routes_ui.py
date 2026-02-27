@@ -11,6 +11,7 @@ def create_ui_router(*, deps: dict[str, object]) -> APIRouter:
     _default_body_limit_bytes = deps['default_body_limit_bytes']
     _create_actor_profile = deps['create_actor_profile']
     _set_actor_notebook_status = deps['set_actor_notebook_status']
+    _submit_actor_refresh_job = deps.get('submit_actor_refresh_job')
     _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
     _list_actor_profiles = deps['list_actor_profiles']
 
@@ -29,7 +30,10 @@ def create_ui_router(*, deps: dict[str, object]) -> APIRouter:
             'running',
             'Actor added. Importing sources and generating notebook sections...',
         )
-        _enqueue_actor_generation(actor['id'])
+        if callable(_submit_actor_refresh_job):
+            _submit_actor_refresh_job(actor['id'], trigger_type='manual_refresh')
+        else:
+            _enqueue_actor_generation(actor['id'])
         return RedirectResponse(
             url=f'/?actor_id={actor["id"]}&notice=Tracking+started.+Building+notebook+in+the+background.',
             status_code=303,

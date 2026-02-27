@@ -1085,6 +1085,7 @@ def recent_change_summary(
 def build_top_change_signals(
     recent_activity_highlights: list[dict[str, object]],
     *,
+    actor_terms: list[str] | None = None,
     limit: int = 3,
 ) -> list[dict[str, object]]:
     def _norm_text(value: object) -> str:
@@ -1119,16 +1120,74 @@ def build_top_change_signals(
         except Exception:
             return 0
 
+    normalized_actor_terms = [
+        _norm_text(term)
+        for term in (actor_terms or [])
+        if _norm_text(term)
+    ]
+
+    boilerplate_patterns = (
+        'provides protection against this threat',
+        'provides protection against',
+        'threat emulation',
+        'threat prevention',
+        'ips provides protection',
+        'signature update',
+        'security vendor advisory',
+    )
+
+    def _contains_actor_term(item: dict[str, object]) -> bool:
+        if not normalized_actor_terms:
+            return False
+        combined = ' '.join(
+            [
+                _norm_text(item.get('evidence_title')),
+                _norm_text(item.get('text')),
+                _norm_text(item.get('change_summary')),
+                _norm_text(item.get('target_text')),
+            ]
+        )
+        return any(term and term in combined for term in normalized_actor_terms)
+
+    def _evidence_density(item: dict[str, object]) -> int:
+        corroboration = _int_value(item.get('corroboration_sources'))
+        validated_count = _int_value(item.get('validated_source_count'))
+        validated_sources = item.get('validated_sources')
+        validated_len = len(validated_sources) if isinstance(validated_sources, list) else 0
+        return max(corroboration, validated_count, validated_len)
+
+    def _looks_like_vendor_boilerplate(item: dict[str, object]) -> bool:
+        combined = ' '.join(
+            [
+                _norm_text(item.get('evidence_title')),
+                _norm_text(item.get('text')),
+                _norm_text(item.get('change_summary')),
+            ]
+        )
+        return any(pattern in combined for pattern in boilerplate_patterns)
+
     def _is_change_signal(item: dict[str, object]) -> bool:
         if _is_generic_noise(item):
             return False
+        density = _evidence_density(item)
+        if density <= 0:
+            return False
         ttp_csv = str(item.get('ttp_ids') or '').strip()
+        has_structured = bool(ttp_csv or str(item.get('target_text') or '').strip())
+        # Evidence-density threshold: strong signals require at least 1 corroborated source;
+        # weak/unstructured signals require at least 2.
+        if has_structured and density < 1:
+            return False
+        if not has_structured and density < 2:
+            return False
+        if _looks_like_vendor_boilerplate(item) and not _contains_actor_term(item):
+            return False
         if ttp_csv:
             return True
         target_text = str(item.get('target_text') or '').strip()
         if target_text:
             return True
-        if _int_value(item.get('corroboration_sources')) >= 2:
+        if density >= 2:
             return True
         text = str(item.get('text') or '').strip().lower()
         if any(
@@ -1152,13 +1211,17 @@ def build_top_change_signals(
         return False
 
     def _signal_score(item: dict[str, object]) -> int:
-        score = _int_value(item.get('corroboration_sources'))
+        score = _evidence_density(item)
         if str(item.get('ttp_ids') or '').strip():
             score += 3
         if str(item.get('target_text') or '').strip():
             score += 2
         if str(item.get('category') or '').strip().lower() not in {'', 'activity synthesis'}:
             score += 1
+        if _contains_actor_term(item):
+            score += 4
+        if _looks_like_vendor_boilerplate(item):
+            score -= 4
         return score
 
     if limit <= 0:
@@ -1599,7 +1662,8 @@ def fetch_actor_notebook_core(
             SELECT
                 id, display_name, scope_statement, created_at, is_tracked,
                 notebook_status, notebook_message, notebook_updated_at,
-                last_refresh_duration_ms, last_refresh_sources_processed
+                last_refresh_duration_ms, last_refresh_sources_processed,
+                last_confirmed_at, last_confirmed_by, last_confirmed_note
             FROM actor_profiles
             WHERE id = ?
             ''',
@@ -1781,6 +1845,117 @@ def fetch_actor_notebook_core(
             ''',
             (actor_id,),
         ).fetchall()
+        collection_plan_row = connection.execute(
+            '''
+            SELECT monitored_sources_json, monitor_frequency, trigger_conditions_json,
+                   alert_subscriptions_json, alert_notifications_enabled, updated_by, updated_at
+            FROM actor_collection_plans
+            WHERE actor_id = ?
+            ''',
+            (actor_id,),
+        ).fetchone()
+        relationship_rows = connection.execute(
+            '''
+            SELECT src_entity_type, src_entity_key, relationship_type,
+                   dst_entity_type, dst_entity_key, source_ref, observed_on, confidence, analyst, updated_at
+            FROM actor_relationship_edges
+            WHERE actor_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 50
+            ''',
+            (actor_id,),
+        ).fetchall()
+        change_item_rows = connection.execute(
+            '''
+            SELECT id, change_summary, change_type, ttp_tag, infra_tag, tooling_tag,
+                   targeting_tag, timing_tag, access_vector_tag, confidence,
+                   source_ref, observed_on, created_by, created_at
+            FROM actor_change_items
+            WHERE actor_id = ?
+            ORDER BY created_at DESC
+            LIMIT 50
+            ''',
+            (actor_id,),
+        ).fetchall()
+        change_conflict_rows = connection.execute(
+            '''
+            SELECT conflict_topic, source_a_ref, source_b_ref, arbitration_outcome,
+                   confidence, analyst, resolved_at
+            FROM actor_change_conflicts
+            WHERE actor_id = ?
+            ORDER BY resolved_at DESC
+            LIMIT 25
+            ''',
+            (actor_id,),
+        ).fetchall()
+        coverage_rows = connection.execute(
+            '''
+            SELECT technique_id, technique_name, detection_name, control_name,
+                   coverage_status, validation_status, validation_evidence,
+                   updated_by, updated_at
+            FROM actor_technique_coverage
+            WHERE actor_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 200
+            ''',
+            (actor_id,),
+        ).fetchall()
+        task_rows = connection.execute(
+            '''
+            SELECT id, title, details, priority, status, owner, due_date,
+                   linked_type, linked_key, created_at, updated_at
+            FROM actor_tasks
+            WHERE actor_id = ?
+            ORDER BY
+                CASE LOWER(status)
+                    WHEN 'open' THEN 0
+                    WHEN 'in_progress' THEN 1
+                    WHEN 'blocked' THEN 2
+                    WHEN 'done' THEN 3
+                    ELSE 4
+                END,
+                COALESCE(NULLIF(due_date, ''), '9999-12-31') ASC,
+                updated_at DESC
+            LIMIT 200
+            ''',
+            (actor_id,),
+        ).fetchall()
+        outcome_rows = connection.execute(
+            '''
+            SELECT id, outcome_type, summary, result, linked_task_id,
+                   linked_technique_id, evidence_ref, created_by, created_at
+            FROM actor_operational_outcomes
+            WHERE actor_id = ?
+            ORDER BY created_at DESC
+            LIMIT 200
+            ''',
+            (actor_id,),
+        ).fetchall()
+        report_pref_row = connection.execute(
+            '''
+            SELECT delta_brief_enabled, delta_brief_period, delta_brief_window_days, updated_by, updated_at
+            FROM actor_report_preferences
+            WHERE actor_id = ?
+            ''',
+            (actor_id,),
+        ).fetchone()
+        alert_rows = connection.execute(
+            '''
+            SELECT id, alert_type, severity, title, detail, status, source_ref,
+                   channel_targets_json, change_item_id, created_at, acknowledged_at, acknowledged_by
+            FROM actor_alert_events
+            WHERE actor_id = ?
+            ORDER BY
+                CASE LOWER(status)
+                    WHEN 'open' THEN 0
+                    WHEN 'acknowledged' THEN 1
+                    ELSE 2
+                END,
+                created_at DESC
+            LIMIT 60
+            ''',
+            (actor_id,),
+        ).fetchall()
 
         guidance_by_thread: dict[str, list[dict[str, object]]] = {}
         for row in guidance_rows:
@@ -1840,7 +2015,204 @@ def fetch_actor_notebook_core(
         'notebook_updated_at': actor_row[7],
         'last_refresh_duration_ms': actor_row[8],
         'last_refresh_sources_processed': actor_row[9],
+        'last_confirmed_at': actor_row[10],
+        'last_confirmed_by': actor_row[11],
+        'last_confirmed_note': actor_row[12],
     }
+    with sqlite3.connect(db_path) as connection:
+        tracking_intent_row = connection.execute(
+            '''
+            SELECT
+                why_track, mission_impact, intelligence_focus, key_questions_json,
+                priority, impact, review_cadence_days,
+                confirmation_min_sources, confirmation_max_age_days, confirmation_criteria,
+                updated_by, updated_at
+            FROM tracking_intent_register
+            WHERE actor_id = ?
+            ''',
+            (actor_id,),
+        ).fetchone()
+    if tracking_intent_row is None:
+        tracking_intent = {
+            'actor_id': actor_id,
+            'why_track': '',
+            'mission_impact': '',
+            'intelligence_focus': '',
+            'key_questions': [],
+            'priority': 'medium',
+            'impact': 'medium',
+            'review_cadence_days': 30,
+            'confirmation_min_sources': 2,
+            'confirmation_max_age_days': 45,
+            'confirmation_criteria': '',
+            'updated_by': '',
+            'updated_at': '',
+        }
+    else:
+        try:
+            key_questions_value = _safe_json_string_list(str(tracking_intent_row[3] or '[]'))
+        except Exception:
+            key_questions_value = []
+        tracking_intent = {
+            'actor_id': actor_id,
+            'why_track': str(tracking_intent_row[0] or ''),
+            'mission_impact': str(tracking_intent_row[1] or ''),
+            'intelligence_focus': str(tracking_intent_row[2] or ''),
+            'key_questions': key_questions_value,
+            'priority': str(tracking_intent_row[4] or 'medium'),
+            'impact': str(tracking_intent_row[5] or 'medium'),
+            'review_cadence_days': int(tracking_intent_row[6] or 30),
+            'confirmation_min_sources': int(tracking_intent_row[7] or 2),
+            'confirmation_max_age_days': int(tracking_intent_row[8] or 45),
+            'confirmation_criteria': str(tracking_intent_row[9] or ''),
+            'updated_by': str(tracking_intent_row[10] or ''),
+            'updated_at': str(tracking_intent_row[11] or ''),
+        }
+    if collection_plan_row is None:
+        collection_plan = {
+            'actor_id': actor_id,
+            'monitored_sources': [],
+            'monitor_frequency': 'daily',
+            'trigger_conditions': [],
+            'alert_subscriptions': [],
+            'alert_notifications_enabled': True,
+            'updated_by': '',
+            'updated_at': '',
+        }
+    else:
+        collection_plan = {
+            'actor_id': actor_id,
+            'monitored_sources': _safe_json_string_list(str(collection_plan_row[0] or '[]')),
+            'monitor_frequency': str(collection_plan_row[1] or 'daily'),
+            'trigger_conditions': _safe_json_string_list(str(collection_plan_row[2] or '[]')),
+            'alert_subscriptions': _safe_json_string_list(str(collection_plan_row[3] or '[]')),
+            'alert_notifications_enabled': int(collection_plan_row[4] or 0) == 1,
+            'updated_by': str(collection_plan_row[5] or ''),
+            'updated_at': str(collection_plan_row[6] or ''),
+        }
+    relationship_items = [
+        {
+            'src_entity_type': str(row[0] or ''),
+            'src_entity_key': str(row[1] or ''),
+            'relationship_type': str(row[2] or ''),
+            'dst_entity_type': str(row[3] or ''),
+            'dst_entity_key': str(row[4] or ''),
+            'source_ref': str(row[5] or ''),
+            'observed_on': str(row[6] or ''),
+            'confidence': str(row[7] or 'moderate'),
+            'analyst': str(row[8] or ''),
+            'updated_at': str(row[9] or ''),
+        }
+        for row in relationship_rows
+    ]
+    change_items = [
+        {
+            'id': str(row[0] or ''),
+            'change_summary': str(row[1] or ''),
+            'change_type': str(row[2] or 'other'),
+            'ttp_tag': bool(row[3]),
+            'infra_tag': bool(row[4]),
+            'tooling_tag': bool(row[5]),
+            'targeting_tag': bool(row[6]),
+            'timing_tag': bool(row[7]),
+            'access_vector_tag': bool(row[8]),
+            'confidence': str(row[9] or 'moderate'),
+            'source_ref': str(row[10] or ''),
+            'observed_on': str(row[11] or ''),
+            'created_by': str(row[12] or ''),
+            'created_at': str(row[13] or ''),
+        }
+        for row in change_item_rows
+    ]
+    change_conflicts = [
+        {
+            'conflict_topic': str(row[0] or ''),
+            'source_a_ref': str(row[1] or ''),
+            'source_b_ref': str(row[2] or ''),
+            'arbitration_outcome': str(row[3] or ''),
+            'confidence': str(row[4] or 'moderate'),
+            'analyst': str(row[5] or ''),
+            'resolved_at': str(row[6] or ''),
+        }
+        for row in change_conflict_rows
+    ]
+    technique_coverage = [
+        {
+            'technique_id': str(row[0] or ''),
+            'technique_name': str(row[1] or ''),
+            'detection_name': str(row[2] or ''),
+            'control_name': str(row[3] or ''),
+            'coverage_status': str(row[4] or 'unknown'),
+            'validation_status': str(row[5] or 'unknown'),
+            'validation_evidence': str(row[6] or ''),
+            'updated_by': str(row[7] or ''),
+            'updated_at': str(row[8] or ''),
+        }
+        for row in coverage_rows
+    ]
+    ops_tasks = [
+        {
+            'id': str(row[0] or ''),
+            'title': str(row[1] or ''),
+            'details': str(row[2] or ''),
+            'priority': str(row[3] or 'medium'),
+            'status': str(row[4] or 'open'),
+            'owner': str(row[5] or ''),
+            'due_date': str(row[6] or ''),
+            'linked_type': str(row[7] or ''),
+            'linked_key': str(row[8] or ''),
+            'created_at': str(row[9] or ''),
+            'updated_at': str(row[10] or ''),
+        }
+        for row in task_rows
+    ]
+    operational_outcomes = [
+        {
+            'id': str(row[0] or ''),
+            'outcome_type': str(row[1] or ''),
+            'summary': str(row[2] or ''),
+            'result': str(row[3] or ''),
+            'linked_task_id': str(row[4] or ''),
+            'linked_technique_id': str(row[5] or ''),
+            'evidence_ref': str(row[6] or ''),
+            'created_by': str(row[7] or ''),
+            'created_at': str(row[8] or ''),
+        }
+        for row in outcome_rows
+    ]
+    alert_queue = [
+        {
+            'id': str(row[0] or ''),
+            'alert_type': str(row[1] or 'change_detection'),
+            'severity': str(row[2] or 'medium'),
+            'title': str(row[3] or ''),
+            'detail': str(row[4] or ''),
+            'status': str(row[5] or 'open'),
+            'source_ref': str(row[6] or ''),
+            'channel_targets': _safe_json_string_list(str(row[7] or '[]')),
+            'change_item_id': str(row[8] or ''),
+            'created_at': str(row[9] or ''),
+            'acknowledged_at': str(row[10] or ''),
+            'acknowledged_by': str(row[11] or ''),
+        }
+        for row in alert_rows
+    ]
+    if report_pref_row is None:
+        report_preferences = {
+            'delta_brief_enabled': True,
+            'delta_brief_period': 'weekly',
+            'delta_brief_window_days': 7,
+            'updated_by': '',
+            'updated_at': '',
+        }
+    else:
+        report_preferences = {
+            'delta_brief_enabled': int(report_pref_row[0] or 0) == 1,
+            'delta_brief_period': str(report_pref_row[1] or 'weekly'),
+            'delta_brief_window_days': int(report_pref_row[2] or 7),
+            'updated_by': str(report_pref_row[3] or ''),
+            'updated_at': str(report_pref_row[4] or ''),
+        }
     timeline_items: list[dict[str, object]] = [
         {
             'id': row[0],
@@ -2811,8 +3183,14 @@ def fetch_actor_notebook_core(
         and isinstance(item.get('validated_sources'), list)
         and len(item.get('validated_sources') or []) > 0
     ]
-    if not top_change_signals and not _enforce_ollama_synthesis:
-        deterministic_signals = _build_top_change_signals(recent_activity_highlights, limit=3)
+    llm_change_signals_degraded = False
+    if not top_change_signals:
+        llm_change_signals_degraded = True
+        deterministic_signals = _build_top_change_signals(
+            recent_activity_highlights,
+            actor_terms=actor_terms,
+            limit=3,
+        )
         for item in deterministic_signals:
             evidence_url = str(item.get('source_url') or '').strip()
             evidence_date = str(item.get('source_published_at') or item.get('date') or '').strip()
@@ -2863,7 +3241,9 @@ def fetch_actor_notebook_core(
     )
     if not isinstance(recent_activity_synthesis, list):
         recent_activity_synthesis = []
-    if not recent_activity_synthesis and not _enforce_ollama_synthesis:
+    llm_recent_synthesis_degraded = False
+    if not recent_activity_synthesis:
+        llm_recent_synthesis_degraded = True
         recent_activity_synthesis = _build_recent_activity_synthesis(recent_activity_highlights)
     recent_change_summary = _recent_change_summary(
         timeline_recent_items_for_changes,
@@ -2905,6 +3285,8 @@ def fetch_actor_notebook_core(
         'recent_activity_highlights': recent_activity_highlights,
         'top_change_signals': top_change_signals,
         'recent_activity_synthesis': recent_activity_synthesis,
+        'llm_change_signals_degraded': llm_change_signals_degraded,
+        'llm_recent_synthesis_degraded': llm_recent_synthesis_degraded,
         'recent_change_summary': recent_change_summary,
         'source_quality_filters': {
             'source_tier': normalized_source_tier or '',
@@ -2916,6 +3298,16 @@ def fetch_actor_notebook_core(
             'undated_excluded': '1',
             'strict_default_mode': '1' if strict_default_mode else '0',
         },
+        'tracking_intent': tracking_intent,
+        'collection_plan': collection_plan,
+        'relationship_items': relationship_items,
+        'change_items': change_items,
+        'change_conflicts': change_conflicts,
+        'technique_coverage': technique_coverage,
+        'ops_tasks': ops_tasks,
+        'operational_outcomes': operational_outcomes,
+        'alert_queue': alert_queue,
+        'report_preferences': report_preferences,
         'environment_checks': environment_checks,
         'kpis': notebook_kpis,
         'ioc_items': ioc_items,
@@ -2950,3 +3342,48 @@ def fetch_actor_notebook_core(
             'open_questions': len(open_thread_ids),
         },
     }
+    normalized_actor_terms = [
+        _norm_text(term)
+        for term in (actor_terms or [])
+        if _norm_text(term)
+    ]
+
+    boilerplate_patterns = (
+        'provides protection against this threat',
+        'provides protection against',
+        'threat emulation',
+        'threat prevention',
+        'ips provides protection',
+        'signature update',
+        'security vendor advisory',
+    )
+
+    def _contains_actor_term(item: dict[str, object]) -> bool:
+        if not normalized_actor_terms:
+            return False
+        combined = ' '.join(
+            [
+                _norm_text(item.get('evidence_title')),
+                _norm_text(item.get('text')),
+                _norm_text(item.get('change_summary')),
+                _norm_text(item.get('target_text')),
+            ]
+        )
+        return any(term and term in combined for term in normalized_actor_terms)
+
+    def _evidence_density(item: dict[str, object]) -> int:
+        corroboration = _int_value(item.get('corroboration_sources'))
+        validated_count = _int_value(item.get('validated_source_count'))
+        validated_sources = item.get('validated_sources')
+        validated_len = len(validated_sources) if isinstance(validated_sources, list) else 0
+        return max(corroboration, validated_count, validated_len)
+
+    def _looks_like_vendor_boilerplate(item: dict[str, object]) -> bool:
+        combined = ' '.join(
+            [
+                _norm_text(item.get('evidence_title')),
+                _norm_text(item.get('text')),
+                _norm_text(item.get('change_summary')),
+            ]
+        )
+        return any(pattern in combined for pattern in boilerplate_patterns)

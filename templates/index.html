@@ -14,6 +14,17 @@
       .sidebar-panel:first-of-type { margin-top: 0; }
       .actor-list { list-style: none; padding: 0; margin: 0; }
       .actor-list li { margin-bottom: 6px; }
+      .actors-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; }
+      .actors-head h3 { margin: 0; }
+      .geo-open-btn.compact {
+        width: auto;
+        min-height: 28px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+      }
+      .actors-subhead { margin: 0 0 8px; font-size: 12px; letter-spacing: .01em; color: #d6e3f5; }
+      .actors-divider { margin: 10px 0; border: 0; border-top: 1px dashed #4f5e77; }
       .actor-autocomplete-wrap { position: relative; }
       .actor-autocomplete-list {
         position: absolute;
@@ -121,10 +132,68 @@
       }
       .main { padding: 16px; overflow: hidden; display: flex; flex-direction: column; gap: 12px; }
       .top-status-row { position: sticky; top: 0; z-index: 15; background: #f7f7f7; padding-bottom: 6px; }
-      .dashboard { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 10px; flex: 1; min-height: 0; }
-      .workspace-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; gap: 10px; min-height: 0; }
-      .workspace-grid .pane { min-height: 0; overflow: auto; }
+      .dashboard { display: grid; grid-template-rows: auto auto auto auto; gap: 10px; flex: 1; min-height: 0; align-content: start; }
+      .workspace-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto; gap: 10px; min-height: 0; align-items: start; }
+      .workspace-grid .pane { min-height: 0; max-height: 430px; overflow: auto; }
       .workspace-grid .pane .section-title { position: sticky; top: 0; z-index: 4; background: #fff; }
+      .workspace-grid.single-card { grid-template-columns: 1fr; }
+      .giant-notebook-card { min-height: 0; }
+      .main-tabs { display: inline-flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+      .main-tab-btn {
+        border: 1px solid #c9d7ef;
+        border-radius: 999px;
+        background: #f8fbff;
+        color: #1f2937;
+        font-size: 12px;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+      .main-tab-btn.active {
+        background: #35527f;
+        border-color: #35527f;
+        color: #fff;
+      }
+      .tab-panel-hidden { display: none !important; }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        border: 0;
+      }
+      .adv-tabs { display: inline-flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+      .adv-tab-btn {
+        border: 1px solid #c9d7ef;
+        border-radius: 999px;
+        background: #f8fbff;
+        color: #1f2937;
+        font-size: 11px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      .adv-tab-btn.active {
+        background: #1f4a8a;
+        border-color: #1f4a8a;
+        color: #fff;
+      }
+      .notes-tabs { display: inline-flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 8px; }
+      .notes-tab-btn {
+        border: 1px solid #c9d7ef;
+        border-radius: 999px;
+        background: #f8fbff;
+        color: #1f2937;
+        font-size: 11px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      .notes-tab-btn.active {
+        background: #35527f;
+        border-color: #35527f;
+        color: #fff;
+      }
       .card { background: #fff; border: 1px solid #d9e2ef; border-radius: 10px; padding: 12px; margin-bottom: 0; box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03); }
       .card.span-2 { grid-column: 1 / -1; }
       .ataglance-strip { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; padding: 10px 12px; position: sticky; top: 54px; z-index: 10; }
@@ -146,7 +215,7 @@
       .mini-trend-kpi.down .v { color: #8a1c1c; }
       .mini-trend-kpi.flat .v { color: #334155; }
       .bottom-drawer { min-height: 0; }
-      .section-title { margin-top: 0; margin-bottom: 8px; font-size: 16px; line-height: 1.2; padding-bottom: 6px; border-bottom: 1px solid #e8eef8; }
+      .section-title { margin-top: 0; margin-bottom: 8px; font-size: 14px; line-height: 1.2; padding-bottom: 6px; border-bottom: 1px solid #e8eef8; }
       .role-chip { display: inline-block; margin-left: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; border: 1px solid #cfdcee; border-radius: 999px; padding: 2px 7px; color: #41556f; background: #f3f8ff; vertical-align: middle; }
       .section-body { padding-right: 2px; }
       .section-body p { margin: 0 0 6px; }
@@ -203,8 +272,8 @@
       .who-meta { margin: 6px 0 0; font-size: 12px; color: #334155; line-height: 1.4; }
       .who-meta a { color: #1f4a8a; }
       .who-summary { border: 1px solid #dce7f8; border-radius: 8px; background: #f8fbff; padding: 8px; margin-bottom: 8px; }
-      .who-summary p { margin: 0; font-size: 14px; line-height: 1.45; color: #0f172a; }
-      .who-why { margin: 8px 0; border: 1px solid #dce7f8; border-radius: 8px; background: #f8fbff; padding: 8px; font-size: 15px; line-height: 1.45; color: #0f172a; font-weight: 500; }
+      .who-summary p { margin: 0; font-size: 13px; line-height: 1.4; color: #0f172a; }
+      .who-why { margin: 8px 0; border: 1px solid #dce7f8; border-radius: 8px; background: #f8fbff; padding: 8px; font-size: 13px; line-height: 1.4; color: #0f172a; font-weight: 500; }
       .who-heading { margin: 8px 0 6px; font-size: 13px; letter-spacing: .01em; color: #1f2937; }
       .technique-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
       .technique-item { border: 1px solid #dfe6f3; border-radius: 8px; background: #fbfdff; padding: 8px; }
@@ -269,8 +338,62 @@
       .guidance { border: 1px solid #d6e3f5; border-radius: 8px; background: #f5faff; padding: 10px; margin: 8px 0; }
       .notice { background: #fff6d9; border: 1px solid #e1cc78; border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; }
       .top-status-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+      .ui-mode-top {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid #c9d7ef;
+        background: #f8fbff;
+        border-radius: 999px;
+        padding: 4px 8px;
+      }
+      .ui-mode-top label { font-size: 11px; color: #334155; font-weight: 600; }
+      .ui-mode-top select {
+        border: 1px solid #c7d4ea;
+        border-radius: 999px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 11px;
+        padding: 3px 8px;
+      }
       .status-chip { margin-bottom: 0; padding: 4px 8px; font-size: 11px; line-height: 1.25; width: fit-content; max-width: 340px; border-radius: 999px; }
       .status-chip strong { font-weight: 600; }
+      .status-button {
+        border: 1px solid #c9d7ef;
+        background: #f8fbff;
+        color: #0f172a;
+        cursor: default;
+        text-align: left;
+      }
+      .status-ops-drawer {
+        margin: 0;
+      }
+      .status-ops-drawer > summary {
+        list-style: none;
+      }
+      .status-ops-drawer > summary::-webkit-details-marker { display: none; }
+      .status-ops-panel {
+        margin-top: 8px;
+        border: 1px solid #d9e7fb;
+        border-radius: 8px;
+        background: #f7fbff;
+        padding: 8px;
+        min-width: min(760px, calc(100vw - 48px));
+      }
+      .status-ops-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(120px, 1fr));
+        gap: 6px;
+      }
+      .status-ops-item {
+        border: 1px solid #dce7f8;
+        border-radius: 8px;
+        background: #fff;
+        padding: 6px;
+      }
+      .status-ops-item .label { font-size: 10px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
+      .status-ops-item .value { font-size: 12px; font-weight: 600; color: #0f172a; margin-top: 2px; overflow-wrap: anywhere; }
       .status-meta { margin-top: 3px; font-size: 10px; color: #334155; }
       .status-running { background: #eef6ff; border-color: #a7c2ea; }
       .status-ready { background: #eaf9ef; border-color: #9fd2ac; }
@@ -389,6 +512,70 @@
       }
       .sidebar .secondary-action button { min-height: 34px; font-size: 12px; }
       .sidebar .secondary-action[open] > summary { margin-bottom: 8px; }
+      body[data-ui-mode="redraw"] {
+        background: radial-gradient(1200px 700px at 15% -5%, #1f2e26 0%, #050808 45%, #010203 100%);
+        color: #dbe9e4;
+      }
+      body[data-ui-mode="redraw"] .sidebar {
+        background: linear-gradient(180deg, #152922, #101f1a 65%, #0c1713);
+        color: #e4f1eb;
+      }
+      body[data-ui-mode="redraw"] .sidebar-panel,
+      body[data-ui-mode="redraw"] .sidebar-card,
+      body[data-ui-mode="redraw"] .sidebar details.compact,
+      body[data-ui-mode="redraw"] .sidebar .interactive-panel,
+      body[data-ui-mode="redraw"] .sidebar .review-strip {
+        background: #172f28;
+        border-color: #2d4b41;
+        color: #e4f1eb;
+      }
+      body[data-ui-mode="redraw"] .main {
+        background: linear-gradient(180deg, #0d1412, #0a0f0e);
+      }
+      body[data-ui-mode="redraw"] .card,
+      body[data-ui-mode="redraw"] .ops-health,
+      body[data-ui-mode="redraw"] .refresh-run-card,
+      body[data-ui-mode="redraw"] .snapshot-card,
+      body[data-ui-mode="redraw"] .who-summary,
+      body[data-ui-mode="redraw"] .who-why,
+      body[data-ui-mode="redraw"] .technique-item,
+      body[data-ui-mode="redraw"] .change-row {
+        background: #111b18;
+        border-color: #2a3f38;
+        color: #dbe9e4;
+      }
+      body[data-ui-mode="redraw"] .section-title,
+      body[data-ui-mode="redraw"] .timeline-meta,
+      body[data-ui-mode="redraw"] .inline-note,
+      body[data-ui-mode="redraw"] .who-meta,
+      body[data-ui-mode="redraw"] .source-meta,
+      body[data-ui-mode="redraw"] .refresh-run-meta {
+        color: #a6c2b8;
+      }
+      body[data-ui-mode="redraw"] .badge {
+        border-color: #3f6f62;
+        background: #163028;
+        color: #cce8de;
+      }
+      body[data-ui-mode="redraw"] .action-button,
+      body[data-ui-mode="redraw"] .quick-actions a,
+      body[data-ui-mode="redraw"] .quick-actions button,
+      body[data-ui-mode="redraw"] .quick-actions details.quick-export-menu > summary,
+      body[data-ui-mode="redraw"] button[type="submit"] {
+        background: linear-gradient(180deg, #2f8f6f, #1f6d54);
+        border-color: #4bc39a;
+        color: #f3fff9;
+      }
+      body[data-ui-mode="redraw"] .ui-mode-top {
+        background: #142721;
+        border-color: #2d4b41;
+      }
+      body[data-ui-mode="redraw"] .ui-mode-top label { color: #c8ded6; }
+      body[data-ui-mode="redraw"] .ui-mode-top select {
+        background: #0f1f1a;
+        border-color: #3f6f62;
+        color: #dbe9e4;
+      }
       .sidebar .interactive-panel { background: #2b3445; border-color: #3d4658; color: #fff; }
       .sidebar .review-strip { background: #2b3445; border-color: #3d4658; }
       .sidebar .review-metric { background: #1f2735; border-color: #3d4658; }
@@ -489,6 +676,171 @@
       .ops-health-item { border: 1px solid #dce7f8; border-radius: 8px; background: #fff; padding: 6px; min-width: 0; }
       .ops-health-item .label { font-size: 10px; text-transform: uppercase; letter-spacing: .02em; color: #64748b; }
       .ops-health-item .value { font-size: 13px; font-weight: 600; color: #0f172a; margin-top: 2px; overflow-wrap: anywhere; }
+      .refresh-activity-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; }
+      .refresh-activity-actions { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+      .refresh-activity-actions button {
+        border: 1px solid #b8c7e2;
+        background: #f7fbff;
+        border-radius: 6px;
+        padding: 5px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        min-height: 30px;
+      }
+      .refresh-activity-live { font-size: 11px; color: #334155; border: 1px solid #c9d7ef; border-radius: 999px; padding: 3px 8px; background: #eef5ff; }
+      .refresh-activity-live.running { background: #eef6ff; border-color: #a7c2ea; color: #0f3d80; }
+      .refresh-activity-live.ready { background: #eaf9ef; border-color: #9fd2ac; color: #14532d; }
+      .refresh-activity-live.error { background: #fff0ef; border-color: #e4b1ad; color: #7f1d1d; }
+      .refresh-activity-help { margin: 4px 0 6px; font-size: 12px; color: #334155; }
+      .refresh-activity-meta { font-size: 11px; color: #475569; margin-bottom: 6px; }
+      .refresh-run-list { display: grid; gap: 7px; }
+      .refresh-run-card { border: 1px solid #dce7f8; border-radius: 8px; background: #fff; padding: 8px; }
+      .refresh-run-card.is-running { border-color: #a7c2ea; background: #f7fbff; }
+      .refresh-run-card.is-error { border-color: #e4b1ad; background: #fff7f6; }
+      .refresh-run-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+      .refresh-run-top strong { font-size: 13px; color: #0f172a; }
+      .refresh-run-meta { font-size: 11px; color: #475569; }
+      .refresh-run-message { margin-top: 4px; font-size: 12px; color: #1f2937; }
+      .refresh-phase-list { margin: 6px 0 0; padding-left: 16px; }
+      .refresh-phase-list li { margin: 3px 0; font-size: 12px; color: #1f2937; }
+      .refresh-empty { border: 1px dashed #c7d8f0; border-radius: 8px; padding: 8px; background: #fafdff; font-size: 12px; color: #334155; }
+      .geo-open-wrap { margin-top: 8px; }
+      .geo-open-btn {
+        width: 100%;
+        min-height: 34px;
+        border: 1px solid #4f5e77;
+        border-radius: 8px;
+        background: #1f2735;
+        color: #fff;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .geo-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 70;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15, 23, 42, 0.55);
+        padding: 16px;
+      }
+      .geo-modal.open { display: flex; }
+      .geo-modal-card {
+        width: min(1200px, calc(100vw - 24px));
+        max-height: 86vh;
+        overflow: auto;
+        border: 1px solid #d6e2f5;
+        border-radius: 10px;
+        background: #fff;
+        box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+        padding: 10px;
+      }
+      .geo-modal-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .geo-modal-head h3 {
+        margin: 0;
+        font-size: 15px;
+      }
+      .geo-modal-head button {
+        border: 1px solid #c6d4ea;
+        border-radius: 8px;
+        background: #f8fbff;
+        color: #1f2937;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      .quick-note-form { display: grid; gap: 8px; }
+      .quick-note-form label { display: grid; gap: 4px; font-size: 12px; color: #334155; }
+      .quick-note-form input,
+      .quick-note-form select,
+      .quick-note-form textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 7px;
+        border: 1px solid #cdd8ea;
+        border-radius: 6px;
+        background: #fff;
+        font-size: 12px;
+      }
+      .quick-note-form textarea { min-height: 100px; resize: vertical; }
+      .quick-note-actions { display: flex; justify-content: flex-end; gap: 8px; }
+      .quick-note-actions button {
+        border: 1px solid #c6d4ea;
+        border-radius: 8px;
+        background: #f8fbff;
+        color: #1f2937;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      .quick-note-status { font-size: 12px; color: #334155; min-height: 18px; }
+      .geo-grid {
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 10px;
+      }
+      .geo-canvas-wrap {
+        border: 1px solid #dce7f8;
+        border-radius: 8px;
+        background: #f8fbff;
+        padding: 8px;
+      }
+      #geo-map-canvas {
+        width: 100%;
+        height: 560px;
+        border: 1px solid #c9d7ef;
+        border-radius: 8px;
+        background: #dbeafe;
+      }
+      .geo-side {
+        border: 1px solid #dce7f8;
+        border-radius: 8px;
+        background: #f8fbff;
+        padding: 8px;
+      }
+      .geo-region-list { margin-top: 8px; display: grid; gap: 7px; }
+      .geo-region-item {
+        border: 1px solid #d8e1ef;
+        border-radius: 8px;
+        background: #fff;
+        padding: 8px;
+      }
+      .geo-actor-pick {
+        width: 100%;
+        border: 1px solid #d8e1ef;
+        border-radius: 8px;
+        background: #fff;
+        text-align: left;
+        padding: 8px;
+        cursor: pointer;
+      }
+      .geo-actor-pick:hover { background: #f6fbff; }
+      .geo-actor-pick strong { display: block; font-size: 13px; color: #0f172a; }
+      .geo-actor-pick .meta { font-size: 11px; color: #475569; margin-top: 2px; }
+      .geo-region-item button {
+        margin-top: 6px;
+        border: 1px solid #b8c7e2;
+        background: #f7fbff;
+        border-radius: 6px;
+        padding: 5px 8px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .geo-actor-detail {
+        margin-top: 10px;
+        border: 1px solid #dce7f8;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 8px;
+      }
+      @media (max-width: 1100px) {
+        .geo-grid { grid-template-columns: 1fr; }
+      }
       .merge-row { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #4f5e77; }
       .merge-list { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
       .merge-list li { margin: 0; }
@@ -522,7 +874,11 @@
       <aside class="sidebar">
         <h1>ActorWatch</h1>
         <div class="sidebar-panel">
-          <h3>Tracked actors</h3>
+          <div class="actors-head">
+            <h3>Actors</h3>
+            <button id="geo-map-open" class="geo-open-btn compact" type="button">Map</button>
+          </div>
+          <div class="actors-subhead">Tracked</div>
           <ul class="actor-list">
             {% for actor in actors %}
             <li>
@@ -540,10 +896,8 @@
             <li><span class="actor-scope">No tracked actors yet.</span></li>
             {% endfor %}
           </ul>
-        </div>
-
-        <div class="sidebar-panel">
-          <h3>Add actor</h3>
+          <hr class="actors-divider" />
+          <div class="actors-subhead">Add actor</div>
           <form id="add-actor-form" method="post" action="/actors/new">
             <div class="actor-autocomplete-wrap">
               <input id="add-actor-input" type="text" name="display_name" placeholder="Display name" autocomplete="off" required />
@@ -575,12 +929,13 @@
         <div class="sidebar-card">
           <h3>Quick actions</h3>
           <div class="quick-actions">
-            <form method="post" action="/actors/{{ notebook.actor.id }}/refresh">
-              <button type="submit">Refresh actor</button>
+            <form id="refresh-actor-form" method="post" action="/actors/{{ notebook.actor.id }}/refresh">
+              <button id="refresh-actor-button" type="submit">Refresh actor</button>
             </form>
             <form method="post" action="/actors/{{ notebook.actor.id }}/observations/auto-snapshot">
               <button type="submit">Auto-note changes</button>
             </form>
+            <button id="workflow-tour-open" type="button">Workflow tour</button>
             <a href="/actors/{{ notebook.actor.id }}/timeline/details">Open timeline details</a>
             <details class="quick-export-menu" id="analyst-pack-menu">
               <summary id="analyst-pack-menu-trigger">Export analyst pack</summary>
@@ -595,6 +950,19 @@
                 {% endif %}
                 <a id="analyst-pack-export-json-link" href="/actors/{{ notebook.actor.id }}/export/analyst-pack.json" target="_blank" rel="noreferrer">Export JSON pack</a>
                 <a id="analyst-pack-export-pdf-link" href="/actors/{{ notebook.actor.id }}/export/analyst-pack.pdf" target="_blank" rel="noreferrer">Export PDF pack</a>
+                <a href="/actors/{{ notebook.actor.id }}/reports/exec" target="_blank" rel="noreferrer">Executive report (JSON)</a>
+                <a href="/actors/{{ notebook.actor.id }}/reports/soc" target="_blank" rel="noreferrer">SOC report (JSON)</a>
+                <a href="/actors/{{ notebook.actor.id }}/reports/ir" target="_blank" rel="noreferrer">IR report (JSON)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/tasks.json" target="_blank" rel="noreferrer">Tasks export (JSON)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/tasks.csv" target="_blank" rel="noreferrer">Tasks export (CSV)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/outcomes.json" target="_blank" rel="noreferrer">Outcomes export (JSON)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/outcomes.csv" target="_blank" rel="noreferrer">Outcomes export (CSV)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/coverage.json" target="_blank" rel="noreferrer">Coverage export (JSON)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/coverage.csv" target="_blank" rel="noreferrer">Coverage export (CSV)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/evidence-bundle.json" target="_blank" rel="noreferrer">Evidence bundle (JSON)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/evidence-bundle.csv" target="_blank" rel="noreferrer">Evidence bundle (CSV)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/delta-brief.json?period=weekly" target="_blank" rel="noreferrer">Delta brief (Weekly JSON)</a>
+                <a href="/actors/{{ notebook.actor.id }}/export/delta-brief.json?period=monthly" target="_blank" rel="noreferrer">Delta brief (Monthly JSON)</a>
               </div>
             </details>
           </div>
@@ -610,6 +978,201 @@
               <label for="org_context">Org Context</label>
               <textarea id="org_context" name="org_context" rows="4" placeholder="Critical assets, business unit, environment, constraints...">{{ notebook.requirements_context.org_context }}</textarea>
               <button class="action-button" type="submit">Generate PIR/GIR/IR</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/tracking-intent">
+              <label for="tracking-updated-by">Updated by</label>
+              <input id="tracking-updated-by" name="updated_by" type="text" placeholder="Analyst name" />
+              <label for="tracking-why-track">Why track this actor</label>
+              <textarea id="tracking-why-track" name="why_track" rows="3" placeholder="Mission-level reason for tracking">{{ notebook.tracking_intent.why_track if notebook.tracking_intent else '' }}</textarea>
+              <label for="tracking-mission-impact">Mission impact</label>
+              <textarea id="tracking-mission-impact" name="mission_impact" rows="2" placeholder="Business/security impact">{{ notebook.tracking_intent.mission_impact if notebook.tracking_intent else '' }}</textarea>
+              <label for="tracking-focus">Intelligence focus</label>
+              <textarea id="tracking-focus" name="intelligence_focus" rows="2" placeholder="What we need to learn">{{ notebook.tracking_intent.intelligence_focus if notebook.tracking_intent else '' }}</textarea>
+              <label for="tracking-key-questions">Key questions (one per line)</label>
+              <textarea id="tracking-key-questions" name="key_questions" rows="4" placeholder="Question 1&#10;Question 2">{% if notebook.tracking_intent and notebook.tracking_intent.key_questions %}{{ notebook.tracking_intent.key_questions | join('\n') }}{% endif %}</textarea>
+              <label for="tracking-priority">Priority</label>
+              <select id="tracking-priority" name="priority">
+                {% set tracking_priority = (notebook.tracking_intent.priority if notebook.tracking_intent else 'medium') %}
+                <option value="low" {% if tracking_priority == 'low' %}selected{% endif %}>Low</option>
+                <option value="medium" {% if tracking_priority == 'medium' %}selected{% endif %}>Medium</option>
+                <option value="high" {% if tracking_priority == 'high' %}selected{% endif %}>High</option>
+                <option value="critical" {% if tracking_priority == 'critical' %}selected{% endif %}>Critical</option>
+              </select>
+              <label for="tracking-impact">Impact</label>
+              <select id="tracking-impact" name="impact">
+                {% set tracking_impact = (notebook.tracking_intent.impact if notebook.tracking_intent else 'medium') %}
+                <option value="low" {% if tracking_impact == 'low' %}selected{% endif %}>Low</option>
+                <option value="medium" {% if tracking_impact == 'medium' %}selected{% endif %}>Medium</option>
+                <option value="high" {% if tracking_impact == 'high' %}selected{% endif %}>High</option>
+                <option value="critical" {% if tracking_impact == 'critical' %}selected{% endif %}>Critical</option>
+              </select>
+              <label for="tracking-cadence">Review cadence (days)</label>
+              <input id="tracking-cadence" name="review_cadence_days" type="number" min="1" max="365" value="{{ notebook.tracking_intent.review_cadence_days if notebook.tracking_intent else 30 }}" />
+              <label for="tracking-min-sources">Confirmation min sources</label>
+              <input id="tracking-min-sources" name="confirmation_min_sources" type="number" min="1" max="10" value="{{ notebook.tracking_intent.confirmation_min_sources if notebook.tracking_intent else 2 }}" />
+              <label for="tracking-max-age">Confirmation max age (days)</label>
+              <input id="tracking-max-age" name="confirmation_max_age_days" type="number" min="1" max="365" value="{{ notebook.tracking_intent.confirmation_max_age_days if notebook.tracking_intent else 45 }}" />
+              <label for="tracking-criteria">Confirmation criteria</label>
+              <textarea id="tracking-criteria" name="confirmation_criteria" rows="2" placeholder="What counts as confirmed">{{ notebook.tracking_intent.confirmation_criteria if notebook.tracking_intent else '' }}</textarea>
+              <button class="action-button" type="submit">Save tracking intent</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/confirm-assessment">
+              <label for="confirm-analyst">Confirm assessment by</label>
+              <input id="confirm-analyst" name="analyst" type="text" placeholder="Analyst name" required />
+              <label for="confirm-note">Confirmation note</label>
+              <textarea id="confirm-note" name="note" rows="2" placeholder="Short confirmation rationale"></textarea>
+              <button class="action-button" type="submit">Mark actor assessment confirmed</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/collection-plan">
+              <label for="cp-updated-by">Collection plan updated by</label>
+              <input id="cp-updated-by" name="updated_by" type="text" placeholder="Analyst name" />
+              <label for="cp-frequency">Monitor frequency</label>
+              <select id="cp-frequency" name="monitor_frequency">
+                <option value="hourly" {% if notebook.collection_plan and notebook.collection_plan.monitor_frequency == 'hourly' %}selected{% endif %}>Hourly</option>
+                <option value="daily" {% if notebook.collection_plan and notebook.collection_plan.monitor_frequency != 'hourly' and notebook.collection_plan.monitor_frequency != 'weekly' %}selected{% endif %}>Daily</option>
+                <option value="weekly" {% if notebook.collection_plan and notebook.collection_plan.monitor_frequency == 'weekly' %}selected{% endif %}>Weekly</option>
+              </select>
+              <label for="cp-sources">Monitored sources (one per line)</label>
+              <textarea id="cp-sources" name="monitored_sources" rows="3" placeholder="Vendor blog&#10;CERT feed">{% if notebook.collection_plan and notebook.collection_plan.monitored_sources %}{{ notebook.collection_plan.monitored_sources | join('\n') }}{% endif %}</textarea>
+              <label for="cp-triggers">Trigger conditions (one per line)</label>
+              <textarea id="cp-triggers" name="trigger_conditions" rows="3" placeholder="New domain IOC&#10;New technique">{% if notebook.collection_plan and notebook.collection_plan.trigger_conditions %}{{ notebook.collection_plan.trigger_conditions | join('\n') }}{% endif %}</textarea>
+              <label for="cp-alerts">Alert subscriptions (one per line)</label>
+              <textarea id="cp-alerts" name="alert_subscriptions" rows="3" placeholder="Email to SOC&#10;Ticket queue">{% if notebook.collection_plan and notebook.collection_plan.alert_subscriptions %}{{ notebook.collection_plan.alert_subscriptions | join('\n') }}{% endif %}</textarea>
+              <label for="cp-alert-enabled">
+                <input id="cp-alert-enabled" name="alert_notifications_enabled" type="checkbox" value="1" {% if not notebook.collection_plan or notebook.collection_plan.alert_notifications_enabled %}checked{% endif %} />
+                Send alert notifications (turn off to keep alerts in queue only)
+              </label>
+              <button class="action-button" type="submit">Save collection plan</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/report-preferences">
+              <label for="rp-updated-by">Report preferences updated by</label>
+              <input id="rp-updated-by" name="updated_by" type="text" placeholder="Analyst name" />
+              <label for="rp-enabled">
+                <input id="rp-enabled" name="delta_brief_enabled" type="checkbox" value="1" {% if not notebook.report_preferences or notebook.report_preferences.delta_brief_enabled %}checked{% endif %} />
+                Enable recurring delta brief
+              </label>
+              <label for="rp-period">Delta brief period</label>
+              <select id="rp-period" name="delta_brief_period">
+                <option value="weekly" {% if not notebook.report_preferences or notebook.report_preferences.delta_brief_period == 'weekly' %}selected{% endif %}>Weekly</option>
+                <option value="monthly" {% if notebook.report_preferences and notebook.report_preferences.delta_brief_period == 'monthly' %}selected{% endif %}>Monthly</option>
+              </select>
+              <label for="rp-window">Window (days)</label>
+              <input id="rp-window" name="delta_brief_window_days" type="number" min="1" max="365" value="{{ notebook.report_preferences.delta_brief_window_days if notebook.report_preferences else 7 }}" />
+              <button class="action-button" type="submit">Save report preferences</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/tasks">
+              <label for="task-title">New task</label>
+              <input id="task-title" name="title" type="text" placeholder="Investigate ..." required />
+              <label for="task-details">Task details</label>
+              <textarea id="task-details" name="details" rows="2" placeholder="What must be done"></textarea>
+              <label for="task-owner">Owner</label>
+              <input id="task-owner" name="owner" type="text" placeholder="SOC Tier 2" />
+              <label for="task-priority">Priority</label>
+              <select id="task-priority" name="priority">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+              <label for="task-due-date">Due date</label>
+              <input id="task-due-date" name="due_date" type="date" />
+              <button class="action-button" type="submit">Create task</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/outcomes">
+              <label for="outcome-type">Operational outcome</label>
+              <select id="outcome-type" name="outcome_type">
+                <option value="detection_created">Detection created</option>
+                <option value="hunt_ran">Hunt ran</option>
+                <option value="finding">Finding</option>
+                <option value="false_positive">False positive</option>
+                <option value="mitigation_applied">Mitigation applied</option>
+              </select>
+              <label for="outcome-summary">Summary</label>
+              <textarea id="outcome-summary" name="summary" rows="2" placeholder="What happened and why it matters" required></textarea>
+              <label for="outcome-result">Result</label>
+              <input id="outcome-result" name="result" type="text" placeholder="e.g., blocked, no hit, escalated" />
+              <label for="outcome-technique">Linked technique (optional)</label>
+              <input id="outcome-technique" name="linked_technique_id" type="text" placeholder="T1059" />
+              <label for="outcome-evidence">Evidence reference</label>
+              <input id="outcome-evidence" name="evidence_ref" type="text" placeholder="Case id / URL / query ref" />
+              <label for="outcome-created-by">Created by</label>
+              <input id="outcome-created-by" name="created_by" type="text" placeholder="Analyst name" />
+              <button class="action-button" type="submit">Record outcome</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/technique-coverage">
+              <label for="cov-technique-id">Technique coverage</label>
+              <input id="cov-technique-id" name="technique_id" type="text" placeholder="T1059" required />
+              <input name="technique_name" type="text" placeholder="Technique name (optional)" />
+              <input name="detection_name" type="text" placeholder="Detection name" />
+              <input name="control_name" type="text" placeholder="Control name" />
+              <select name="coverage_status">
+                <option value="covered">Covered</option>
+                <option value="partial">Partial</option>
+                <option value="gap">Gap</option>
+                <option value="unknown" selected>Unknown</option>
+              </select>
+              <select name="validation_status">
+                <option value="validated">Validated</option>
+                <option value="not_validated">Not validated</option>
+                <option value="unknown" selected>Unknown</option>
+              </select>
+              <textarea name="validation_evidence" rows="2" placeholder="Evidence of telemetry validation"></textarea>
+              <input name="updated_by" type="text" placeholder="Updated by" />
+              <button class="action-button" type="submit">Save coverage mapping</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/relationships">
+              <label for="rel-src-type">Relationship edge</label>
+              <input id="rel-src-type" name="src_entity_type" type="text" placeholder="Source type (actor/tool/infra/victim/campaign)" required />
+              <input name="src_entity_key" type="text" placeholder="Source key" required />
+              <input name="relationship_type" type="text" placeholder="uses/targets/operates" required />
+              <input name="dst_entity_type" type="text" placeholder="Destination type" required />
+              <input name="dst_entity_key" type="text" placeholder="Destination key" required />
+              <input name="source_ref" type="text" placeholder="Citation URL/source" />
+              <input name="observed_on" type="date" />
+              <select name="confidence">
+                <option value="low">Low</option>
+                <option value="moderate" selected>Moderate</option>
+                <option value="high">High</option>
+              </select>
+              <input name="analyst" type="text" placeholder="Analyst name" />
+              <button class="action-button" type="submit">Add relationship</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/change-items">
+              <label for="change-summary">Change item</label>
+              <textarea id="change-summary" name="change_summary" rows="2" placeholder="What changed" required></textarea>
+              <select name="change_type">
+                <option value="ttp">TTP</option>
+                <option value="infra">Infrastructure</option>
+                <option value="tooling">Tooling</option>
+                <option value="targeting">Targeting</option>
+                <option value="timing">Timing</option>
+                <option value="access_vector">Access vector</option>
+                <option value="other" selected>Other</option>
+              </select>
+              <label><input type="checkbox" name="ttp_tag" /> TTP</label>
+              <label><input type="checkbox" name="infra_tag" /> Infrastructure</label>
+              <label><input type="checkbox" name="tooling_tag" /> Tooling</label>
+              <label><input type="checkbox" name="targeting_tag" /> Targeting</label>
+              <label><input type="checkbox" name="timing_tag" /> Timing</label>
+              <label><input type="checkbox" name="access_vector_tag" /> Access vector</label>
+              <input name="source_ref" type="text" placeholder="Source reference" />
+              <input name="observed_on" type="date" />
+              <input name="created_by" type="text" placeholder="Created by" />
+              <button class="action-button" type="submit">Add change item</button>
+            </form>
+            <form method="post" action="/actors/{{ notebook.actor.id }}/change-conflicts">
+              <label for="conflict-topic">Conflict/arbitration record</label>
+              <input id="conflict-topic" name="conflict_topic" type="text" placeholder="Conflict topic" required />
+              <input name="source_a_ref" type="text" placeholder="Source A" required />
+              <input name="source_b_ref" type="text" placeholder="Source B" required />
+              <textarea name="arbitration_outcome" rows="2" placeholder="Arbitration outcome and rationale" required></textarea>
+              <select name="confidence">
+                <option value="low">Low</option>
+                <option value="moderate" selected>Moderate</option>
+                <option value="high">High</option>
+              </select>
+              <input name="analyst" type="text" placeholder="Analyst name" />
+              <button class="action-button" type="submit">Record conflict resolution</button>
             </form>
             <form method="post" action="/actors/{{ notebook.actor.id }}/sources">
               <input type="url" name="source_url" placeholder="https://..." required />
@@ -658,136 +1221,27 @@
           {% endif %}
         </div>
 
-        <div class="sidebar-card" id="section-learning">
-          <h3>Learning controls</h3>
-          <small>Tune hunt query style to your environment and rate quick checks.</small>
-          <div class="learning-grid">
-            <label for="env-query-dialect">Query dialect</label>
-            <select id="env-query-dialect">
-              <option value="generic">Generic</option>
-              <option value="kql">KQL</option>
-              <option value="spl">SPL</option>
-              <option value="eql">EQL</option>
-            </select>
-            <label for="env-time-window">Default time window (hours)</label>
-            <input id="env-time-window" type="number" min="1" max="720" value="24" />
-            <button type="button" id="env-profile-save">Save learning profile</button>
-            <div id="env-profile-status" class="learning-status"></div>
-          </div>
-        </div>
-
-        <div class="sidebar-card" id="section-history-left">
-          <h3>Notes and history</h3>
-          <small>Keep one short running note, then review/export changes over time.</small>
-          <details class="compact" style="margin-top:8px;">
-            <summary>Analyst note best practices</summary>
-            <div class="section-body">
-              <div><strong>Use this format:</strong> observation -> evidence -> action.</div>
-              <div><strong>Observation:</strong> what you saw (specific event, host, user, IOC).</div>
-              <div><strong>Evidence:</strong> one source link or log reference that supports it.</div>
-              <div><strong>Action:</strong> contain, monitor, escalate, or close.</div>
-              <div><strong>Avoid:</strong> long narratives, assumptions without evidence, and duplicate notes.</div>
-            </div>
-          </details>
-          <div class="interactive-panel" data-observation-item-type="actor" data-observation-item-key="summary">
-            <div class="obs-row">
-              <div>
-                <label>Analyst</label>
-                <input type="text" class="observation-analyst" placeholder="name or handle" />
-              </div>
-              <div>
-                <label>Confidence</label>
-                <select class="observation-confidence">
-                  <option value="moderate">Moderate</option>
-                  <option value="high">High</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
-              <textarea class="observation-note" placeholder="What changed that matters for this actor?"></textarea>
-            </div>
-            <div class="obs-actions">
-              <button type="button" class="observation-save">Save note</button>
-              <button type="button" class="observation-history-toggle">View history</button>
-              <span class="observation-meta" data-observation-meta></span>
-            </div>
-            <div class="observation-history" data-observation-history style="display:none;"></div>
-          </div>
-          <div class="review-strip" style="margin-top:8px;">
-            <h4>Since last review</h4>
-            <div class="review-grid">
-              <div class="review-metric"><div class="label">Since</div><div class="value" id="since-review-date">Not set</div></div>
-              <div class="review-metric"><div class="label">Notes</div><div class="value" id="since-review-observations">0</div></div>
-              <div class="review-metric"><div class="label">Sources</div><div class="value" id="since-review-sources">0</div></div>
-              <div class="review-metric"><div class="label">Reports</div><div class="value" id="since-review-reports">0</div></div>
-            </div>
-            <div class="review-actions">
-              <button type="button" id="mark-reviewed">Mark reviewed now</button>
-              <button type="button" id="clear-reviewed">Clear baseline</button>
-              <span id="review-meta" class="review-meta"></span>
-            </div>
-          </div>
-          <details class="compact">
-            <summary>History, filters, export</summary>
-            <div class="ledger-controls">
-              <div>
-                <label for="ledger-filter-analyst">Analyst</label>
-                <input id="ledger-filter-analyst" type="text" placeholder="name contains..." />
-              </div>
-              <div>
-                <label for="ledger-filter-confidence">Confidence</label>
-                <select id="ledger-filter-confidence">
-                  <option value="">All</option>
-                  <option value="high">High</option>
-                  <option value="moderate">Moderate</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
-              <div>
-                <label for="ledger-filter-from">Updated from</label>
-                <input id="ledger-filter-from" type="date" />
-              </div>
-              <div>
-                <label for="ledger-filter-to">Updated to</label>
-                <input id="ledger-filter-to" type="date" />
-              </div>
-              <div>
-                <label for="ledger-limit">Show</label>
-                <select id="ledger-limit">
-                  <option value="12">12</option>
-                  <option value="25">25</option>
-                  <option value="50">50</option>
-                </select>
-              </div>
-            </div>
-            <div id="ledger-filter-chips" class="filter-chips"></div>
-            <div class="ledger-actions">
-              <button type="button" id="ledger-apply">Apply filters</button>
-              <button type="button" id="ledger-clear">Clear</button>
-              <a id="ledger-export-json" href="#" target="_blank" rel="noreferrer">Export JSON</a>
-              <a id="ledger-export-csv" href="#" target="_blank" rel="noreferrer">Export CSV</a>
-              <span id="observation-ledger-count" class="ledger-count"></span>
-            </div>
-            <div id="observation-ledger-empty" class="timeline-empty">No observations saved yet.</div>
-            <div id="observation-ledger-list" class="ledger-list"></div>
-          </details>
-        </div>
         {% endif %}
       </aside>
 
       <main class="main">
+        {% set llm_message = (ollama_status.message if ollama_status and ollama_status.message else 'LLM status unavailable.') %}
+        {% set llm_message_lower = llm_message|lower %}
+        {% set llm_ready = (ollama_status and ollama_status.available and ('not found' not in llm_message_lower)) %}
         <div class="top-status-row">
-          <div id="notebook-health-chip" class="notice status-chip status-{{ notebook_health.state }}">
-            <strong>Notebook health:</strong> <span id="notebook-health-message">{{ notebook_health.message }}</span>
-            <div class="status-meta">Last refresh: <span id="notebook-health-duration">{{ notebook_health.last_refresh_duration }}</span> | Sources processed: <span id="notebook-health-sources">{{ notebook_health.last_refresh_sources }}</span></div>
+          <button type="button" id="notebook-health-chip" class="notice status-chip status-button status-{{ notebook_health.state }}">
+            <strong>System:</strong> <span id="notebook-health-message">{{ notebook_health.message }}</span>
+            <div class="status-meta">
+              LLM: {% if llm_ready %}ready{% else %}offline{% endif %} |
+              Timeline: live |
+              Last refresh: <span id="notebook-health-duration">{{ notebook_health.last_refresh_duration }}</span> |
+              Sources: <span id="notebook-health-sources">{{ notebook_health.last_refresh_sources }}</span>
+              {% if notebook and notebook.actor.last_confirmed_at %}
+              | Confirmed: {{ notebook.actor.last_confirmed_at }}{% if notebook.actor.last_confirmed_by %} by {{ notebook.actor.last_confirmed_by }}{% endif %}
+              {% endif %}
+            </div>
             <div id="notebook-health-progress" class="progress-wrap" {% if not notebook or notebook.actor.notebook_status != 'running' %}style="display:none;"{% endif %}><div class="progress-bar"></div></div>
-          </div>
-          {% set llm_message = (ollama_status.message if ollama_status and ollama_status.message else 'LLM status unavailable.') %}
-          {% set llm_message_lower = llm_message|lower %}
-          {% set llm_ready = (ollama_status and ollama_status.available and ('not found' not in llm_message_lower)) %}
-          <div id="llm-status-chip" class="notice status-chip {% if llm_ready %}status-llm-ok{% else %}status-llm-bad{% endif %}">
-            <strong>LLM:</strong> {% if llm_ready %}ready{% else %}offline{% endif %}
-            <div class="status-meta">{{ llm_message }}</div>
-          </div>
+          </button>
           {% if notice %}
           <div class="notice status-chip">{{ notice }}</div>
           {% endif %}
@@ -796,29 +1250,87 @@
             <span class="live-pill" id="live-indicator">Live sync on</span>
           </div>
           {% endif %}
+          <div class="ui-mode-top">
+            <label for="ui-mode-select">Interface mode</label>
+            <select id="ui-mode-select" aria-label="Interface mode">
+              <option value="classic">Classic</option>
+              <option value="redraw">Redraw</option>
+            </select>
+          </div>
           <div id="ui-activity-strip" class="notice status-chip ui-activity-strip status-idle" role="status" aria-live="polite" hidden>
             <strong>Activity:</strong> <span id="ui-activity-text">Idle</span>
           </div>
+          {% if refresh_stats %}
+          <details class="status-ops-drawer">
+            <summary class="notice status-chip status-button">
+              <strong>Refresh:</strong>
+              <span id="refresh-timeline-status" class="refresh-activity-live">Live updates every 20 seconds</span>
+            </summary>
+            <div class="status-ops-panel">
+              <div class="refresh-activity-actions" style="margin-bottom:8px;">
+                <button id="terminal-generate-notes" type="button">Generate notes</button>
+                <button id="terminal-add-note" type="button">Add note</button>
+              </div>
+              <div class="status-ops-grid">
+                <div class="status-ops-item">
+                  <div class="label">Backoff feeds</div>
+                  <div class="value">{{ refresh_stats.feed_state.backoff_feeds }}</div>
+                </div>
+                <div class="status-ops-item">
+                  <div class="label">High confidence</div>
+                  <div class="value">{{ refresh_stats.source_state.high_confidence_sources }}</div>
+                </div>
+                <div class="status-ops-item">
+                  <div class="label">24h high confidence</div>
+                  <div class="value">{{ refresh_stats.source_state.recent_high_confidence_sources_24h }}</div>
+                </div>
+                <div class="status-ops-item">
+                  <div class="label">Expected remaining</div>
+                  <div id="refresh-eta-value" class="value">{% if refresh_stats.eta_seconds is not none %}~{{ refresh_stats.eta_seconds }}s{% else %}n/a{% endif %}</div>
+                </div>
+                <div class="status-ops-item">
+                  <div class="label">LLM cache saved</div>
+                  <div id="refresh-cache-saved" class="value">
+                    {% set cache_saved_ms = refresh_stats.llm_cache_state.saved_ms_total if refresh_stats.llm_cache_state else 0 %}
+                    {% if cache_saved_ms and cache_saved_ms > 0 %}~{{ (cache_saved_ms // 1000) }}s{% else %}0s{% endif %}
+                  </div>
+                </div>
+                <div class="status-ops-item">
+                  <div class="label">Queue depth</div>
+                  <div id="refresh-queue-depth" class="value">n/a</div>
+                </div>
+              </div>
+              <div class="refresh-activity-meta" style="margin-top:8px;">Last updated: <span id="refresh-timeline-updated">Page load</span></div>
+              <div id="refresh-timeline-list" class="refresh-run-list">
+                {% if refresh_stats.recent_generation_runs %}
+                  {% for run in refresh_stats.recent_generation_runs %}
+                  <div class="refresh-run-card {% if run.status == 'running' %}is-running{% elif run.status == 'error' %}is-error{% endif %}">
+                    <div class="refresh-run-top">
+                      <strong>
+                        {% if run.status == 'completed' %}Finished{% elif run.status == 'error' %}Needs attention{% else %}In progress{% endif %}
+                      </strong>
+                      <span class="refresh-run-meta">
+                        {{ run.created_at[:19].replace('T', ' ') if run.created_at else 'Unknown time' }} |
+                        {% if run.trigger_type == 'auto_refresh' %}Automatic background refresh{% else %}Manual refresh{% endif %}
+                      </span>
+                    </div>
+                    <div class="refresh-run-message">
+                      {% if run.error_message %}{{ run.error_message }}
+                      {% elif run.final_message %}{{ run.final_message }}
+                      {% elif run.status == 'running' %}Refresh is still running.
+                      {% else %}Refresh completed.
+                      {% endif %}
+                    </div>
+                  </div>
+                  {% endfor %}
+                {% else %}
+                  <div id="refresh-timeline-empty" class="refresh-empty">No recent refresh history yet for this actor.</div>
+                {% endif %}
+              </div>
+            </div>
+          </details>
+          {% endif %}
         </div>
-        {% if refresh_stats %}
-        <div class="ops-health">
-          <h4>Refresh health (at a glance)</h4>
-          <div class="ops-health-grid">
-            <div class="ops-health-item">
-              <div class="label">Feeds in backoff</div>
-              <div class="value">{{ refresh_stats.feed_state.backoff_feeds }}</div>
-            </div>
-            <div class="ops-health-item">
-              <div class="label">High confidence</div>
-              <div class="value">{{ refresh_stats.source_state.high_confidence_sources }}</div>
-            </div>
-            <div class="ops-health-item">
-              <div class="label">24h high confidence</div>
-              <div class="value">{{ refresh_stats.source_state.recent_high_confidence_sources_24h }}</div>
-            </div>
-          </div>
-        </div>
-        {% endif %}
         {% if not notebook %}
         <div class="empty">Select an actor to open the notebook.</div>
         {% else %}
@@ -913,7 +1425,6 @@
             <div class="ataglance-value"><span id="recent-impact">{{ recent_change.damage }}</span></div>
           </div>
         </section>
-        {% if notebook.priority_questions %}
         <section class="card span-2 decision-queue" data-step="action" id="section-nextchecks">
           <div class="decision-header">
             <div style="display:flex; align-items:center; gap:8px;">
@@ -935,6 +1446,7 @@
             </div>
           </div>
           <div class="dq-list">
+            {% if notebook.priority_questions %}
             {% for question in notebook.priority_questions %}
             <details class="dq-row" data-quick-check="1" data-quick-check-rank="{{ loop.index0 }}">
               <summary>
@@ -970,13 +1482,28 @@
               </div>
             </details>
             {% endfor %}
+            {% else %}
+            <div class="dq-row">
+              <div class="dq-detail">
+                Quick checks will appear here after source-backed actor updates are processed.
+              </div>
+            </div>
+            {% endif %}
           </div>
         </section>
-        {% endif %}
 
-        <div class="workspace-grid">
-        <section class="card pane" data-step="who" id="section-who">
-          <h2 class="section-title">1) Who are they?<span class="role-chip">Understand</span></h2>
+        <div class="workspace-grid single-card">
+        <section class="card pane giant-notebook-card">
+          <h2 class="section-title">Actor profile and recent activity</h2>
+          <p class="inline-note">Use tabs to switch between identity context and current activity signals.</p>
+          <span class="sr-only">1) Who are they?</span>
+          <span class="sr-only">2) What have they been up to recently?</span>
+          <div class="main-tabs" role="tablist" aria-label="Notebook sections">
+            <button type="button" class="main-tab-btn active" data-main-tab="who" role="tab" aria-selected="true">Actor profile</button>
+            <button type="button" class="main-tab-btn" data-main-tab="recent" role="tab" aria-selected="false">Recent activity</button>
+          </div>
+        <section data-step="who" id="section-who" data-main-panel="who">
+          <h3 class="section-title">Profile snapshot<span class="role-chip">Understand</span></h3>
           <div class="section-body">
           <div class="who-summary">
             <p>{{ notebook.actor_profile_summary }}</p>
@@ -1071,8 +1598,8 @@
           {% endif %}
         </section>
 
-        <section class="card pane" data-step="recent" id="section-recent">
-          <h2 class="section-title">2) What have they been up to recently?<span class="role-chip">Watch</span></h2>
+        <section class="tab-panel-hidden" data-step="recent" id="section-recent" data-main-panel="recent">
+          <h3 class="section-title">Recent activity snapshot<span class="role-chip">Watch</span></h3>
           {% if notebook.actor.notebook_status == 'running' %}
           <div class="notice status-working">Source collection is running in the background. This section will populate automatically.</div>
           {% endif %}
@@ -1155,8 +1682,272 @@
           </div>
 
         </section>
-
+        </section>
         </div>
+
+        <section class="card span-2" id="section-history-left">
+          <h2 class="section-title">Analyst notes and history</h2>
+          <p class="inline-note">Capture what matters, then review outcomes and coverage without leaving the workflow.</p>
+          <div class="notes-tabs" role="tablist" aria-label="Analyst notes tabs">
+            <button type="button" class="notes-tab-btn active" data-notes-tab="capture" role="tab" aria-selected="true">Capture</button>
+            <button type="button" class="notes-tab-btn" data-notes-tab="review" role="tab" aria-selected="false">Since review</button>
+            <button type="button" class="notes-tab-btn" data-notes-tab="bestpractices" role="tab" aria-selected="false">Best practices</button>
+            <button type="button" class="notes-tab-btn" data-notes-tab="advanced" role="tab" aria-selected="false">Advanced</button>
+          </div>
+          <div data-notes-panel="capture">
+          <div class="interactive-panel" data-observation-item-type="actor" data-observation-item-key="summary">
+            <div class="obs-row">
+              <div>
+                <label>Analyst</label>
+                <input type="text" class="observation-analyst" placeholder="name or handle" />
+              </div>
+              <div>
+                <label>Confidence</label>
+                <select class="observation-confidence">
+                  <option value="moderate">Moderate</option>
+                  <option value="high">High</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+              <div>
+                <label>Claim type</label>
+                <select class="observation-claim-type">
+                  <option value="assessment">Assessment</option>
+                  <option value="evidence">Evidence-backed</option>
+                </select>
+              </div>
+              <div>
+                <label>Observed on</label>
+                <input type="date" class="observation-observed-on" />
+              </div>
+              <div style="grid-column: 1 / -1;">
+                <label>Citation URL</label>
+                <input type="url" class="observation-citation-url" placeholder="https://source.example/report" />
+              </div>
+              <textarea class="observation-note" placeholder="What changed that matters for this actor?"></textarea>
+            </div>
+            <div class="obs-actions">
+              <button type="button" class="observation-save">Save note</button>
+              <button type="button" class="observation-history-toggle">View history</button>
+              <span class="observation-meta" data-observation-meta></span>
+            </div>
+            <div class="observation-history" data-observation-history style="display:none;"></div>
+          </div>
+          </div>
+          <div class="tab-panel-hidden" data-notes-panel="review">
+          <div class="review-strip" style="margin-top:8px;">
+            <h4>Since last review</h4>
+            <div class="review-grid">
+              <div class="review-metric"><div class="label">Since</div><div class="value" id="since-review-date">Not set</div></div>
+              <div class="review-metric"><div class="label">Notes</div><div class="value" id="since-review-observations">0</div></div>
+              <div class="review-metric"><div class="label">Sources</div><div class="value" id="since-review-sources">0</div></div>
+              <div class="review-metric"><div class="label">Reports</div><div class="value" id="since-review-reports">0</div></div>
+            </div>
+            <div class="review-actions">
+              <button type="button" id="mark-reviewed">Mark reviewed now</button>
+              <button type="button" id="clear-reviewed">Clear baseline</button>
+              <span id="review-meta" class="review-meta"></span>
+            </div>
+          </div>
+          </div>
+          <div class="tab-panel-hidden" data-notes-panel="bestpractices">
+            <div class="interactive-panel">
+              <div class="section-body">
+                <div><strong>Use this format:</strong> observation -> evidence -> action.</div>
+                <div><strong>Observation:</strong> what you saw (specific event, host, user, IOC).</div>
+                <div><strong>Evidence:</strong> one source link or log reference that supports it.</div>
+                <div><strong>Action:</strong> contain, monitor, escalate, or close.</div>
+                <div><strong>Avoid:</strong> long narratives, assumptions without evidence, and duplicate notes.</div>
+              </div>
+            </div>
+          </div>
+          <details class="compact tab-panel-hidden" data-notes-panel="advanced">
+            <summary>Advanced history and operations</summary>
+            <div class="adv-tabs" role="tablist" aria-label="Advanced operations tabs">
+              <button type="button" class="adv-tab-btn active" data-adv-tab="history" role="tab" aria-selected="true">History</button>
+              <button type="button" class="adv-tab-btn" data-adv-tab="tasks" role="tab" aria-selected="false">Tasks</button>
+              <button type="button" class="adv-tab-btn" data-adv-tab="alerts" role="tab" aria-selected="false">Alerts</button>
+              <button type="button" class="adv-tab-btn" data-adv-tab="coverage" role="tab" aria-selected="false">Coverage</button>
+            </div>
+            <div data-adv-panel="history">
+            <h4 style="margin-top:8px;">History, filters, export</h4>
+            <div class="ledger-controls">
+              <div>
+                <label for="ledger-filter-analyst">Analyst</label>
+                <input id="ledger-filter-analyst" type="text" placeholder="name contains..." />
+              </div>
+              <div>
+                <label for="ledger-filter-confidence">Confidence</label>
+                <select id="ledger-filter-confidence">
+                  <option value="">All</option>
+                  <option value="high">High</option>
+                  <option value="moderate">Moderate</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+              <div>
+                <label for="ledger-filter-from">Updated from</label>
+                <input id="ledger-filter-from" type="date" />
+              </div>
+              <div>
+                <label for="ledger-filter-to">Updated to</label>
+                <input id="ledger-filter-to" type="date" />
+              </div>
+              <div>
+                <label for="ledger-limit">Show</label>
+                <select id="ledger-limit">
+                  <option value="12">12</option>
+                  <option value="25">25</option>
+                  <option value="50">50</option>
+                </select>
+              </div>
+            </div>
+            <div id="ledger-filter-chips" class="filter-chips"></div>
+            <div class="ledger-actions">
+              <button type="button" id="ledger-apply">Apply filters</button>
+              <button type="button" id="ledger-clear">Clear</button>
+              <a id="ledger-export-json" href="#" target="_blank" rel="noreferrer">Export JSON</a>
+              <a id="ledger-export-csv" href="#" target="_blank" rel="noreferrer">Export CSV</a>
+              <span id="observation-ledger-count" class="ledger-count"></span>
+            </div>
+            <div id="observation-ledger-empty" class="timeline-empty">No observations saved yet.</div>
+            <div id="observation-ledger-list" class="ledger-list"></div>
+            </div>
+            <div class="tab-panel-hidden" data-adv-panel="tasks">
+            <h4 style="margin-top:12px;">Task queue and outcomes</h4>
+            {% if notebook.ops_tasks %}
+            <div class="ledger-list">
+              {% for task in notebook.ops_tasks[:12] %}
+              <div class="ledger-item">
+                <div class="ledger-head">
+                  <span><strong>{{ task.title }}</strong></span>
+                  <span>Status: {{ task.status }}</span>
+                  <span>Priority: {{ task.priority }}</span>
+                  <span>Owner: {{ task.owner or 'unassigned' }}</span>
+                  {% if task.due_date %}<span>Due: {{ task.due_date }}</span>{% endif %}
+                </div>
+                {% if task.details %}<div class="ledger-body">{{ task.details }}</div>{% endif %}
+                {% if task.status != 'done' %}
+                <form method="post" action="/actors/{{ notebook.actor.id }}/tasks/{{ task.id }}">
+                  <input type="hidden" name="status" value="done" />
+                  <button type="submit">Mark done</button>
+                </form>
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="timeline-empty">No tasks yet.</div>
+            {% endif %}
+            <h4 style="margin-top:8px;">Operational outcomes</h4>
+            {% if notebook.operational_outcomes %}
+            <div class="ledger-list">
+              {% for outcome in notebook.operational_outcomes[:12] %}
+              <div class="ledger-item">
+                <div class="ledger-head">
+                  <span>{{ outcome.outcome_type }}</span>
+                  <span>{{ outcome.created_at }}</span>
+                  <span>{{ outcome.created_by or 'analyst' }}</span>
+                </div>
+                <div class="ledger-body">{{ outcome.summary }}</div>
+                {% if outcome.result %}<div class="ledger-link">Result: {{ outcome.result }}</div>{% endif %}
+                {% if outcome.linked_technique_id %}<div class="ledger-link">Technique: {{ outcome.linked_technique_id }}</div>{% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="timeline-empty">No outcomes recorded yet.</div>
+            {% endif %}
+            </div>
+            <div class="tab-panel-hidden" data-adv-panel="alerts">
+            <h4 style="margin-top:12px;">Alert queue</h4>
+            {% if notebook.alert_queue %}
+            <div class="ledger-list">
+              {% for alert in notebook.alert_queue[:20] %}
+              <div class="ledger-item">
+                <div class="ledger-head">
+                  <span><strong>{{ alert.severity|upper }}</strong></span>
+                  <span>{{ alert.alert_type }}</span>
+                  <span>Status: {{ alert.status }}</span>
+                  <span>{{ alert.created_at }}</span>
+                </div>
+                <div class="ledger-body">{{ alert.title }}</div>
+                {% if alert.detail %}<div class="ledger-link">{{ alert.detail }}</div>{% endif %}
+                {% if alert.source_ref %}<div class="ledger-link">Source: {{ alert.source_ref }}</div>{% endif %}
+                {% if alert.channel_targets %}
+                <div class="ledger-link">Notify: {{ alert.channel_targets | join(', ') }}</div>
+                {% endif %}
+                {% if alert.status == 'open' %}
+                <form method="post" action="/actors/{{ notebook.actor.id }}/alerts/{{ alert.id }}/ack">
+                  <input type="text" name="analyst" placeholder="Analyst (optional)" />
+                  <button type="submit">Acknowledge alert</button>
+                </form>
+                {% elif alert.acknowledged_at %}
+                <div class="ledger-link">Acknowledged {{ alert.acknowledged_at }}{% if alert.acknowledged_by %} by {{ alert.acknowledged_by }}{% endif %}</div>
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="timeline-empty">No active alerts.</div>
+            {% endif %}
+            </div>
+            <div class="tab-panel-hidden" data-adv-panel="coverage">
+            <h4 style="margin-top:12px;">Coverage, change taxonomy, and graph</h4>
+            <h4 style="margin-top:8px;">Technique coverage</h4>
+            {% if notebook.technique_coverage %}
+            <div class="ledger-list">
+              {% for item in notebook.technique_coverage[:20] %}
+              <div class="ledger-item">
+                <div class="ledger-head">
+                  <span><strong>{{ item.technique_id }}</strong> {{ item.technique_name }}</span>
+                  <span>Coverage: {{ item.coverage_status }}</span>
+                  <span>Validation: {{ item.validation_status }}</span>
+                </div>
+                {% if item.detection_name %}<div class="ledger-link">Detection: {{ item.detection_name }}</div>{% endif %}
+                {% if item.control_name %}<div class="ledger-link">Control: {{ item.control_name }}</div>{% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="timeline-empty">No coverage mappings yet.</div>
+            {% endif %}
+            <h4 style="margin-top:8px;">Structured change items</h4>
+            {% if notebook.change_items %}
+            <div class="ledger-list">
+              {% for item in notebook.change_items[:12] %}
+              <div class="ledger-item">
+                <div class="ledger-head">
+                  <span>{{ item.change_type }}</span>
+                  <span>{{ item.confidence }}</span>
+                  <span>{{ item.observed_on or item.created_at }}</span>
+                </div>
+                <div class="ledger-body">{{ item.change_summary }}</div>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="timeline-empty">No change taxonomy items yet.</div>
+            {% endif %}
+            <h4 style="margin-top:8px;">Relationship edges</h4>
+            {% if notebook.relationship_items %}
+            <div class="ledger-list">
+              {% for rel in notebook.relationship_items[:20] %}
+              <div class="ledger-item">
+                <div class="ledger-body">{{ rel.src_entity_type }}:{{ rel.src_entity_key }} -> {{ rel.relationship_type }} -> {{ rel.dst_entity_type }}:{{ rel.dst_entity_key }}</div>
+                <div class="ledger-head">
+                  <span>{{ rel.confidence }}</span>
+                  <span>{{ rel.observed_on or rel.updated_at }}</span>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="timeline-empty">No relationship graph edges yet.</div>
+            {% endif %}
+            </div>
+          </details>
+        </section>
 
           {% if notebook.ioc_items %}
           <details class="compact">
@@ -1194,8 +1985,101 @@
         {% endif %}
       </main>
     </div>
+    <div id="workflow-tour-modal" class="geo-modal" aria-hidden="true">
+      <div class="geo-modal-card" role="dialog" aria-modal="true" aria-labelledby="workflow-tour-title">
+        <div class="geo-modal-head">
+          <h3 id="workflow-tour-title">Community Workflow Tour</h3>
+          <button id="workflow-tour-close" type="button">Close</button>
+        </div>
+        <div class="section-body">
+          <ol>
+            <li>Set tracking intent and collection plan in <strong>More actions</strong>.</li>
+            <li>Review top changes and quick checks on the main notebook view.</li>
+            <li>Add evidence-backed analyst notes with citation URL and observed date.</li>
+            <li>Create tasks for follow-up work and assign owner/due date.</li>
+            <li>Record operational outcomes (detection/hunt/finding/mitigation).</li>
+            <li>Update ATT&amp;CK coverage and telemetry validation status.</li>
+            <li>Use role reports and exports for executive, SOC, and IR audiences.</li>
+          </ol>
+          <div class="review-actions">
+            <button id="workflow-tour-dismiss" type="button">Don’t show again</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="quick-note-modal" class="geo-modal" aria-hidden="true">
+      <div class="geo-modal-card" role="dialog" aria-modal="true" aria-labelledby="quick-note-title">
+        <div class="geo-modal-head">
+          <h3 id="quick-note-title">Add analyst note</h3>
+          <button id="quick-note-close" type="button">Close</button>
+        </div>
+        <form id="quick-note-form" class="quick-note-form">
+          <label>
+            Analyst
+            <input id="quick-note-analyst" type="text" placeholder="Your name" required />
+          </label>
+          <label>
+            Confidence
+            <select id="quick-note-confidence">
+              <option value="low">Low</option>
+              <option value="moderate" selected>Moderate</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label>
+            Claim type
+            <select id="quick-note-claim-type">
+              <option value="assessment" selected>Assessment</option>
+              <option value="evidence">Evidence-backed</option>
+            </select>
+          </label>
+          <div id="quick-note-evidence-fields" hidden>
+            <label>
+              Citation URL
+              <input id="quick-note-citation-url" type="url" placeholder="https://source/report" />
+            </label>
+            <label>
+              Observed date
+              <input id="quick-note-observed-on" type="date" />
+            </label>
+          </div>
+          <label>
+            Note
+            <textarea id="quick-note-text" placeholder="Evidence-backed analyst note..." required></textarea>
+          </label>
+          <div id="quick-note-status" class="quick-note-status"></div>
+          <div class="quick-note-actions">
+            <button id="quick-note-cancel" type="button">Cancel</button>
+            <button id="quick-note-save" type="submit">Save note</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <div id="geo-modal" class="geo-modal" aria-hidden="true">
+      <div class="geo-modal-card" role="dialog" aria-modal="true" aria-labelledby="geo-modal-title">
+        <div class="geo-modal-head">
+          <h3 id="geo-modal-title">Actor Geography Map</h3>
+          <button id="geo-map-close" type="button">Close</button>
+        </div>
+        <div class="geo-grid">
+          <div class="geo-canvas-wrap">
+            <div id="geo-map-canvas" aria-label="World actor geography map"></div>
+          </div>
+          <div class="geo-side">
+            <div><strong id="geo-region-title">Select a location</strong></div>
+            <div id="geo-region-hint" class="inline-note">Click a country on the map. If country resolution fails, continent selection is used.</div>
+            <div id="geo-region-list" class="geo-region-list"></div>
+            <div id="geo-actor-detail" class="geo-actor-detail"><small>Select an actor to view details.</small></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
     <script src="/static/actor_autocomplete.js" defer></script>
     <script src="/static/index.js" defer></script>
+    <script src="/static/geography_map.js" defer></script>
+    <script src="/static/ui_mode.js" defer></script>
     <div id="ui-toast-stack" class="ui-toast-stack" aria-live="polite" aria-atomic="false"></div>
   </body>
 </html>

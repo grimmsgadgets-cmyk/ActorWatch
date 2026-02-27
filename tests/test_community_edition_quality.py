@@ -138,3 +138,62 @@ def test_dashboard_get_has_no_write_side_effects() -> None:
     assert isinstance(html_response, dict)
     assert tracker['set_called'] == 0
     assert tracker['enqueue_called'] == 0
+
+
+def test_dashboard_running_state_skips_heavy_fetch() -> None:
+    tracker = {'fetch_called': 0}
+
+    def _fetch_notebook(*_args, **_kwargs):
+        tracker['fetch_called'] += 1
+        raise AssertionError('fetch should not be called while running')
+
+    html_response = render_dashboard_root(
+        request=object(),
+        background_tasks=object(),
+        actor_id='actor-1',
+        notice=None,
+        source_tier=None,
+        min_confidence_weight=None,
+        source_days=None,
+        deps={
+            'list_actor_profiles': lambda: [
+                {
+                    'id': 'actor-1',
+                    'display_name': 'APT Demo',
+                    'is_tracked': 1,
+                    'created_at': '2026-01-01T00:00:00Z',
+                    'notebook_status': 'running',
+                    'notebook_message': 'Refresh in progress',
+                    'notebook_updated_at': '2026-01-02T00:00:00Z',
+                    'last_refresh_duration_ms': None,
+                    'last_refresh_sources_processed': None,
+                }
+            ],
+            'fetch_actor_notebook': _fetch_notebook,
+            'set_actor_notebook_status': lambda *_args, **_kwargs: None,
+            'run_actor_generation': lambda *_args, **_kwargs: None,
+            'enqueue_actor_generation': lambda *_args, **_kwargs: None,
+            'get_ollama_status': lambda: {'available': False, 'base_url': '', 'model': ''},
+            'get_actor_refresh_stats': lambda _actor_id: {},
+            'page_refresh_auto_trigger_minutes': 0,
+            'running_stale_recovery_minutes': 10,
+            'recover_stale_running_states': lambda: 0,
+            'format_duration_ms': lambda _v: 'n/a',
+            'templates': type(
+                'Templates',
+                (),
+                {
+                    'TemplateResponse': staticmethod(
+                        lambda _request, _name, context: context
+                    )
+                },
+            )(),
+        },
+    )
+    assert isinstance(html_response, dict)
+    notebook = html_response.get('notebook')
+    assert isinstance(notebook, dict)
+    actor = notebook.get('actor')
+    assert isinstance(actor, dict)
+    assert actor.get('notebook_status') == 'running'
+    assert tracker['fetch_called'] == 0

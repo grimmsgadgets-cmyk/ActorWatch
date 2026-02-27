@@ -169,3 +169,41 @@ def test_auto_merge_duplicate_actors_collapses_duplicate_sets(tmp_path):
         ).fetchone()[0]
         assert akira_count == 1
         assert qilin_count == 1
+
+
+def test_seed_actor_profiles_from_mitre_groups_adds_untracked_catalog(tmp_path):
+    db_path = tmp_path / 'actors.db'
+    _init_db(db_path)
+
+    result = actor_profile_service.seed_actor_profiles_from_mitre_groups_core(
+        deps={
+            'db_path': lambda: str(db_path),
+            'utc_now_iso': lambda: '2026-02-23T00:00:00+00:00',
+            'new_id': lambda: 'seeded-1',
+            'normalize_actor_name': actor_profile_service.normalize_actor_name_core,
+            'load_mitre_groups': lambda: [
+                {
+                    'name': 'APT Test Group',
+                    'description': 'MITRE ATT&CK group test description.',
+                    'aliases': ['TestAlias'],
+                }
+            ],
+        },
+    )
+
+    assert result['total'] == 1
+    assert result['seeded'] == 1
+    with sqlite3.connect(str(db_path)) as connection:
+        row = connection.execute(
+            '''
+            SELECT display_name, is_tracked, notebook_status, notebook_message
+            FROM actor_profiles
+            WHERE canonical_name = 'apt test group'
+            '''
+        ).fetchone()
+    assert row == (
+        'APT Test Group',
+        0,
+        'idle',
+        'Waiting for tracking action.',
+    )

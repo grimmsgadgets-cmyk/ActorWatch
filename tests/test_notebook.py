@@ -525,6 +525,27 @@ def test_actor_live_route_enforces_actor_scoping(tmp_path):
     assert 'actor-b-live.example' not in str(body)
 
 
+def test_actor_live_route_short_circuits_while_running(tmp_path, monkeypatch):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Live-Running', 'Live running scope')
+    app_module.set_actor_notebook_status(actor['id'], 'running', 'Refreshing sources now...')
+
+    def _should_not_run(*_args, **_kwargs):
+        raise AssertionError('pipeline fetch should be skipped while notebook is running')
+
+    monkeypatch.setattr(app_module, 'pipeline_fetch_actor_notebook_core', _should_not_run)
+
+    with TestClient(app_module.app) as client:
+        response = client.get(f'/actors/{actor["id"]}/ui/live')
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get('actor_id') == actor['id']
+    assert body.get('notebook_status') == 'running'
+    assert body.get('notebook_message') == 'Refreshing sources now...'
+    assert body.get('kpis') == {}
+    assert body.get('priority_questions') == []
+
+
 def test_cold_actor_triggers_backfill_and_inserts_source(tmp_path, monkeypatch):
     _setup_db(tmp_path)
     actor = app_module.create_actor_profile('APT-Cold-Backfill', 'Cold backfill scope')

@@ -4,6 +4,8 @@ import uuid
 import csv
 import zlib
 import re
+import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 import services.observation_service as observation_service
@@ -11,6 +13,8 @@ import services.quick_checks_view_service as quick_checks_view_service
 import route_paths
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+
+LOGGER = logging.getLogger(__name__)
 
 
 def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
@@ -33,6 +37,11 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
     _upsert_environment_profile = deps['upsert_environment_profile']
     _load_environment_profile = deps['load_environment_profile']
     _apply_feedback_to_source_domains = deps['apply_feedback_to_source_domains']
+    _get_tracking_intent = deps['get_tracking_intent']
+    _upsert_tracking_intent = deps['upsert_tracking_intent']
+    _confirm_actor_assessment = deps['confirm_actor_assessment']
+    _dispatch_alert_deliveries = deps.get('dispatch_alert_deliveries')
+    _recover_stale_running_states = deps.get('recover_stale_running_states')
 
     def _pdf_escape_text(value: str) -> str:
         return str(value or '').replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
@@ -110,6 +119,125 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         )
         return bytes(output)
 
+    def _change_matches_trigger_conditions(
+        *,
+        trigger_conditions: list[str],
+        change_summary: str,
+        change_type: str,
+        tag_tokens: list[str],
+    ) -> bool:
+        normalized_conditions = [
+            str(item or '').strip().lower()
+            for item in trigger_conditions
+            if str(item or '').strip()
+        ]
+        if not normalized_conditions:
+            return True
+        haystack = ' '.join(
+            [
+                str(change_summary or '').lower(),
+                str(change_type or '').lower(),
+                ' '.join([str(token or '').lower() for token in tag_tokens if str(token or '').strip()]),
+            ]
+        )
+        return any(condition in haystack for condition in normalized_conditions)
+
+    def _severity_from_change(*, confidence: str, change_type: str, tag_count: int) -> str:
+        normalized_confidence = str(confidence or 'moderate').strip().lower()
+        normalized_type = str(change_type or '').strip().lower()
+        if normalized_confidence == 'high' and tag_count >= 2:
+            return 'high'
+        if normalized_type in {'infra', 'access_vector', 'targeting'} and normalized_confidence in {'moderate', 'high'}:
+            return 'high'
+        if normalized_confidence == 'low':
+            return 'low'
+        return 'medium'
+
+    def _enqueue_change_alert_if_needed(
+        *,
+        connection: sqlite3.Connection,
+        actor_id: str,
+        change_item_id: str,
+        change_summary: str,
+        change_type: str,
+        confidence: str,
+        source_ref: str,
+        tags: dict[str, int],
+    ) -> dict[str, object]:
+        plan_row = connection.execute(
+            '''
+            SELECT trigger_conditions_json, alert_subscriptions_json, alert_notifications_enabled
+            FROM actor_collection_plans
+            WHERE actor_id = ?
+            ''',
+            (actor_id,),
+        ).fetchone()
+        if plan_row:
+            trigger_conditions = _safe_json_string_list(str(plan_row[0] or '[]'))
+            alert_subscriptions = _safe_json_string_list(str(plan_row[1] or '[]'))
+            notifications_enabled = int(plan_row[2] or 0) == 1
+        else:
+            trigger_conditions = []
+            alert_subscriptions = []
+            notifications_enabled = False
+        tag_tokens = [name for name, enabled in tags.items() if int(enabled or 0) == 1]
+        if not _change_matches_trigger_conditions(
+            trigger_conditions=trigger_conditions,
+            change_summary=change_summary,
+            change_type=change_type,
+            tag_tokens=tag_tokens,
+        ):
+            return {'created': False, 'delivered': False, 'notifications_enabled': notifications_enabled}
+        duplicate_row = connection.execute(
+            '''
+            SELECT id
+            FROM actor_alert_events
+            WHERE actor_id = ? AND change_item_id = ? AND status = 'open'
+            LIMIT 1
+            ''',
+            (actor_id, change_item_id),
+        ).fetchone()
+        if duplicate_row:
+            return {'created': False, 'delivered': False, 'notifications_enabled': notifications_enabled}
+        now_iso = _utc_now_iso()
+        tag_count = sum(int(value or 0) for value in tags.values())
+        severity = _severity_from_change(confidence=confidence, change_type=change_type, tag_count=tag_count)
+        readable_type = str(change_type or 'change').replace('_', ' ').title()
+        title = f'{readable_type} change detected'
+        detail = str(change_summary or '').strip()[:1200]
+        alert_id = str(uuid.uuid4())
+        connection.execute(
+            '''
+            INSERT INTO actor_alert_events (
+                id, actor_id, alert_type, severity, title, detail, status,
+                source_ref, channel_targets_json, change_item_id, created_at,
+                acknowledged_at, acknowledged_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, '', '')
+            ''',
+            (
+                alert_id,
+                actor_id,
+                'change_detection',
+                severity,
+                title,
+                detail,
+                str(source_ref or '')[:500],
+                str(json.dumps(alert_subscriptions)),
+                change_item_id,
+                now_iso,
+            ),
+        )
+        return {
+            'created': True,
+            'notifications_enabled': notifications_enabled,
+            'alert_id': alert_id,
+            'title': title,
+            'detail': detail,
+            'severity': severity,
+            'alert_subscriptions': alert_subscriptions,
+        }
+
     def _build_analyst_pack_payload(
         actor_id: str,
         *,
@@ -134,7 +262,8 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             history_rows = connection.execute(
                 '''
                 SELECT item_type, item_key, note, source_ref, confidence,
-                       source_reliability, information_credibility, updated_by, updated_at
+                       source_reliability, information_credibility, claim_type, citation_url, observed_on,
+                       updated_by, updated_at
                 FROM analyst_observation_history
                 WHERE actor_id = ?
                 ORDER BY updated_at DESC
@@ -151,8 +280,11 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 'confidence': str(row[4] or 'moderate'),
                 'source_reliability': str(row[5] or ''),
                 'information_credibility': str(row[6] or ''),
-                'updated_by': str(row[7] or ''),
-                'updated_at': str(row[8] or ''),
+                'claim_type': str(row[7] or 'assessment'),
+                'citation_url': str(row[8] or ''),
+                'observed_on': str(row[9] or ''),
+                'updated_by': str(row[10] or ''),
+                'updated_at': str(row[11] or ''),
             }
             for row in history_rows
         ]
@@ -219,6 +351,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         confidence: str,
         source_reliability: str,
         information_credibility: str,
+        claim_type: str,
+        citation_url: str,
+        observed_on: str,
         updated_by: str,
         updated_at: str,
     ) -> None:
@@ -226,10 +361,10 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             '''
             INSERT INTO analyst_observations (
                 id, actor_id, item_type, item_key, note, source_ref,
-                confidence, source_reliability, information_credibility,
+                confidence, source_reliability, information_credibility, claim_type, citation_url, observed_on,
                 updated_by, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(actor_id, item_type, item_key)
             DO UPDATE SET
                 note = excluded.note,
@@ -237,6 +372,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 confidence = excluded.confidence,
                 source_reliability = excluded.source_reliability,
                 information_credibility = excluded.information_credibility,
+                claim_type = excluded.claim_type,
+                citation_url = excluded.citation_url,
+                observed_on = excluded.observed_on,
                 updated_by = excluded.updated_by,
                 updated_at = excluded.updated_at
             ''',
@@ -250,6 +388,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 confidence,
                 source_reliability,
                 information_credibility,
+                claim_type,
+                citation_url,
+                observed_on,
                 updated_by,
                 updated_at,
             ),
@@ -258,10 +399,10 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             '''
             INSERT INTO analyst_observation_history (
                 id, actor_id, item_type, item_key, note, source_ref,
-                confidence, source_reliability, information_credibility,
+                confidence, source_reliability, information_credibility, claim_type, citation_url, observed_on,
                 updated_by, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 str(uuid.uuid4()),
@@ -273,6 +414,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 confidence,
                 source_reliability,
                 information_credibility,
+                claim_type,
+                citation_url,
+                observed_on,
                 updated_by,
                 updated_at,
             ),
@@ -316,7 +460,8 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             query = (
                 '''
                 SELECT item_type, item_key, note, source_ref, confidence,
-                       source_reliability, information_credibility, updated_by, updated_at
+                       source_reliability, information_credibility, claim_type, citation_url, observed_on,
+                       updated_by, updated_at
                 FROM analyst_observations
                 WHERE '''
                 + where_sql
@@ -409,6 +554,1089 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             connection.commit()
 
         return RedirectResponse(url=f'/?actor_id={actor_id or db_actor_id}', status_code=303)
+
+    @router.get(route_paths.ACTOR_TRACKING_INTENT, response_class=JSONResponse)
+    def get_tracking_intent(actor_id: str) -> dict[str, object]:
+        return _get_tracking_intent(actor_id)
+
+    @router.post(route_paths.ACTOR_TRACKING_INTENT, response_class=JSONResponse)
+    async def upsert_tracking_intent(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+
+        key_questions_raw = payload.get('key_questions')
+        if isinstance(key_questions_raw, str):
+            key_questions = [line.strip() for line in key_questions_raw.splitlines() if line.strip()]
+        elif isinstance(key_questions_raw, list):
+            key_questions = [str(item).strip() for item in key_questions_raw if str(item).strip()]
+        else:
+            key_questions = []
+        def _safe_int(raw_value: object, default_value: int) -> int:
+            try:
+                return int(str(raw_value or str(default_value)).strip() or str(default_value))
+            except Exception:
+                return default_value
+
+        updated = _upsert_tracking_intent(
+            actor_id,
+            why_track=str(payload.get('why_track') or ''),
+            mission_impact=str(payload.get('mission_impact') or ''),
+            intelligence_focus=str(payload.get('intelligence_focus') or ''),
+            key_questions=key_questions,
+            priority=str(payload.get('priority') or 'medium'),
+            impact=str(payload.get('impact') or 'medium'),
+            review_cadence_days=_safe_int(payload.get('review_cadence_days'), 30),
+            confirmation_min_sources=_safe_int(payload.get('confirmation_min_sources'), 2),
+            confirmation_max_age_days=_safe_int(payload.get('confirmation_max_age_days'), 45),
+            confirmation_criteria=str(payload.get('confirmation_criteria') or ''),
+            updated_by=str(payload.get('updated_by') or ''),
+        )
+        if 'application/json' in content_type:
+            return JSONResponse(updated)
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Tracking+intent+saved', status_code=303)
+
+    @router.post(route_paths.ACTOR_CONFIRM_ASSESSMENT, response_class=JSONResponse)
+    async def confirm_assessment(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+
+        analyst = str(payload.get('analyst') or '').strip()
+        note = str(payload.get('note') or '').strip()
+        if not analyst:
+            raise HTTPException(status_code=400, detail='analyst is required')
+        result = _confirm_actor_assessment(actor_id, analyst=analyst, note=note)
+        if 'application/json' in content_type:
+            return JSONResponse(result)
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Assessment+confirmed', status_code=303)
+
+    @router.post(route_paths.ACTOR_COLLECTION_PLAN, response_class=JSONResponse)
+    async def upsert_collection_plan(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+
+        def _as_list(raw_value: object) -> list[str]:
+            if isinstance(raw_value, list):
+                return [str(item).strip() for item in raw_value if str(item).strip()]
+            if isinstance(raw_value, str):
+                return [line.strip() for line in raw_value.splitlines() if line.strip()]
+            return []
+
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            now_iso = _utc_now_iso()
+            monitored_sources = _as_list(payload.get('monitored_sources'))[:30]
+            trigger_conditions = _as_list(payload.get('trigger_conditions'))[:30]
+            alert_subscriptions = _as_list(payload.get('alert_subscriptions'))[:30]
+            raw_notifications_enabled = str(payload.get('alert_notifications_enabled') or '').strip().lower()
+            alert_notifications_enabled = 1 if raw_notifications_enabled in {'1', 'true', 'yes', 'on'} else 0
+            monitor_frequency = str(payload.get('monitor_frequency') or 'daily').strip().lower()
+            if monitor_frequency not in {'hourly', 'daily', 'weekly'}:
+                monitor_frequency = 'daily'
+            updated_by = str(payload.get('updated_by') or '').strip()[:120]
+            connection.execute(
+                '''
+                INSERT INTO actor_collection_plans (
+                    actor_id, monitored_sources_json, monitor_frequency,
+                    trigger_conditions_json, alert_subscriptions_json, alert_notifications_enabled, updated_by, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(actor_id) DO UPDATE SET
+                    monitored_sources_json = excluded.monitored_sources_json,
+                    monitor_frequency = excluded.monitor_frequency,
+                    trigger_conditions_json = excluded.trigger_conditions_json,
+                    alert_subscriptions_json = excluded.alert_subscriptions_json,
+                    alert_notifications_enabled = excluded.alert_notifications_enabled,
+                    updated_by = excluded.updated_by,
+                    updated_at = excluded.updated_at
+                ''',
+                (
+                    actor_id,
+                    str(json.dumps(monitored_sources)),
+                    monitor_frequency,
+                    str(json.dumps(trigger_conditions)),
+                    str(json.dumps(alert_subscriptions)),
+                    alert_notifications_enabled,
+                    updated_by,
+                    now_iso,
+                ),
+            )
+            connection.commit()
+            result = {
+                'actor_id': actor_id,
+                'monitored_sources': monitored_sources,
+                'monitor_frequency': monitor_frequency,
+                'trigger_conditions': trigger_conditions,
+                'alert_subscriptions': alert_subscriptions,
+                'alert_notifications_enabled': bool(alert_notifications_enabled),
+                'updated_by': updated_by,
+                'updated_at': now_iso,
+            }
+        if 'application/json' in content_type:
+            return JSONResponse(result)
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Collection+plan+saved', status_code=303)
+
+    @router.post(route_paths.ACTOR_REPORT_PREFERENCES, response_class=JSONResponse)
+    async def upsert_report_preferences(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+
+        period = str(payload.get('delta_brief_period') or 'weekly').strip().lower()
+        if period not in {'weekly', 'monthly'}:
+            period = 'weekly'
+        default_window = 7 if period == 'weekly' else 30
+        try:
+            window_days = int(str(payload.get('delta_brief_window_days') or default_window).strip())
+        except Exception:
+            window_days = default_window
+        window_days = max(1, min(365, window_days))
+        enabled_raw = str(payload.get('delta_brief_enabled') or '').strip().lower()
+        enabled = 1 if enabled_raw in {'1', 'true', 'yes', 'on'} else 0
+        updated_by = str(payload.get('updated_by') or '').strip()[:120]
+        now_iso = _utc_now_iso()
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            connection.execute(
+                '''
+                INSERT INTO actor_report_preferences (
+                    actor_id, delta_brief_enabled, delta_brief_period, delta_brief_window_days, updated_by, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(actor_id) DO UPDATE SET
+                    delta_brief_enabled = excluded.delta_brief_enabled,
+                    delta_brief_period = excluded.delta_brief_period,
+                    delta_brief_window_days = excluded.delta_brief_window_days,
+                    updated_by = excluded.updated_by,
+                    updated_at = excluded.updated_at
+                ''',
+                (actor_id, enabled, period, window_days, updated_by, now_iso),
+            )
+            connection.commit()
+        result = {
+            'actor_id': actor_id,
+            'delta_brief_enabled': bool(enabled),
+            'delta_brief_period': period,
+            'delta_brief_window_days': window_days,
+            'updated_by': updated_by,
+            'updated_at': now_iso,
+        }
+        if 'application/json' in content_type:
+            return JSONResponse(result)
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Report+preferences+saved', status_code=303)
+
+    @router.post(route_paths.ACTOR_RELATIONSHIPS, response_class=JSONResponse)
+    async def add_relationship(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+        src_entity_type = str(payload.get('src_entity_type') or '').strip().lower()[:40]
+        src_entity_key = str(payload.get('src_entity_key') or '').strip()[:220]
+        relationship_type = str(payload.get('relationship_type') or '').strip().lower()[:80]
+        dst_entity_type = str(payload.get('dst_entity_type') or '').strip().lower()[:40]
+        dst_entity_key = str(payload.get('dst_entity_key') or '').strip()[:220]
+        if not all((src_entity_type, src_entity_key, relationship_type, dst_entity_type, dst_entity_key)):
+            raise HTTPException(status_code=400, detail='relationship fields are required')
+        source_ref = str(payload.get('source_ref') or '').strip()[:500]
+        observed_on = str(payload.get('observed_on') or '').strip()[:10]
+        confidence = str(payload.get('confidence') or 'moderate').strip().lower()
+        if confidence not in {'low', 'moderate', 'high'}:
+            confidence = 'moderate'
+        analyst = str(payload.get('analyst') or '').strip()[:120]
+        now_iso = _utc_now_iso()
+        row_id = str(uuid.uuid4())
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            connection.execute(
+                '''
+                INSERT INTO actor_relationship_edges (
+                    id, actor_id, src_entity_type, src_entity_key, relationship_type,
+                    dst_entity_type, dst_entity_key, source_ref, observed_on, confidence,
+                    analyst, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    row_id,
+                    actor_id,
+                    src_entity_type,
+                    src_entity_key,
+                    relationship_type,
+                    dst_entity_type,
+                    dst_entity_key,
+                    source_ref,
+                    observed_on,
+                    confidence,
+                    analyst,
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            connection.commit()
+        if 'application/json' in content_type:
+            return JSONResponse({'ok': True, 'id': row_id})
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Relationship+added', status_code=303)
+
+    @router.post(route_paths.ACTOR_CHANGE_ITEMS, response_class=JSONResponse)
+    async def add_change_item(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+
+        def _flag(key: str) -> int:
+            raw = str(payload.get(key) or '').strip().lower()
+            return 1 if raw in {'1', 'true', 'yes', 'on', key} else 0
+
+        change_summary = str(payload.get('change_summary') or '').strip()[:800]
+        if not change_summary:
+            raise HTTPException(status_code=400, detail='change_summary is required')
+        change_type = str(payload.get('change_type') or 'other').strip().lower()[:40]
+        if change_type not in {'ttp', 'infra', 'tooling', 'targeting', 'timing', 'access_vector', 'other'}:
+            change_type = 'other'
+        confidence = str(payload.get('confidence') or 'moderate').strip().lower()
+        if confidence not in {'low', 'moderate', 'high'}:
+            confidence = 'moderate'
+        source_ref = str(payload.get('source_ref') or '').strip()[:500]
+        observed_on = str(payload.get('observed_on') or '').strip()[:10]
+        created_by = str(payload.get('created_by') or '').strip()[:120]
+        now_iso = _utc_now_iso()
+        row_id = str(uuid.uuid4())
+        tag_values = {
+            'ttp': _flag('ttp_tag'),
+            'infra': _flag('infra_tag'),
+            'tooling': _flag('tooling_tag'),
+            'targeting': _flag('targeting_tag'),
+            'timing': _flag('timing_tag'),
+            'access_vector': _flag('access_vector_tag'),
+        }
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            connection.execute(
+                '''
+                INSERT INTO actor_change_items (
+                    id, actor_id, change_summary, change_type,
+                    ttp_tag, infra_tag, tooling_tag, targeting_tag, timing_tag, access_vector_tag,
+                    confidence, source_ref, observed_on, created_by, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    row_id,
+                    actor_id,
+                    change_summary,
+                    change_type,
+                    tag_values['ttp'],
+                    tag_values['infra'],
+                    tag_values['tooling'],
+                    tag_values['targeting'],
+                    tag_values['timing'],
+                    tag_values['access_vector'],
+                    confidence,
+                    source_ref,
+                    observed_on,
+                    created_by,
+                    now_iso,
+                ),
+            )
+            alert_outcome = _enqueue_change_alert_if_needed(
+                connection=connection,
+                actor_id=actor_id,
+                change_item_id=row_id,
+                change_summary=change_summary,
+                change_type=change_type,
+                confidence=confidence,
+                source_ref=source_ref,
+                tags=tag_values,
+            )
+            connection.commit()
+        alert_delivered = False
+        if (
+            alert_outcome.get('created')
+            and alert_outcome.get('notifications_enabled')
+            and callable(_dispatch_alert_deliveries)
+        ):
+            try:
+                delivery_result = _dispatch_alert_deliveries(
+                    actor_id=actor_id,
+                    alert_id=str(alert_outcome.get('alert_id') or ''),
+                    title=str(alert_outcome.get('title') or ''),
+                    detail=str(alert_outcome.get('detail') or ''),
+                    severity=str(alert_outcome.get('severity') or 'medium'),
+                    subscriptions=list(alert_outcome.get('alert_subscriptions') or []),
+                )
+                alert_delivered = int((delivery_result or {}).get('delivered') or 0) > 0
+            except Exception:
+                alert_delivered = False
+        if 'application/json' in content_type:
+            return JSONResponse(
+                {
+                    'ok': True,
+                    'id': row_id,
+                    'alert_created': bool(alert_outcome.get('created')),
+                    'alert_delivered': bool(alert_delivered),
+                    'notifications_enabled': bool(alert_outcome.get('notifications_enabled')),
+                }
+            )
+        notice = 'Change+item+added'
+        if alert_outcome.get('created'):
+            if alert_outcome.get('notifications_enabled') and alert_delivered:
+                notice = 'Change+item+added+and+alert+sent'
+            elif alert_outcome.get('notifications_enabled'):
+                notice = 'Change+item+added+and+alert+queued'
+            else:
+                notice = 'Change+item+added+alert+saved+(notifications+off)'
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice={notice}', status_code=303)
+
+    @router.post(route_paths.ACTOR_ALERT_ACK, response_class=JSONResponse)
+    async def acknowledge_alert(actor_id: str, alert_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+        analyst = str(payload.get('analyst') or '').strip()[:120]
+        now_iso = _utc_now_iso()
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            row = connection.execute(
+                '''
+                SELECT id, status
+                FROM actor_alert_events
+                WHERE id = ? AND actor_id = ?
+                ''',
+                (alert_id, actor_id),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail='alert not found')
+            connection.execute(
+                '''
+                UPDATE actor_alert_events
+                SET status = 'acknowledged',
+                    acknowledged_at = ?,
+                    acknowledged_by = ?
+                WHERE id = ? AND actor_id = ?
+                ''',
+                (now_iso, analyst, alert_id, actor_id),
+            )
+            connection.commit()
+        if 'application/json' in content_type:
+            return JSONResponse({'ok': True, 'id': alert_id, 'status': 'acknowledged'})
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Alert+acknowledged', status_code=303)
+
+    @router.post(route_paths.ACTOR_CHANGE_CONFLICTS, response_class=JSONResponse)
+    async def add_change_conflict(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+        conflict_topic = str(payload.get('conflict_topic') or '').strip()[:300]
+        source_a_ref = str(payload.get('source_a_ref') or '').strip()[:500]
+        source_b_ref = str(payload.get('source_b_ref') or '').strip()[:500]
+        arbitration_outcome = str(payload.get('arbitration_outcome') or '').strip()[:1200]
+        if not all((conflict_topic, source_a_ref, source_b_ref, arbitration_outcome)):
+            raise HTTPException(status_code=400, detail='conflict fields are required')
+        confidence = str(payload.get('confidence') or 'moderate').strip().lower()
+        if confidence not in {'low', 'moderate', 'high'}:
+            confidence = 'moderate'
+        analyst = str(payload.get('analyst') or '').strip()[:120]
+        resolved_at = _utc_now_iso()
+        row_id = str(uuid.uuid4())
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            connection.execute(
+                '''
+                INSERT INTO actor_change_conflicts (
+                    id, actor_id, conflict_topic, source_a_ref, source_b_ref,
+                    arbitration_outcome, confidence, analyst, resolved_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    row_id,
+                    actor_id,
+                    conflict_topic,
+                    source_a_ref,
+                    source_b_ref,
+                    arbitration_outcome,
+                    confidence,
+                    analyst,
+                    resolved_at,
+                ),
+            )
+            connection.commit()
+        if 'application/json' in content_type:
+            return JSONResponse({'ok': True, 'id': row_id})
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Conflict+recorded', status_code=303)
+
+    @router.post(route_paths.ACTOR_TECHNIQUE_COVERAGE, response_class=JSONResponse)
+    async def upsert_technique_coverage(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+        technique_id = str(payload.get('technique_id') or '').strip().upper()[:32]
+        if not technique_id:
+            raise HTTPException(status_code=400, detail='technique_id is required')
+        technique_name = str(payload.get('technique_name') or '').strip()[:200]
+        detection_name = str(payload.get('detection_name') or '').strip()[:300]
+        control_name = str(payload.get('control_name') or '').strip()[:300]
+        coverage_status = str(payload.get('coverage_status') or 'unknown').strip().lower()
+        if coverage_status not in {'covered', 'partial', 'gap', 'unknown'}:
+            coverage_status = 'unknown'
+        validation_status = str(payload.get('validation_status') or 'unknown').strip().lower()
+        if validation_status not in {'validated', 'not_validated', 'unknown'}:
+            validation_status = 'unknown'
+        validation_evidence = str(payload.get('validation_evidence') or '').strip()[:1200]
+        updated_by = str(payload.get('updated_by') or '').strip()[:120]
+        now_iso = _utc_now_iso()
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            existing = connection.execute(
+                'SELECT id FROM actor_technique_coverage WHERE actor_id = ? AND technique_id = ?',
+                (actor_id, technique_id),
+            ).fetchone()
+            row_id = str(existing[0]) if existing else str(uuid.uuid4())
+            connection.execute(
+                '''
+                INSERT INTO actor_technique_coverage (
+                    id, actor_id, technique_id, technique_name, detection_name, control_name,
+                    coverage_status, validation_status, validation_evidence, updated_by, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(actor_id, technique_id) DO UPDATE SET
+                    technique_name = excluded.technique_name,
+                    detection_name = excluded.detection_name,
+                    control_name = excluded.control_name,
+                    coverage_status = excluded.coverage_status,
+                    validation_status = excluded.validation_status,
+                    validation_evidence = excluded.validation_evidence,
+                    updated_by = excluded.updated_by,
+                    updated_at = excluded.updated_at
+                ''',
+                (
+                    row_id,
+                    actor_id,
+                    technique_id,
+                    technique_name,
+                    detection_name,
+                    control_name,
+                    coverage_status,
+                    validation_status,
+                    validation_evidence,
+                    updated_by,
+                    now_iso,
+                ),
+            )
+            connection.commit()
+        if 'application/json' in content_type:
+            return JSONResponse({'ok': True, 'technique_id': technique_id})
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Technique+coverage+saved', status_code=303)
+
+    @router.post(route_paths.ACTOR_TASKS, response_class=JSONResponse)
+    async def create_task(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+        title = str(payload.get('title') or '').strip()[:240]
+        if not title:
+            raise HTTPException(status_code=400, detail='title is required')
+        details = str(payload.get('details') or '').strip()[:1500]
+        priority = str(payload.get('priority') or 'medium').strip().lower()
+        if priority not in {'low', 'medium', 'high', 'critical'}:
+            priority = 'medium'
+        status = str(payload.get('status') or 'open').strip().lower()
+        if status not in {'open', 'in_progress', 'blocked', 'done'}:
+            status = 'open'
+        owner = str(payload.get('owner') or '').strip()[:120]
+        due_date = str(payload.get('due_date') or '').strip()[:10]
+        linked_type = str(payload.get('linked_type') or '').strip()[:40]
+        linked_key = str(payload.get('linked_key') or '').strip()[:160]
+        row_id = str(uuid.uuid4())
+        now_iso = _utc_now_iso()
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            connection.execute(
+                '''
+                INSERT INTO actor_tasks (
+                    id, actor_id, title, details, priority, status, owner, due_date,
+                    linked_type, linked_key, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    row_id,
+                    actor_id,
+                    title,
+                    details,
+                    priority,
+                    status,
+                    owner,
+                    due_date,
+                    linked_type,
+                    linked_key,
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            connection.commit()
+        if 'application/json' in content_type:
+            return JSONResponse({'ok': True, 'id': row_id})
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Task+created', status_code=303)
+
+    @router.post(route_paths.ACTOR_TASK_UPDATE, response_class=JSONResponse)
+    async def update_task(actor_id: str, task_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+        next_status = str(payload.get('status') or '').strip().lower()
+        if next_status not in {'open', 'in_progress', 'blocked', 'done'}:
+            raise HTTPException(status_code=400, detail='status is required')
+        now_iso = _utc_now_iso()
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            row = connection.execute(
+                'SELECT id FROM actor_tasks WHERE id = ? AND actor_id = ?',
+                (task_id, actor_id),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail='task not found')
+            connection.execute(
+                'UPDATE actor_tasks SET status = ?, updated_at = ? WHERE id = ?',
+                (next_status, now_iso, task_id),
+            )
+            connection.commit()
+        if 'application/json' in content_type:
+            return JSONResponse({'ok': True, 'id': task_id, 'status': next_status})
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Task+updated', status_code=303)
+
+    @router.post(route_paths.ACTOR_OUTCOMES, response_class=JSONResponse)
+    async def create_outcome(actor_id: str, request: Request) -> Response:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        content_type = str(request.headers.get('content-type') or '').lower()
+        payload: dict[str, object] = {}
+        if 'application/json' in content_type:
+            body = await request.json()
+            payload = body if isinstance(body, dict) else {}
+        else:
+            form = await request.form()
+            payload = {str(key): form.get(key) for key in form.keys()}
+        outcome_type = str(payload.get('outcome_type') or '').strip().lower()[:40]
+        if outcome_type not in {'detection_created', 'hunt_ran', 'finding', 'false_positive', 'mitigation_applied'}:
+            raise HTTPException(status_code=400, detail='invalid outcome_type')
+        summary = str(payload.get('summary') or '').strip()[:1200]
+        if not summary:
+            raise HTTPException(status_code=400, detail='summary is required')
+        result = str(payload.get('result') or '').strip()[:500]
+        linked_task_id = str(payload.get('linked_task_id') or '').strip()[:64]
+        linked_technique_id = str(payload.get('linked_technique_id') or '').strip().upper()[:32]
+        evidence_ref = str(payload.get('evidence_ref') or '').strip()[:500]
+        created_by = str(payload.get('created_by') or '').strip()[:120]
+        row_id = str(uuid.uuid4())
+        now_iso = _utc_now_iso()
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            connection.execute(
+                '''
+                INSERT INTO actor_operational_outcomes (
+                    id, actor_id, outcome_type, summary, result,
+                    linked_task_id, linked_technique_id, evidence_ref, created_by, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    row_id,
+                    actor_id,
+                    outcome_type,
+                    summary,
+                    result,
+                    linked_task_id,
+                    linked_technique_id,
+                    evidence_ref,
+                    created_by,
+                    now_iso,
+                ),
+            )
+            connection.commit()
+        if 'application/json' in content_type:
+            return JSONResponse({'ok': True, 'id': row_id})
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Outcome+recorded', status_code=303)
+
+    @router.get(route_paths.ACTOR_REPORT_VIEW, response_class=JSONResponse)
+    def report_view(
+        actor_id: str,
+        audience: str,
+        source_tier: str | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
+    ) -> dict[str, object]:
+        def _safe_parse_dt(raw_value: object) -> datetime | None:
+            raw = str(raw_value or '').strip()
+            if not raw:
+                return None
+            try:
+                parsed = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(timezone.utc)
+            except Exception:
+                return None
+
+        def _extract_evidence_bundle(*, actor_id_value: str, notebook_payload: dict[str, object], since_days_value: int) -> dict[str, object]:
+            actor_meta = notebook_payload.get('actor', {}) if isinstance(notebook_payload.get('actor', {}), dict) else {}
+            actor_name_value = str(actor_meta.get('display_name') or actor_id_value)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(since_days_value)))
+            top_changes_raw = notebook_payload.get('top_change_signals', [])
+            top_changes = top_changes_raw if isinstance(top_changes_raw, list) else []
+            claims: list[dict[str, object]] = []
+            for index, item in enumerate(top_changes, start=1):
+                if not isinstance(item, dict):
+                    continue
+                claim_dt = _safe_parse_dt(item.get('observed_on') or item.get('created_at'))
+                if claim_dt and claim_dt < cutoff:
+                    continue
+                validated_sources_raw = item.get('validated_sources')
+                validated_sources = validated_sources_raw if isinstance(validated_sources_raw, list) else []
+                citations = []
+                for source in validated_sources:
+                    if not isinstance(source, dict):
+                        continue
+                    citations.append(
+                        {
+                            'source_label': str(source.get('source_name') or source.get('source_domain') or ''),
+                            'source_url': str(source.get('source_url') or ''),
+                            'source_date': str(source.get('source_date') or ''),
+                            'source_excerpt': str(source.get('supporting_excerpt') or source.get('source_excerpt') or '')[:500],
+                        }
+                    )
+                claims.append(
+                    {
+                        'claim_id': f'change-{index}',
+                        'claim_text': str(item.get('change_summary') or ''),
+                        'claim_type': 'assessment',
+                        'confidence': str(item.get('confidence_label') or item.get('confidence') or 'moderate').lower(),
+                        'updated_at': str(item.get('observed_on') or item.get('created_at') or ''),
+                        'analyst': str(item.get('created_by') or ''),
+                        'citations': citations,
+                    }
+                )
+
+            with sqlite3.connect(_db_path()) as connection:
+                obs_rows = connection.execute(
+                    '''
+                    SELECT item_type, item_key, note, citation_url, observed_on,
+                           updated_by, updated_at, confidence, source_ref
+                    FROM analyst_observations
+                    WHERE actor_id = ? AND claim_type = 'evidence'
+                    ORDER BY updated_at DESC
+                    LIMIT 500
+                    ''',
+                    (actor_id_value,),
+                ).fetchall()
+            for row in obs_rows:
+                observed_on_value = str(row[4] or '')
+                observed_dt = _safe_parse_dt(observed_on_value)
+                if observed_dt and observed_dt < cutoff:
+                    continue
+                citation_url = str(row[3] or '').strip()
+                if not citation_url:
+                    continue
+                claims.append(
+                    {
+                        'claim_id': f'obs-{str(row[0] or "")}-{str(row[1] or "")}',
+                        'claim_text': str(row[2] or ''),
+                        'claim_type': 'evidence',
+                        'confidence': str(row[7] or 'moderate'),
+                        'updated_at': str(row[6] or ''),
+                        'analyst': str(row[5] or ''),
+                        'citations': [
+                            {
+                                'source_label': str(row[8] or ''),
+                                'source_url': citation_url,
+                                'source_date': observed_on_value,
+                                'source_excerpt': '',
+                            }
+                        ],
+                    }
+                )
+            return {
+                'actor_id': actor_id_value,
+                'actor_name': actor_name_value,
+                'window_days': max(1, int(since_days_value)),
+                'generated_at': _utc_now_iso(),
+                'claim_count': len(claims),
+                'claims': claims,
+            }
+
+        def _build_delta_brief(*, actor_id_value: str, notebook_payload: dict[str, object], period_value: str, since_days_value: int) -> dict[str, object]:
+            actor_meta = notebook_payload.get('actor', {}) if isinstance(notebook_payload.get('actor', {}), dict) else {}
+            actor_name_value = str(actor_meta.get('display_name') or actor_id_value)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(since_days_value)))
+            summary = notebook_payload.get('recent_change_summary', {}) if isinstance(notebook_payload.get('recent_change_summary', {}), dict) else {}
+            top_changes_raw = notebook_payload.get('top_change_signals', [])
+            top_changes = top_changes_raw if isinstance(top_changes_raw, list) else []
+            window_changes = []
+            for item in top_changes:
+                if not isinstance(item, dict):
+                    continue
+                event_dt = _safe_parse_dt(item.get('observed_on') or item.get('created_at'))
+                if event_dt and event_dt < cutoff:
+                    continue
+                window_changes.append(item)
+            taxonomy_counts = {
+                'ttp': 0,
+                'infra': 0,
+                'tooling': 0,
+                'targeting': 0,
+                'timing': 0,
+                'access_vector': 0,
+            }
+            for item in (notebook_payload.get('change_items') if isinstance(notebook_payload.get('change_items'), list) else []):
+                if not isinstance(item, dict):
+                    continue
+                item_dt = _safe_parse_dt(item.get('observed_on') or item.get('created_at'))
+                if item_dt and item_dt < cutoff:
+                    continue
+                for key in taxonomy_counts:
+                    if bool(item.get(f'{key}_tag')):
+                        taxonomy_counts[key] += 1
+            alert_queue = notebook_payload.get('alert_queue') if isinstance(notebook_payload.get('alert_queue'), list) else []
+            open_alerts = [a for a in alert_queue if isinstance(a, dict) and str(a.get('status') or '').lower() == 'open']
+            return {
+                'actor_id': actor_id_value,
+                'actor_name': actor_name_value,
+                'period': period_value,
+                'window_days': max(1, int(since_days_value)),
+                'generated_at': _utc_now_iso(),
+                'summary': {
+                    'new_reports': summary.get('new_reports', 0),
+                    'targets': summary.get('targets', ''),
+                    'damage': summary.get('damage', ''),
+                    'open_alerts': len(open_alerts),
+                },
+                'taxonomy_counts': taxonomy_counts,
+                'headline_changes': [
+                    str(item.get('change_summary') or '')[:240]
+                    for item in window_changes[:12]
+                    if isinstance(item, dict)
+                ],
+                'recommended_followups': [
+                    str(item.get('quick_check_title') or item.get('question_text') or '')[:240]
+                    for item in (notebook_payload.get('priority_questions') if isinstance(notebook_payload.get('priority_questions'), list) else [])[:8]
+                    if isinstance(item, dict)
+                ],
+            }
+
+        audience_key = str(audience or '').strip().lower()
+        if audience_key not in {'exec', 'soc', 'ir'}:
+            raise HTTPException(status_code=400, detail='audience must be one of: exec, soc, ir')
+        notebook = _fetch_actor_notebook(
+            actor_id,
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        )
+        actor = notebook.get('actor', {}) if isinstance(notebook.get('actor', {}), dict) else {}
+        summary = notebook.get('recent_change_summary', {}) if isinstance(notebook.get('recent_change_summary', {}), dict) else {}
+        top_changes = notebook.get('top_change_signals', []) if isinstance(notebook.get('top_change_signals', []), list) else []
+        quick_checks = notebook.get('priority_questions', []) if isinstance(notebook.get('priority_questions', []), list) else []
+        since_days = 30
+        evidence_bundle = _extract_evidence_bundle(actor_id_value=actor_id, notebook_payload=notebook, since_days_value=since_days)
+        delta_brief = _build_delta_brief(actor_id_value=actor_id, notebook_payload=notebook, period_value='monthly', since_days_value=since_days)
+        base = {
+            'audience': audience_key,
+            'actor_id': actor_id,
+            'actor_name': str(actor.get('display_name') or actor_id),
+            'generated_at': _utc_now_iso(),
+            'window_days': since_days,
+            'summary': {
+                'new_reports': summary.get('new_reports', 0),
+                'targets': summary.get('targets', 0),
+                'damage': summary.get('damage', 0),
+            },
+        }
+        if audience_key == 'exec':
+            return {
+                **base,
+                'what_changed': base['summary'],
+                'headline_changes': [
+                    str(item.get('change_summary') or '')[:220]
+                    for item in top_changes[:5]
+                    if isinstance(item, dict)
+                ],
+                'delta_brief': delta_brief,
+            }
+        if audience_key == 'soc':
+            return {
+                **base,
+                'top_checks': [
+                    {
+                        'question': str(item.get('question_text') or ''),
+                        'where_to_look': str(item.get('where_to_look') or ''),
+                        'what_to_look_for': str(item.get('what_to_look_for') or ''),
+                    }
+                    for item in quick_checks[:8]
+                    if isinstance(item, dict)
+                ],
+                'top_techniques': notebook.get('top_techniques', []),
+                'ioc_items': notebook.get('ioc_items', [])[:40],
+                'open_alerts': [item for item in (notebook.get('alert_queue') if isinstance(notebook.get('alert_queue'), list) else []) if isinstance(item, dict) and str(item.get('status') or '').lower() == 'open'][:20],
+            }
+        return {
+            **base,
+            'timeline_recent_items': notebook.get('timeline_recent_items', [])[:40],
+            'top_change_signals': top_changes[:10],
+            'evidence_bundle': evidence_bundle,
+            'delta_brief': delta_brief,
+        }
+
+    @router.get(route_paths.ACTOR_EXPORT_EVIDENCE_BUNDLE_JSON, response_class=JSONResponse)
+    def export_evidence_bundle_json(
+        actor_id: str,
+        since_days: int = 30,
+        source_tier: str | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
+    ) -> dict[str, object]:
+        def _safe_parse_dt(raw_value: object) -> datetime | None:
+            raw = str(raw_value or '').strip()
+            if not raw:
+                return None
+            try:
+                parsed = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(timezone.utc)
+            except Exception:
+                return None
+
+        since = max(1, min(365, int(since_days or 30)))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=since)
+        ir_report = report_view(
+            actor_id=actor_id,
+            audience='ir',
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        )
+        bundle = ir_report.get('evidence_bundle', {}) if isinstance(ir_report, dict) else {}
+        claims = bundle.get('claims', []) if isinstance(bundle, dict) else []
+        filtered_claims = []
+        for claim in claims if isinstance(claims, list) else []:
+            if not isinstance(claim, dict):
+                continue
+            claim_dt = _safe_parse_dt(claim.get('updated_at'))
+            if claim_dt and claim_dt < cutoff:
+                continue
+            filtered_claims.append(claim)
+        return {
+            'actor_id': actor_id,
+            'generated_at': _utc_now_iso(),
+            'window_days': since,
+            'claim_count': len(filtered_claims),
+            'claims': filtered_claims,
+        }
+
+    @router.get(route_paths.ACTOR_EXPORT_EVIDENCE_BUNDLE_CSV)
+    def export_evidence_bundle_csv(
+        actor_id: str,
+        since_days: int = 30,
+        source_tier: str | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
+    ) -> Response:
+        ir_report = report_view(
+            actor_id=actor_id,
+            audience='ir',
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        )
+        bundle = ir_report.get('evidence_bundle', {}) if isinstance(ir_report, dict) else {}
+        claims = bundle.get('claims', []) if isinstance(bundle, dict) else []
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                'actor_id',
+                'claim_id',
+                'claim_type',
+                'claim_text',
+                'confidence',
+                'updated_at',
+                'analyst',
+                'source_label',
+                'source_url',
+                'source_date',
+                'source_excerpt',
+            ]
+        )
+        for claim in claims if isinstance(claims, list) else []:
+            if not isinstance(claim, dict):
+                continue
+            citations = claim.get('citations', []) if isinstance(claim.get('citations'), list) else []
+            if not citations:
+                writer.writerow(
+                    [
+                        actor_id,
+                        str(claim.get('claim_id') or ''),
+                        str(claim.get('claim_type') or ''),
+                        str(claim.get('claim_text') or ''),
+                        str(claim.get('confidence') or ''),
+                        str(claim.get('updated_at') or ''),
+                        str(claim.get('analyst') or ''),
+                        '',
+                        '',
+                        '',
+                        '',
+                    ]
+                )
+                continue
+            for citation in citations:
+                if not isinstance(citation, dict):
+                    continue
+                writer.writerow(
+                    [
+                        actor_id,
+                        str(claim.get('claim_id') or ''),
+                        str(claim.get('claim_type') or ''),
+                        str(claim.get('claim_text') or ''),
+                        str(claim.get('confidence') or ''),
+                        str(claim.get('updated_at') or ''),
+                        str(claim.get('analyst') or ''),
+                        str(citation.get('source_label') or ''),
+                        str(citation.get('source_url') or ''),
+                        str(citation.get('source_date') or ''),
+                        str(citation.get('source_excerpt') or ''),
+                    ]
+                )
+        return Response(
+            content=buffer.getvalue(),
+            media_type='text/csv',
+            headers={'Content-Disposition': f'attachment; filename="{actor_id}-evidence-bundle.csv"'},
+        )
+
+    @router.get(route_paths.ACTOR_EXPORT_DELTA_BRIEF_JSON, response_class=JSONResponse)
+    def export_delta_brief_json(
+        actor_id: str,
+        period: str = 'weekly',
+        since_days: int | None = None,
+        source_tier: str | None = None,
+        min_confidence_weight: str | None = None,
+        source_days: str | None = None,
+    ) -> dict[str, object]:
+        pref_period = 'weekly'
+        pref_window_days = 7
+        with sqlite3.connect(_db_path()) as connection:
+            pref_row = connection.execute(
+                '''
+                SELECT delta_brief_period, delta_brief_window_days
+                FROM actor_report_preferences
+                WHERE actor_id = ?
+                ''',
+                (actor_id,),
+            ).fetchone()
+            if pref_row:
+                pref_period = str(pref_row[0] or 'weekly').strip().lower()
+                try:
+                    pref_window_days = int(pref_row[1] or 7)
+                except Exception:
+                    pref_window_days = 7
+        period_key = str(period or pref_period).strip().lower()
+        if period_key not in {'weekly', 'monthly'}:
+            period_key = pref_period if pref_period in {'weekly', 'monthly'} else 'weekly'
+        default_days = pref_window_days if pref_window_days > 0 else (7 if period_key == 'weekly' else 30)
+        window_days = max(1, min(365, int(since_days or default_days)))
+        report = report_view(
+            actor_id=actor_id,
+            audience='exec',
+            source_tier=source_tier,
+            min_confidence_weight=min_confidence_weight,
+            source_days=source_days,
+        )
+        base_summary = report.get('summary', {}) if isinstance(report, dict) else {}
+        headlines = report.get('headline_changes', []) if isinstance(report, dict) else []
+        return {
+            'actor_id': actor_id,
+            'period': period_key,
+            'window_days': window_days,
+            'generated_at': _utc_now_iso(),
+            'summary': base_summary if isinstance(base_summary, dict) else {},
+            'headline_changes': headlines if isinstance(headlines, list) else [],
+        }
 
     @router.get(route_paths.ACTOR_TIMELINE_DETAILS, response_class=HTMLResponse)
     def actor_timeline_details(request: Request, actor_id: str, limit: int = 300, offset: int = 0) -> HTMLResponse:
@@ -1396,19 +2624,95 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         min_confidence_weight: str | None = None,
         source_days: str | None = None,
     ) -> dict[str, object]:
-        notebook = _fetch_actor_notebook(
-            actor_id,
-            source_tier=source_tier,
-            min_confidence_weight=min_confidence_weight,
-            source_days=source_days,
-        )
+        if _recover_stale_running_states is not None:
+            try:
+                _recover_stale_running_states()
+            except Exception:
+                pass
+        with sqlite3.connect(_db_path(), timeout=5.0) as connection:
+            actor_row = connection.execute(
+                '''
+                SELECT notebook_status, notebook_message
+                FROM actor_profiles
+                WHERE id = ?
+                ''',
+                (actor_id,),
+            ).fetchone()
+        if actor_row is None:
+            raise HTTPException(status_code=404, detail='actor not found')
+        actor_status = str(actor_row[0] or 'idle')
+        actor_message = str(actor_row[1] or '')
+        if actor_status.lower() == 'running':
+            return {
+                'actor_id': actor_id,
+                'actor': {
+                    'id': actor_id,
+                    'notebook_status': actor_status,
+                    'notebook_message': actor_message or 'Refreshing notebook...',
+                },
+                'notebook_status': actor_status,
+                'notebook_message': actor_message or 'Refreshing notebook...',
+                'counts': {},
+                'kpis': {},
+                'recent_change_summary': {},
+                'priority_questions': [],
+                'top_change_signals': [],
+                'recent_activity_synthesis': [],
+                'top_techniques': [],
+                'timeline_graph': [],
+                'actor_profile_summary': '',
+                'timeline_compact_rows': [],
+                'timeline_window_label': '',
+            }
+
+        try:
+            notebook = _fetch_actor_notebook(
+                actor_id,
+                source_tier=source_tier,
+                min_confidence_weight=min_confidence_weight,
+                source_days=source_days,
+            )
+        except sqlite3.OperationalError as exc:
+            if 'database is locked' not in str(exc).lower():
+                raise
+            LOGGER.warning('live_state_locked actor_id=%s', actor_id)
+            return {
+                'actor_id': actor_id,
+                'actor': {
+                    'id': actor_id,
+                    'notebook_status': actor_status,
+                    'notebook_message': actor_message or 'Notebook refresh in progress.',
+                },
+                'notebook_status': actor_status,
+                'notebook_message': actor_message or 'Notebook refresh in progress.',
+                'counts': {},
+                'kpis': {},
+                'recent_change_summary': {},
+                'priority_questions': [],
+                'top_change_signals': [],
+                'recent_activity_synthesis': [],
+                'top_techniques': [],
+                'timeline_graph': [],
+                'actor_profile_summary': '',
+                'timeline_compact_rows': [],
+                'timeline_window_label': '',
+            }
+
+        notebook_actor = notebook.get('actor', {}) if isinstance(notebook, dict) else {}
         return {
             'actor_id': actor_id,
-            'notebook_status': str(notebook.get('actor', {}).get('notebook_status') or 'idle'),
-            'notebook_message': str(notebook.get('actor', {}).get('notebook_message') or ''),
+            'actor': notebook_actor,
+            'notebook_status': str(notebook_actor.get('notebook_status') or actor_status),
+            'notebook_message': str(notebook_actor.get('notebook_message') or actor_message),
+            'counts': notebook.get('counts', {}),
             'kpis': notebook.get('kpis', {}),
             'recent_change_summary': notebook.get('recent_change_summary', {}),
             'priority_questions': notebook.get('priority_questions', []),
+            'top_change_signals': notebook.get('top_change_signals', []),
+            'recent_activity_synthesis': notebook.get('recent_activity_synthesis', []),
+            'top_techniques': notebook.get('top_techniques', []),
+            'timeline_graph': notebook.get('timeline_graph', []),
+            'actor_profile_summary': notebook.get('actor_profile_summary', ''),
             'timeline_compact_rows': notebook.get('timeline_compact_rows', []),
             'timeline_window_label': notebook.get('timeline_window_label', ''),
         }
@@ -1482,7 +2786,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         source_days: str | None = None,
         observations_limit: int = 1000,
         history_limit: int = 1000,
-    ) -> dict[str, object]:
+        ) -> dict[str, object]:
         return _build_analyst_pack_payload(
             actor_id,
             source_tier=source_tier,
@@ -1490,6 +2794,191 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             source_days=source_days,
             observations_limit=observations_limit,
             history_limit=history_limit,
+        )
+
+    @router.get(route_paths.ACTOR_EXPORT_TASKS_JSON, response_class=JSONResponse)
+    def export_tasks_json(actor_id: str) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            rows = connection.execute(
+                '''
+                SELECT id, title, details, priority, status, owner, due_date,
+                       linked_type, linked_key, created_at, updated_at
+                FROM actor_tasks
+                WHERE actor_id = ?
+                ORDER BY updated_at DESC
+                ''',
+                (actor_id,),
+            ).fetchall()
+        items = [
+            {
+                'id': str(row[0] or ''),
+                'title': str(row[1] or ''),
+                'details': str(row[2] or ''),
+                'priority': str(row[3] or ''),
+                'status': str(row[4] or ''),
+                'owner': str(row[5] or ''),
+                'due_date': str(row[6] or ''),
+                'linked_type': str(row[7] or ''),
+                'linked_key': str(row[8] or ''),
+                'created_at': str(row[9] or ''),
+                'updated_at': str(row[10] or ''),
+            }
+            for row in rows
+        ]
+        return {'actor_id': actor_id, 'count': len(items), 'items': items}
+
+    @router.get(route_paths.ACTOR_EXPORT_TASKS_CSV)
+    def export_tasks_csv(actor_id: str) -> Response:
+        payload = export_tasks_json(actor_id)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(['actor_id', 'id', 'title', 'details', 'priority', 'status', 'owner', 'due_date', 'linked_type', 'linked_key', 'created_at', 'updated_at'])
+        for item in payload.get('items', []):
+            if not isinstance(item, dict):
+                continue
+            writer.writerow(
+                [
+                    actor_id,
+                    item.get('id', ''),
+                    item.get('title', ''),
+                    item.get('details', ''),
+                    item.get('priority', ''),
+                    item.get('status', ''),
+                    item.get('owner', ''),
+                    item.get('due_date', ''),
+                    item.get('linked_type', ''),
+                    item.get('linked_key', ''),
+                    item.get('created_at', ''),
+                    item.get('updated_at', ''),
+                ]
+            )
+        return Response(
+            content=buffer.getvalue(),
+            media_type='text/csv',
+            headers={'Content-Disposition': f'attachment; filename="{actor_id}-tasks.csv"'},
+        )
+
+    @router.get(route_paths.ACTOR_EXPORT_OUTCOMES_JSON, response_class=JSONResponse)
+    def export_outcomes_json(actor_id: str) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            rows = connection.execute(
+                '''
+                SELECT id, outcome_type, summary, result, linked_task_id,
+                       linked_technique_id, evidence_ref, created_by, created_at
+                FROM actor_operational_outcomes
+                WHERE actor_id = ?
+                ORDER BY created_at DESC
+                ''',
+                (actor_id,),
+            ).fetchall()
+        items = [
+            {
+                'id': str(row[0] or ''),
+                'outcome_type': str(row[1] or ''),
+                'summary': str(row[2] or ''),
+                'result': str(row[3] or ''),
+                'linked_task_id': str(row[4] or ''),
+                'linked_technique_id': str(row[5] or ''),
+                'evidence_ref': str(row[6] or ''),
+                'created_by': str(row[7] or ''),
+                'created_at': str(row[8] or ''),
+            }
+            for row in rows
+        ]
+        return {'actor_id': actor_id, 'count': len(items), 'items': items}
+
+    @router.get(route_paths.ACTOR_EXPORT_OUTCOMES_CSV)
+    def export_outcomes_csv(actor_id: str) -> Response:
+        payload = export_outcomes_json(actor_id)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(['actor_id', 'id', 'outcome_type', 'summary', 'result', 'linked_task_id', 'linked_technique_id', 'evidence_ref', 'created_by', 'created_at'])
+        for item in payload.get('items', []):
+            if not isinstance(item, dict):
+                continue
+            writer.writerow(
+                [
+                    actor_id,
+                    item.get('id', ''),
+                    item.get('outcome_type', ''),
+                    item.get('summary', ''),
+                    item.get('result', ''),
+                    item.get('linked_task_id', ''),
+                    item.get('linked_technique_id', ''),
+                    item.get('evidence_ref', ''),
+                    item.get('created_by', ''),
+                    item.get('created_at', ''),
+                ]
+            )
+        return Response(
+            content=buffer.getvalue(),
+            media_type='text/csv',
+            headers={'Content-Disposition': f'attachment; filename="{actor_id}-outcomes.csv"'},
+        )
+
+    @router.get(route_paths.ACTOR_EXPORT_COVERAGE_JSON, response_class=JSONResponse)
+    def export_coverage_json(actor_id: str) -> dict[str, object]:
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            rows = connection.execute(
+                '''
+                SELECT technique_id, technique_name, detection_name, control_name,
+                       coverage_status, validation_status, validation_evidence,
+                       updated_by, updated_at
+                FROM actor_technique_coverage
+                WHERE actor_id = ?
+                ORDER BY updated_at DESC
+                ''',
+                (actor_id,),
+            ).fetchall()
+        items = [
+            {
+                'technique_id': str(row[0] or ''),
+                'technique_name': str(row[1] or ''),
+                'detection_name': str(row[2] or ''),
+                'control_name': str(row[3] or ''),
+                'coverage_status': str(row[4] or ''),
+                'validation_status': str(row[5] or ''),
+                'validation_evidence': str(row[6] or ''),
+                'updated_by': str(row[7] or ''),
+                'updated_at': str(row[8] or ''),
+            }
+            for row in rows
+        ]
+        return {'actor_id': actor_id, 'count': len(items), 'items': items}
+
+    @router.get(route_paths.ACTOR_EXPORT_COVERAGE_CSV)
+    def export_coverage_csv(actor_id: str) -> Response:
+        payload = export_coverage_json(actor_id)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(['actor_id', 'technique_id', 'technique_name', 'detection_name', 'control_name', 'coverage_status', 'validation_status', 'validation_evidence', 'updated_by', 'updated_at'])
+        for item in payload.get('items', []):
+            if not isinstance(item, dict):
+                continue
+            writer.writerow(
+                [
+                    actor_id,
+                    item.get('technique_id', ''),
+                    item.get('technique_name', ''),
+                    item.get('detection_name', ''),
+                    item.get('control_name', ''),
+                    item.get('coverage_status', ''),
+                    item.get('validation_status', ''),
+                    item.get('validation_evidence', ''),
+                    item.get('updated_by', ''),
+                    item.get('updated_at', ''),
+                ]
+            )
+        return Response(
+            content=buffer.getvalue(),
+            media_type='text/csv',
+            headers={'Content-Disposition': f'attachment; filename="{actor_id}-coverage.csv"'},
         )
 
     @router.get(route_paths.ACTOR_EXPORT_ANALYST_PACK_PDF)
@@ -1589,6 +3078,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 'confidence',
                 'source_reliability',
                 'information_credibility',
+                'claim_type',
+                'citation_url',
+                'observed_on',
                 'updated_by',
                 'updated_at',
                 'source_name',
@@ -1608,6 +3100,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     item.get('confidence', ''),
                     item.get('source_reliability', ''),
                     item.get('information_credibility', ''),
+                    item.get('claim_type', 'assessment'),
+                    item.get('citation_url', ''),
+                    item.get('observed_on', ''),
                     item.get('updated_by', ''),
                     item.get('updated_at', ''),
                     item.get('source_name', ''),
@@ -1640,14 +3135,38 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
         information_credibility = str(payload.get('information_credibility') or '').strip()[:1]
         if information_credibility and information_credibility not in {'1', '2', '3', '4', '5', '6'}:
             information_credibility = ''
+        claim_type = str(payload.get('claim_type') or 'assessment').strip().lower()
+        if claim_type not in {'evidence', 'assessment'}:
+            claim_type = 'assessment'
+        citation_url = str(payload.get('citation_url') or '').strip()[:500]
+        observed_on = str(payload.get('observed_on') or '').strip()[:10]
+        observed_on_normalized = ''
+        if observed_on:
+            try:
+                observed_on_normalized = datetime.fromisoformat(observed_on).date().isoformat()
+            except Exception:
+                observed_on_normalized = ''
         updated_by = str(payload.get('updated_by') or '').strip()[:120]
         updated_at = _utc_now_iso()
+        contract_errors: list[str] = []
+        if not updated_by:
+            contract_errors.append('analyst is required')
+        if claim_type == 'evidence':
+            if not citation_url:
+                contract_errors.append('citation_url is required for evidence-backed claims')
+            if not observed_on_normalized:
+                contract_errors.append('observed_on (YYYY-MM-DD) is required for evidence-backed claims')
+        if contract_errors:
+            raise HTTPException(status_code=400, detail='; '.join(contract_errors))
         quality_guidance = observation_service.observation_quality_guidance_core(
             note=note,
             source_ref=source_ref,
             confidence=confidence,
             source_reliability=source_reliability,
             information_credibility=information_credibility,
+            claim_type=claim_type,
+            citation_url=citation_url,
+            observed_on=observed_on_normalized,
         )
 
         safe_item_type = item_type.strip().lower()[:40]
@@ -1668,6 +3187,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 confidence=confidence,
                 source_reliability=source_reliability,
                 information_credibility=information_credibility,
+                claim_type=claim_type,
+                citation_url=citation_url,
+                observed_on=observed_on_normalized,
                 updated_by=updated_by,
                 updated_at=updated_at,
             )
@@ -1682,6 +3204,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             'confidence': confidence,
             'source_reliability': source_reliability,
             'information_credibility': information_credibility,
+            'claim_type': claim_type,
+            'citation_url': citation_url,
+            'observed_on': observed_on_normalized,
             'updated_by': updated_by,
             'updated_at': updated_at,
             'quality_guidance': quality_guidance,
@@ -1719,6 +3244,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                     confidence='moderate',
                     source_reliability='',
                     information_credibility='',
+                    claim_type='assessment',
+                    citation_url='',
+                    observed_on='',
                     updated_by='auto',
                     updated_at=updated_at,
                 )
@@ -1751,6 +3279,9 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                         confidence='moderate',
                         source_reliability='',
                         information_credibility='',
+                        claim_type='assessment',
+                        citation_url='',
+                        observed_on='',
                         updated_by='auto',
                         updated_at=updated_at,
                     )
@@ -1775,7 +3306,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
             rows = connection.execute(
                 '''
                 SELECT note, source_ref, confidence, source_reliability,
-                       information_credibility, updated_by, updated_at
+                       information_credibility, claim_type, citation_url, observed_on, updated_by, updated_at
                 FROM analyst_observation_history
                 WHERE actor_id = ? AND item_type = ? AND item_key = ?
                 ORDER BY updated_at DESC
@@ -1787,7 +3318,7 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 latest_row = connection.execute(
                     '''
                     SELECT note, source_ref, confidence, source_reliability,
-                           information_credibility, updated_by, updated_at
+                           information_credibility, claim_type, citation_url, observed_on, updated_by, updated_at
                     FROM analyst_observations
                     WHERE actor_id = ? AND item_type = ? AND item_key = ?
                     ''',
@@ -1803,8 +3334,11 @@ def create_notebook_router(*, deps: dict[str, object]) -> APIRouter:
                 'confidence': str(row[2] or 'moderate'),
                 'source_reliability': str(row[3] or ''),
                 'information_credibility': str(row[4] or ''),
-                'updated_by': str(row[5] or ''),
-                'updated_at': str(row[6] or ''),
+                'claim_type': str(row[5] or 'assessment'),
+                'citation_url': str(row[6] or ''),
+                'observed_on': str(row[7] or ''),
+                'updated_by': str(row[8] or ''),
+                'updated_at': str(row[9] or ''),
             }
             for row in rows
         ]

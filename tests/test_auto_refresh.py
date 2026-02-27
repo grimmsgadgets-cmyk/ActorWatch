@@ -48,7 +48,7 @@ def test_run_tracked_actor_auto_refresh_once_queues_only_stale(monkeypatch, tmp_
 
     queued: list[str] = []
     monkeypatch.setattr(app_module, 'DB_PATH', db_path)
-    monkeypatch.setattr(app_module, 'enqueue_actor_generation', lambda actor_id: queued.append(actor_id))
+    monkeypatch.setattr(app_module, 'enqueue_actor_generation', lambda actor_id, **_kwargs: queued.append(actor_id))
     monkeypatch.setattr(app_module, 'AUTO_REFRESH_MIN_INTERVAL_HOURS', 24)
 
     queued_count = app_module._run_tracked_actor_auto_refresh_once(limit=3)

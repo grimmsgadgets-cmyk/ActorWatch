@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta, timezone
+import logging
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse
+
+LOGGER = logging.getLogger(__name__)
 
 
 def render_dashboard_root(
@@ -17,6 +20,7 @@ def render_dashboard_root(
 ) -> HTMLResponse:
     _list_actor_profiles = deps['list_actor_profiles']
     _fetch_actor_notebook = deps['fetch_actor_notebook']
+    _submit_actor_refresh_job = deps.get('submit_actor_refresh_job')
     _get_ollama_status = deps['get_ollama_status']
     _get_actor_refresh_stats = deps.get('get_actor_refresh_stats')
     _page_refresh_auto_trigger_minutes = int(deps.get('page_refresh_auto_trigger_minutes', 30))
@@ -43,6 +47,7 @@ def render_dashboard_root(
             return raw_value[:10]
 
     actors_all = _list_actor_profiles()
+    actors_by_id = {str(actor.get('id') or ''): actor for actor in actors_all}
     duplicate_actor_groups: list[dict[str, object]] = []
     groups_by_canonical: dict[str, list[dict[str, object]]] = {}
     for actor in actors_all:
@@ -109,18 +114,146 @@ def render_dashboard_root(
         normalized_min_confidence_weight = 3
         normalized_source_days = 90
 
+    def _running_notebook_placeholder(actor: dict[str, object]) -> dict[str, object]:
+        actor_id_value = str(actor.get('id') or '')
+        actor_message = str(actor.get('notebook_message') or '').strip()
+        actor_status = str(actor.get('notebook_status') or 'running')
+        return {
+            'actor': {
+                'id': actor_id_value,
+                'display_name': str(actor.get('display_name') or actor_id_value),
+                'is_tracked': bool(actor.get('is_tracked')),
+                'notebook_status': actor_status,
+                'notebook_message': actor_message or 'Refreshing notebook...',
+                'notebook_updated_at': str(actor.get('notebook_updated_at') or actor.get('created_at') or ''),
+                'last_refresh_duration_ms': actor.get('last_refresh_duration_ms'),
+                'last_refresh_sources_processed': actor.get('last_refresh_sources_processed'),
+            },
+            'counts': {'sources': 0},
+            'kpis': {
+                'activity_30d': 'n/a',
+                'new_techniques_30d': 'n/a',
+                'last_verified_update': 'n/a',
+            },
+            'recent_change_summary': {'new_reports': '0', 'targets': 'Pending refresh', 'damage': 'Pending refresh'},
+            'timeline_graph': [],
+            'priority_questions': [],
+            'top_change_signals': [],
+            'recent_activity_highlights': [],
+            'recent_activity_synthesis': [],
+            'top_techniques': [],
+            'emerging_techniques': [],
+            'ioc_items': [],
+            'sources': [],
+            'requirements': [],
+            'requirements_context': {
+                'priority_mode': 'Operational',
+                'org_context': '',
+            },
+            'source_quality_filters': {
+                'source_tier': normalized_source_tier or '',
+                'min_confidence_weight': normalized_min_confidence_weight if normalized_min_confidence_weight is not None else '',
+                'source_days': normalized_source_days if normalized_source_days is not None else '',
+                'applied_sources': 0,
+                'total_sources': 0,
+                'filtered_out_sources': 0,
+            },
+            'actor_profile_summary': '',
+            'actor_profile_group_name': 'Unknown',
+            'actor_profile_source_url': '#',
+            'actor_profile_source_label': 'Unknown',
+            'actor_created_date': '',
+            'timeline_compact_rows': [],
+            'timeline_window_label': '',
+        }
+
+    def _idle_notebook_placeholder(actor: dict[str, object], message: str) -> dict[str, object]:
+        actor_id_value = str(actor.get('id') or '')
+        actor_status = str(actor.get('notebook_status') or 'idle')
+        return {
+            'actor': {
+                'id': actor_id_value,
+                'display_name': str(actor.get('display_name') or actor_id_value),
+                'is_tracked': bool(actor.get('is_tracked')),
+                'notebook_status': actor_status,
+                'notebook_message': message,
+                'notebook_updated_at': str(actor.get('notebook_updated_at') or actor.get('created_at') or ''),
+                'last_refresh_duration_ms': actor.get('last_refresh_duration_ms'),
+                'last_refresh_sources_processed': actor.get('last_refresh_sources_processed'),
+            },
+            'counts': {'sources': 0},
+            'kpis': {
+                'activity_30d': 'n/a',
+                'new_techniques_30d': 'n/a',
+                'last_verified_update': 'n/a',
+            },
+            'recent_change_summary': {'new_reports': '0', 'targets': 'Preparing notebook', 'damage': 'Preparing notebook'},
+            'timeline_graph': [],
+            'priority_questions': [],
+            'top_change_signals': [],
+            'recent_activity_highlights': [],
+            'recent_activity_synthesis': [],
+            'top_techniques': [],
+            'emerging_techniques': [],
+            'ioc_items': [],
+            'sources': [],
+            'requirements': [],
+            'requirements_context': {
+                'priority_mode': 'Operational',
+                'org_context': '',
+            },
+            'source_quality_filters': {
+                'source_tier': normalized_source_tier or '',
+                'min_confidence_weight': normalized_min_confidence_weight if normalized_min_confidence_weight is not None else '',
+                'source_days': normalized_source_days if normalized_source_days is not None else '',
+                'applied_sources': 0,
+                'total_sources': 0,
+                'filtered_out_sources': 0,
+            },
+            'actor_profile_summary': '',
+            'actor_profile_group_name': 'Unknown',
+            'actor_profile_source_url': '#',
+            'actor_profile_source_label': 'Unknown',
+            'actor_created_date': '',
+            'timeline_compact_rows': [],
+            'timeline_window_label': '',
+        }
+
     if selected_actor_id is not None:
+        selected_actor_summary = actors_by_id.get(str(selected_actor_id), {})
+        selected_actor_status = str(selected_actor_summary.get('notebook_status') or '').strip().lower()
+        if selected_actor_status == 'running':
+            notebook = _running_notebook_placeholder(selected_actor_summary)
+            if not notice:
+                notice = str(selected_actor_summary.get('notebook_message') or '').strip() or 'Notebook refresh is running.'
         try:
-            notebook = _fetch_actor_notebook(
-                selected_actor_id,
-                source_tier=normalized_source_tier,
-                min_confidence_weight=normalized_min_confidence_weight,
-                source_days=normalized_source_days,
-            )
+            if notebook is None:
+                notebook = _fetch_actor_notebook(
+                    selected_actor_id,
+                    source_tier=normalized_source_tier,
+                    min_confidence_weight=normalized_min_confidence_weight,
+                    source_days=normalized_source_days,
+                    build_on_cache_miss=False,
+                )
+            if isinstance(notebook, dict) and bool(notebook.get('cache_miss')):
+                if callable(_submit_actor_refresh_job):
+                    try:
+                        _submit_actor_refresh_job(selected_actor_id, trigger_type='page_load')
+                    except Exception:
+                        pass
+                notebook = _idle_notebook_placeholder(
+                    selected_actor_summary,
+                    'Preparing notebook snapshot in the background. Refresh will appear automatically.',
+                )
+                if not notice:
+                    notice = 'Preparing notebook snapshot in the background.'
             actor_meta = notebook.get('actor', {}) if isinstance(notebook, dict) else {}
             is_tracked = bool(actor_meta.get('is_tracked'))
             status = str(actor_meta.get('notebook_status') or '')
             source_count = int(notebook.get('counts', {}).get('sources', 0)) if isinstance(notebook, dict) else 0
+            if bool(notebook.get('snapshot_stale')):
+                if not notice:
+                    notice = 'Showing the last completed snapshot while new synthesis runs in the background.'
             needs_bootstrap = source_count == 0
             if is_tracked and needs_bootstrap and status != 'running':
                 if not notice:
@@ -164,7 +297,9 @@ def render_dashboard_root(
                     refresh_stats = _get_actor_refresh_stats(selected_actor_id)
                 except Exception:
                     refresh_stats = None
-        except Exception:
+        except Exception as exc:
+            if 'database is locked' in str(exc).lower():
+                LOGGER.warning('dashboard_fetch_locked actor_id=%s', selected_actor_id)
             notebook = None
             if not notice:
                 notice = 'Unable to load notebook for selected actor.'
@@ -244,7 +379,7 @@ def create_dashboard_router(*, deps: dict[str, object]) -> APIRouter:
         source_tier: str | None = None,
         min_confidence_weight: str | None = None,
         source_days: str | None = None,
-    ) -> HTMLResponse:
+    ):
         return render_dashboard_root(
             request=request,
             background_tasks=background_tasks,

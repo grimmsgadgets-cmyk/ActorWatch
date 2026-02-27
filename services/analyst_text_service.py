@@ -1,8 +1,11 @@
 import json
+import logging
 from datetime import datetime, timezone
 
 from services.llm_schema_service import normalize_string_list, parse_ollama_json_object
 from services.prompt_templates import with_template_header
+
+LOGGER = logging.getLogger(__name__)
 
 
 def sentence_mentions_actor_core(sentence: str, actor_name: str, *, deps: dict[str, object]) -> bool:
@@ -105,6 +108,11 @@ def ollama_generate_questions_core(
 
     model = _get_env('OLLAMA_MODEL', 'llama3.1:8b')
     base_url = _get_env('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
+    timeout_seconds = max(8.0, float(_get_env('REVIEW_CHANGE_OLLAMA_TIMEOUT_SECONDS', '25')))
+    retry_timeout_seconds = max(
+        timeout_seconds,
+        float(_get_env('REVIEW_CHANGE_OLLAMA_RETRY_TIMEOUT_SECONDS', '35')),
+    )
     prompt = with_template_header(
         'You are helping a cybersecurity analyst write practical intelligence questions. '
         'Return ONLY valid JSON with key "questions" as an array of short plain-language strings. '
@@ -153,6 +161,12 @@ def ollama_review_change_signals_core(
         return []
 
     now = datetime.now(timezone.utc)
+    max_recent_30 = max(4, min(10, int(_get_env('REVIEW_CHANGE_RECENT_30_MAX', '6'))))
+    max_recent_60 = max(6, min(12, int(_get_env('REVIEW_CHANGE_RECENT_60_MAX', '8'))))
+    max_recent_90 = max(8, min(14, int(_get_env('REVIEW_CHANGE_RECENT_90_MAX', '10'))))
+    max_baseline = max(6, min(14, int(_get_env('REVIEW_CHANGE_BASELINE_MAX', '10'))))
+    max_candidate = max(6, min(12, int(_get_env('REVIEW_CHANGE_CANDIDATE_MAX', '8'))))
+    summary_max_len = max(160, min(420, int(_get_env('REVIEW_CHANGE_SUMMARY_MAX_CHARS', '220'))))
 
     def _source_dt(item: dict[str, object]):
         raw = str(item.get('published_at') or item.get('retrieved_at') or '').strip()
@@ -188,17 +202,17 @@ def ollama_review_change_signals_core(
             ).strip(),
             'source': str(source.get('site_name') or source.get('publisher') or source.get('source_name') or '').strip(),
             'url': str(source.get('url') or '').strip(),
-            'summary': str(source.get('pasted_text') or '').strip()[:420],
+            'summary': str(source.get('pasted_text') or '').strip()[:summary_max_len],
         }
-        if age_days <= 30 and len(recent_30) < 10:
+        if age_days <= 30 and len(recent_30) < max_recent_30:
             recent_30.append(normalized)
-        if age_days <= 60 and len(recent_60) < 12:
+        if age_days <= 60 and len(recent_60) < max_recent_60:
             recent_60.append(normalized)
-        if age_days <= 90 and len(recent_90) < 14:
+        if age_days <= 90 and len(recent_90) < max_recent_90:
             recent_90.append(normalized)
-        if 30 < age_days <= 90 and len(rolling_baseline_31_90) < 14:
+        if 30 < age_days <= 90 and len(rolling_baseline_31_90) < max_baseline:
             rolling_baseline_31_90.append(normalized)
-        if 90 < age_days <= 180 and len(baseline_older) < 14:
+        if 90 < age_days <= 180 and len(baseline_older) < max_baseline:
             baseline_older.append(normalized)
 
     candidate_signals: list[dict[str, object]] = []
@@ -219,7 +233,7 @@ def ollama_review_change_signals_core(
                 'text': str(item.get('text') or '').strip(),
             }
         )
-        if len(candidate_signals) >= 12:
+        if len(candidate_signals) >= max_candidate:
             break
 
     if not recent_90:
@@ -229,6 +243,11 @@ def ollama_review_change_signals_core(
 
     model = _get_env('OLLAMA_MODEL', 'llama3.1:8b')
     base_url = _get_env('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
+    timeout_seconds = max(12.0, float(_get_env('REVIEW_CHANGE_OLLAMA_TIMEOUT_SECONDS', '40')))
+    retry_timeout_seconds = max(
+        timeout_seconds,
+        float(_get_env('REVIEW_CHANGE_OLLAMA_RETRY_TIMEOUT_SECONDS', '60')),
+    )
 
     prompt = with_template_header(
         'You are a CTI analyst assistant. Identify ONLY genuinely new changes for this actor. '
@@ -254,14 +273,60 @@ def ollama_review_change_signals_core(
         'prompt': prompt,
         'stream': False,
         'format': 'json',
+        'options': {
+            'temperature': 0.1,
+            'num_predict': 600,
+        },
     }
 
+    parsed = None
     try:
-        response = _http_post(f'{base_url}/api/generate', json=payload, timeout=25.0)
+        response = _http_post(f'{base_url}/api/generate', json=payload, timeout=timeout_seconds)
         response.raise_for_status()
         parsed = parse_ollama_json_object(response.json())
-    except Exception:
-        return []
+    except Exception as exc:
+        LOGGER.warning(
+            'ollama_change_signal_review_failed attempt=1 timeout=%.1fs actor=%s error=%s',
+            timeout_seconds,
+            actor_name,
+            exc,
+        )
+    if not isinstance(parsed, dict):
+        retry_prompt = with_template_header(
+            'You are a CTI analyst assistant. Identify ONLY genuinely new changes for this actor. '
+            'Return ONLY JSON with schema: '
+            '{"changes":[{"summary":"...","why_new":"...","window_days":30|60|90,'
+            '"category":"...","ttp_ids":["..."],"target":"...","confidence":"high|medium|low",'
+            '"evidence":[{"source_url":"...","source_label":"...","source_date":"...","proof":"..."}]}]}. '
+            f'Actor: {actor_name}. '
+            f'Recent_30: {json.dumps(recent_30[:6])}. '
+            f'Recent_60: {json.dumps(recent_60[:8])}. '
+            f'Recent_90: {json.dumps(recent_90[:10])}. '
+            f'Older_baseline_91_180_days_or_rolling_31_90: {json.dumps(baseline_older[:8])}. '
+            f'Candidate_signals: {json.dumps(candidate_signals[:8])}.'
+        )
+        retry_payload = {
+            'model': model,
+            'prompt': retry_prompt,
+            'stream': False,
+            'format': 'json',
+            'options': {
+                'temperature': 0.1,
+                'num_predict': 500,
+            },
+        }
+        try:
+            response = _http_post(f'{base_url}/api/generate', json=retry_payload, timeout=retry_timeout_seconds)
+            response.raise_for_status()
+            parsed = parse_ollama_json_object(response.json())
+        except Exception as exc:
+            LOGGER.warning(
+                'ollama_change_signal_review_failed attempt=2 timeout=%.1fs actor=%s error=%s',
+                retry_timeout_seconds,
+                actor_name,
+                exc,
+            )
+            return []
 
     if not isinstance(parsed, dict):
         return []
@@ -389,7 +454,12 @@ def ollama_synthesize_recent_activity_core(
     )
     model = _get_env('OLLAMA_MODEL', 'llama3.1:8b')
     base_url = _get_env('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
-    timeout_seconds = max(3.0, float(_get_env('RECENT_ACTIVITY_OLLAMA_TIMEOUT_SECONDS', '8')))
+    timeout_seconds = max(8.0, float(_get_env('RECENT_ACTIVITY_OLLAMA_TIMEOUT_SECONDS', '15')))
+    retry_timeout_seconds = max(
+        timeout_seconds,
+        float(_get_env('RECENT_ACTIVITY_OLLAMA_RETRY_TIMEOUT_SECONDS', '30')),
+    )
+    retry_highlight_count = max(3, min(8, int(_get_env('RECENT_ACTIVITY_OLLAMA_RETRY_HIGHLIGHTS', '6'))))
     prompt = with_template_header(
         'You are a CTI analyst writing concise dashboard synthesis for a defender. '
         'Return ONLY JSON with schema: '
@@ -403,39 +473,98 @@ def ollama_synthesize_recent_activity_core(
         'prompt': prompt,
         'stream': False,
         'format': 'json',
+        'options': {
+            'temperature': 0.1,
+            'num_predict': 220,
+        },
     }
 
-    try:
-        response = _http_post(f'{base_url}/api/generate', json=payload, timeout=timeout_seconds)
-        response.raise_for_status()
-        parsed = parse_ollama_json_object(response.json())
-    except Exception:
-        return []
+    def _parse_response_payload(raw_payload: object) -> list[dict[str, str]]:
+        parsed = parse_ollama_json_object(raw_payload)
+        raw_items = parsed.get('items') if isinstance(parsed, dict) else None
+        if not isinstance(raw_items, list):
+            return []
+        allowed_labels = {'What changed', 'Who is affected', 'What to do next'}
+        by_label: dict[str, dict[str, str]] = {}
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            label = ' '.join(str(raw.get('label') or '').split()).strip()
+            text = ' '.join(str(raw.get('text') or '').split()).strip()[:260]
+            confidence = ' '.join(str(raw.get('confidence') or 'Medium').split()).strip().title()
+            if label not in allowed_labels or not text:
+                continue
+            if confidence not in {'High', 'Medium', 'Low'}:
+                confidence = 'Medium'
+            if label in by_label:
+                continue
+            by_label[label] = {
+                'label': label,
+                'text': text,
+                'confidence': confidence,
+                'lineage': f'{lineage_count} sources',
+            }
+        ordered = [by_label.get(name) for name in ('What changed', 'Who is affected', 'What to do next')]
+        return [item for item in ordered if isinstance(item, dict)]
 
-    raw_items = parsed.get('items') if isinstance(parsed, dict) else None
-    if not isinstance(raw_items, list):
-        return []
+    def _try_generate(payload_to_send: dict[str, object], *, timeout_value: float, attempt: int) -> list[dict[str, str]]:
+        try:
+            response = _http_post(f'{base_url}/api/generate', json=payload_to_send, timeout=timeout_value)
+            response.raise_for_status()
+            return _parse_response_payload(response.json())
+        except Exception as exc:
+            LOGGER.warning(
+                'ollama_recent_activity_synthesis_failed attempt=%s timeout=%.1fs actor=%s error=%s',
+                attempt,
+                timeout_value,
+                actor_name,
+                exc,
+            )
+            return []
 
-    allowed_labels = {'What changed', 'Who is affected', 'What to do next'}
-    by_label: dict[str, dict[str, str]] = {}
-    for raw in raw_items:
-        if not isinstance(raw, dict):
-            continue
-        label = ' '.join(str(raw.get('label') or '').split()).strip()
-        text = ' '.join(str(raw.get('text') or '').split()).strip()[:260]
-        confidence = ' '.join(str(raw.get('confidence') or 'Medium').split()).strip().title()
-        if label not in allowed_labels or not text:
-            continue
-        if confidence not in {'High', 'Medium', 'Low'}:
-            confidence = 'Medium'
-        if label in by_label:
-            continue
-        by_label[label] = {
-            'label': label,
-            'text': text,
-            'confidence': confidence,
-            'lineage': f'{lineage_count} sources',
-        }
+    rows = _try_generate(payload, timeout_value=timeout_seconds, attempt=1)
+    if rows:
+        return rows
 
-    ordered = [by_label.get(name) for name in ('What changed', 'Who is affected', 'What to do next')]
-    return [item for item in ordered if isinstance(item, dict)]
+    compact_highlights: list[dict[str, str]] = []
+    for item in prepared[:retry_highlight_count]:
+        compact_highlights.append(
+            {
+                'date': str(item.get('date') or ''),
+                'category': str(item.get('category') or ''),
+                'target': str(item.get('target') or ''),
+                'ttp_ids': str(item.get('ttp_ids') or ''),
+                'source': str(item.get('source') or ''),
+                'url': str(item.get('url') or ''),
+                'text': ' '.join(str(item.get('text') or '').split())[:180],
+            }
+        )
+    compact_prompt = with_template_header(
+        'You are a CTI analyst writing concise dashboard synthesis for a defender. '
+        'Return ONLY JSON with schema: '
+        '{"items":[{"label":"What changed|Who is affected|What to do next","text":"...","confidence":"High|Medium|Low"}]}. '
+        'Rules: use only provided highlights, be concrete, avoid source titles as the main sentence, '
+        'avoid generic filler, and keep each text <= 220 characters. '
+        f'Actor: {actor_name}. Highlights: {json.dumps(compact_highlights)}.'
+    )
+    retry_payload = {
+        'model': model,
+        'prompt': compact_prompt,
+        'stream': False,
+        'format': 'json',
+        'options': {
+            'temperature': 0.1,
+            'num_predict': 180,
+        },
+    }
+    rows = _try_generate(retry_payload, timeout_value=retry_timeout_seconds, attempt=2)
+    if rows:
+        return rows
+
+    LOGGER.warning(
+        'ollama_recent_activity_synthesis_exhausted actor=%s timeout_primary=%.1fs timeout_retry=%.1fs',
+        actor_name,
+        timeout_seconds,
+        retry_timeout_seconds,
+    )
+    return []

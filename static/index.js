@@ -55,10 +55,16 @@
         const reportNode = document.getElementById("recent-reports");
         const targetsNode = document.getElementById("recent-targets");
         const impactNode = document.getElementById("recent-impact");
-        const envQueryDialect = document.getElementById("env-query-dialect");
-        const envTimeWindow = document.getElementById("env-time-window");
-        const envProfileSave = document.getElementById("env-profile-save");
-        const envProfileStatus = document.getElementById("env-profile-status");
+        const refreshTimelineList = document.getElementById("refresh-timeline-list");
+        const refreshTimelineStatus = document.getElementById("refresh-timeline-status");
+        const refreshTimelineUpdated = document.getElementById("refresh-timeline-updated");
+        const refreshEtaValue = document.getElementById("refresh-eta-value");
+        const refreshCacheSaved = document.getElementById("refresh-cache-saved");
+        const refreshQueueDepth = document.getElementById("refresh-queue-depth");
+        const refreshActorForm = document.getElementById("refresh-actor-form");
+        const refreshActorButton = document.getElementById("refresh-actor-button");
+        const terminalGenerateNotesButton = document.getElementById("terminal-generate-notes");
+        const terminalAddNoteButton = document.getElementById("terminal-add-note");
         const questionFeedbackButtons = Array.from(document.querySelectorAll(".question-feedback-btn"));
         const quickCheckDoNext = document.getElementById("quick-check-do-next");
         const quickCheckRows = Array.from(document.querySelectorAll("details[data-quick-check='1']"));
@@ -69,10 +75,33 @@
         const uiActivityText = document.getElementById("ui-activity-text");
         const uiToastStack = document.getElementById("ui-toast-stack");
         const sectionNextChecks = document.getElementById("section-nextchecks");
-        const sectionLearning = document.getElementById("section-learning");
         const sectionHistory = document.getElementById("section-history-left");
+        const workflowTourOpen = document.getElementById("workflow-tour-open");
+        const workflowTourModal = document.getElementById("workflow-tour-modal");
+        const workflowTourClose = document.getElementById("workflow-tour-close");
+        const workflowTourDismiss = document.getElementById("workflow-tour-dismiss");
+        const mainTabButtons = Array.from(document.querySelectorAll("[data-main-tab]"));
+        const mainPanels = Array.from(document.querySelectorAll("[data-main-panel]"));
+        const notesTabButtons = Array.from(document.querySelectorAll("[data-notes-tab]"));
+        const notesPanels = Array.from(document.querySelectorAll("[data-notes-panel]"));
+        const advTabButtons = Array.from(document.querySelectorAll("[data-adv-tab]"));
+        const advPanels = Array.from(document.querySelectorAll("[data-adv-panel]"));
+        const quickNoteModal = document.getElementById("quick-note-modal");
+        const quickNoteClose = document.getElementById("quick-note-close");
+        const quickNoteCancel = document.getElementById("quick-note-cancel");
+        const quickNoteForm = document.getElementById("quick-note-form");
+        const quickNoteAnalyst = document.getElementById("quick-note-analyst");
+        const quickNoteConfidence = document.getElementById("quick-note-confidence");
+        const quickNoteClaimType = document.getElementById("quick-note-claim-type");
+        const quickNoteEvidenceFields = document.getElementById("quick-note-evidence-fields");
+        const quickNoteCitationUrl = document.getElementById("quick-note-citation-url");
+        const quickNoteObservedOn = document.getElementById("quick-note-observed-on");
+        const quickNoteText = document.getElementById("quick-note-text");
+        const quickNoteStatus = document.getElementById("quick-note-status");
+        const quickNoteAnalystKey = "tracker:quickNoteAnalyst";
         let activeUiOps = 0;
         let activityClearTimer = 0;
+        const workflowTourHideKey = "tracker:workflowTourHide";
 
         function showToast(type, message) {
           if (!uiToastStack || !message) return;
@@ -167,9 +196,21 @@
               chipClass = "status-idle";
               message = String(data.notebook_message || "Notebook is idle.");
             }
-            notebookHealthChip.className = "notice status-chip " + chipClass;
+            notebookHealthChip.className = "notice status-chip status-button " + chipClass;
             notebookHealthMessage.textContent = message;
             if (notebookHealthProgress) notebookHealthProgress.style.display = state === "running" ? "" : "none";
+            if (refreshTimelineStatus) {
+              if (state === "running") {
+                refreshTimelineStatus.className = "refresh-activity-live running";
+                refreshTimelineStatus.textContent = "Refresh is running now";
+              } else if (state === "error") {
+                refreshTimelineStatus.className = "refresh-activity-live error";
+                refreshTimelineStatus.textContent = "Last refresh needs attention";
+              } else {
+                refreshTimelineStatus.className = "refresh-activity-live ready";
+                refreshTimelineStatus.textContent = "Live updates active";
+              }
+            }
           }
           const recent = data.recent_change_summary || {};
           if (reportNode && recent.new_reports !== undefined) reportNode.textContent = String(recent.new_reports);
@@ -186,8 +227,278 @@
           }
         }
 
+        function setWorkflowTourOpen(open) {
+          if (!workflowTourModal) return;
+          if (open) {
+            workflowTourModal.classList.add("open");
+            workflowTourModal.setAttribute("aria-hidden", "false");
+          } else {
+            workflowTourModal.classList.remove("open");
+            workflowTourModal.setAttribute("aria-hidden", "true");
+          }
+        }
+
+        function setQuickNoteOpen(open) {
+          if (!quickNoteModal) return;
+          if (open) {
+            quickNoteModal.classList.add("open");
+            quickNoteModal.setAttribute("aria-hidden", "false");
+            if (quickNoteStatus) quickNoteStatus.textContent = "";
+            if (quickNoteAnalyst && !quickNoteAnalyst.value) {
+              quickNoteAnalyst.value = String(localStorage.getItem(quickNoteAnalystKey) || "");
+            }
+            updateQuickNoteMode();
+            if (quickNoteText) quickNoteText.focus();
+          } else {
+            quickNoteModal.classList.remove("open");
+            quickNoteModal.setAttribute("aria-hidden", "true");
+          }
+        }
+
+        function updateQuickNoteMode() {
+          const claimType = String((quickNoteClaimType && quickNoteClaimType.value) || "assessment").toLowerCase();
+          const evidenceMode = claimType === "evidence";
+          if (quickNoteEvidenceFields) quickNoteEvidenceFields.hidden = !evidenceMode;
+        }
+
+        function setMainTab(tabKey) {
+          const key = String(tabKey || "who").toLowerCase();
+          mainTabButtons.forEach((button) => {
+            const active = String(button.getAttribute("data-main-tab") || "").toLowerCase() === key;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-selected", active ? "true" : "false");
+          });
+          mainPanels.forEach((panel) => {
+            const visible = String(panel.getAttribute("data-main-panel") || "").toLowerCase() === key;
+            panel.classList.toggle("tab-panel-hidden", !visible);
+          });
+          try {
+            localStorage.setItem("tracker:mainTab", key);
+          } catch (_error) {
+            // Ignore storage failures.
+          }
+        }
+
+        function setAdvancedTab(tabKey) {
+          const key = String(tabKey || "history").toLowerCase();
+          advTabButtons.forEach((button) => {
+            const active = String(button.getAttribute("data-adv-tab") || "").toLowerCase() === key;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-selected", active ? "true" : "false");
+          });
+          advPanels.forEach((panel) => {
+            const visible = String(panel.getAttribute("data-adv-panel") || "").toLowerCase() === key;
+            panel.classList.toggle("tab-panel-hidden", !visible);
+          });
+          try {
+            localStorage.setItem("tracker:advancedTab", key);
+          } catch (_error) {
+            // Ignore storage failures.
+          }
+        }
+
+        function setNotesTab(tabKey) {
+          const key = String(tabKey || "capture").toLowerCase();
+          notesTabButtons.forEach((button) => {
+            const active = String(button.getAttribute("data-notes-tab") || "").toLowerCase() === key;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-selected", active ? "true" : "false");
+          });
+          notesPanels.forEach((panel) => {
+            const visible = String(panel.getAttribute("data-notes-panel") || "").toLowerCase() === key;
+            panel.classList.toggle("tab-panel-hidden", !visible);
+          });
+          try {
+            localStorage.setItem("tracker:notesTab", key);
+          } catch (_error) {
+            // Ignore storage failures.
+          }
+        }
+
+        function isoToLocalText(rawValue) {
+          const raw = String(rawValue || "").trim();
+          if (!raw) return "Unknown time";
+          const value = raw.endsWith("Z") ? raw : raw + "Z";
+          const dt = new Date(value);
+          if (Number.isNaN(dt.getTime())) return raw.replace("T", " ").slice(0, 19) || "Unknown time";
+          return dt.toLocaleString([], { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+        }
+
+        function durationText(durationMs) {
+          const ms = Number(durationMs || 0);
+          if (!Number.isFinite(ms) || ms <= 0) return "";
+          const secs = Math.round(ms / 100) / 10;
+          return secs >= 60 ? (Math.round(secs / 6) / 10) + "m" : secs + "s";
+        }
+
+        function secondsText(secondsValue) {
+          const seconds = Number(secondsValue);
+          if (!Number.isFinite(seconds) || seconds < 0) return "n/a";
+          if (seconds < 60) return "~" + Math.round(seconds) + "s";
+          return "~" + (Math.round(seconds / 6) / 10) + "m";
+        }
+
+        function triggerText(triggerType) {
+          return String(triggerType || "").toLowerCase() === "auto_refresh" ? "Automatic background refresh" : "Manual refresh";
+        }
+
+        function runStateText(status) {
+          const value = String(status || "").toLowerCase();
+          if (value === "completed") return "Finished";
+          if (value === "error") return "Needs attention";
+          return "In progress";
+        }
+
+        function phaseLabelText(phase) {
+          const key = String((phase && phase.phase_key) || "").toLowerCase();
+          if (key.includes("discover")) return "Checking sources";
+          if (key.includes("fetch") || key.includes("ingest") || key.includes("import")) return "Loading source updates";
+          if (key.includes("question")) return "Updating quick checks";
+          if (key.includes("timeline")) return "Updating timeline evidence";
+          if (key.includes("synth") || key.includes("summary")) return "Writing AI summary";
+          if (key.includes("review")) return "Reviewing new changes";
+          if (key.includes("notebook") || key.includes("build")) return "Building notebook view";
+          const fallback = String((phase && phase.phase_label) || key || "Refresh step").trim();
+          return fallback || "Refresh step";
+        }
+
+        function phaseStateText(status) {
+          const value = String(status || "").toLowerCase();
+          if (value === "completed") return "done";
+          if (value === "error") return "needs attention";
+          return "in progress";
+        }
+
+        function renderRefreshTimeline(runs) {
+          if (!refreshTimelineList) return;
+          const entries = Array.isArray(runs) ? runs : [];
+          refreshTimelineList.innerHTML = "";
+          if (!entries.length) {
+            const empty = document.createElement("div");
+            empty.className = "refresh-empty";
+            empty.textContent = "No recent refresh history yet for this actor.";
+            refreshTimelineList.appendChild(empty);
+            return;
+          }
+          entries.forEach((run) => {
+            const card = document.createElement("div");
+            const runStatus = String(run.status || "").toLowerCase();
+            card.className = "refresh-run-card";
+            if (runStatus === "running") card.classList.add("is-running");
+            if (runStatus === "error") card.classList.add("is-error");
+
+            const top = document.createElement("div");
+            top.className = "refresh-run-top";
+            const title = document.createElement("strong");
+            title.textContent = runStateText(runStatus);
+            const meta = document.createElement("span");
+            const duration = durationText(run.duration_ms);
+            meta.className = "refresh-run-meta";
+            meta.textContent = isoToLocalText(run.created_at) + " | " + triggerText(run.trigger_type) + (duration ? " | " + duration : "");
+            top.append(title, meta);
+            card.appendChild(top);
+
+            const message = document.createElement("div");
+            message.className = "refresh-run-message";
+            message.textContent = String(
+              run.error_message
+                || run.final_message
+                || (runStatus === "running" ? "Refresh is still running." : "Refresh completed.")
+            );
+            card.appendChild(message);
+
+            const phases = Array.isArray(run.phases) ? run.phases : [];
+            if (phases.length) {
+              const ul = document.createElement("ul");
+              ul.className = "refresh-phase-list";
+              phases.slice(0, 6).forEach((phase) => {
+                const li = document.createElement("li");
+                const label = document.createElement("strong");
+                label.textContent = phaseLabelText(phase) + ": ";
+                li.appendChild(label);
+                const phaseMessage = String(phase.message || "").trim();
+                li.appendChild(
+                  document.createTextNode(
+                    phaseStateText(phase.status) + (phaseMessage ? " - " + phaseMessage : "")
+                  )
+                );
+                ul.appendChild(li);
+              });
+              card.appendChild(ul);
+            }
+            refreshTimelineList.appendChild(card);
+          });
+        }
+
+        let refreshTimelinePollInFlight = false;
+        async function runRefreshTimelinePoll() {
+          if (!actorId || !refreshTimelineList || refreshTimelinePollInFlight) return;
+          refreshTimelinePollInFlight = true;
+          try {
+            const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/refresh/timeline", {
+              headers: { "Accept": "application/json" }
+            });
+            if (!response.ok) throw new Error("refresh timeline unavailable");
+            const payload = await response.json();
+            renderRefreshTimeline(payload.recent_generation_runs || []);
+            if (refreshEtaValue) refreshEtaValue.textContent = secondsText(payload.eta_seconds);
+            if (refreshCacheSaved) {
+              const savedMs = Number(((payload.llm_cache_state || {}).saved_ms_total) || 0);
+              refreshCacheSaved.textContent = savedMs > 0 ? ("~" + Math.round(savedMs / 1000) + "s") : "0s";
+            }
+            if (refreshQueueDepth) {
+              const queue = payload.queue_state || {};
+              const queued = Number(queue.generation_queued || 0);
+              const running = Number(queue.generation_running || 0);
+              refreshQueueDepth.textContent = String(queued + running) + " (" + String(running) + " running)";
+            }
+            if (refreshTimelineUpdated) refreshTimelineUpdated.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            if (refreshTimelineStatus) {
+              refreshTimelineStatus.className = "refresh-activity-live ready";
+              refreshTimelineStatus.textContent = "Live updates active";
+            }
+          } catch (_error) {
+            if (refreshTimelineStatus) {
+              refreshTimelineStatus.className = "refresh-activity-live error";
+              refreshTimelineStatus.textContent = "Live updates temporarily unavailable";
+            }
+          } finally {
+            refreshTimelinePollInFlight = false;
+          }
+        }
+
+        async function submitRefreshJob() {
+          if (!actorId) return;
+          setButtonLoading(refreshActorButton, true, "Starting...");
+          beginUiOp("Starting refresh...");
+          if (refreshTimelineStatus) {
+            refreshTimelineStatus.className = "refresh-activity-live running";
+            refreshTimelineStatus.textContent = "Refresh is being queued";
+          }
+          try {
+            const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/refresh/jobs", {
+              method: "POST",
+              headers: { "Accept": "application/json" }
+            });
+            if (!response.ok) throw new Error("refresh submit failed");
+            const payload = await response.json();
+            const queued = Boolean(payload.queued);
+            showToast("success", queued ? "Refresh started." : "Refresh already in progress.");
+            finishUiOp(queued ? "Refresh started." : "Refresh already running.");
+            await runLiveRefresh();
+            await runRefreshTimelinePoll();
+          } catch (_error) {
+            failUiOp("Refresh start failed.");
+            showToast("error", "Could not start refresh.");
+          } finally {
+            setButtonLoading(refreshActorButton, false);
+          }
+        }
+
         setInterval(runLiveRefresh, 20000);
         runLiveRefresh();
+        setInterval(runRefreshTimelinePoll, 20000);
+        runRefreshTimelinePoll();
 
         function syncAnalystPackLinks() {
           const selectedActor = String((analystPackActorSelect && analystPackActorSelect.value) || actorId || "").trim();
@@ -206,54 +517,6 @@
           syncAnalystPackLinks();
         }
 
-        async function loadEnvironmentProfile() {
-          if (!envQueryDialect || !envTimeWindow) return;
-          try {
-            const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/environment-profile", { headers: { "Accept": "application/json" } });
-            if (!response.ok) return;
-            const profile = await response.json();
-            if (profile.query_dialect) envQueryDialect.value = String(profile.query_dialect);
-            if (profile.default_time_window_hours) envTimeWindow.value = String(profile.default_time_window_hours);
-          } catch (error) {
-            // Keep page usable even if learning profile endpoint is unavailable.
-          }
-        }
-
-        async function saveEnvironmentProfile() {
-          if (!envQueryDialect || !envTimeWindow) return;
-          const payload = {
-            query_dialect: String(envQueryDialect.value || "generic"),
-            field_mapping: {},
-            default_time_window_hours: Math.max(1, parseInt(String(envTimeWindow.value || "24"), 10) || 24)
-          };
-          setButtonLoading(envProfileSave, true, "Saving...");
-          setRegionBusy(sectionLearning, true);
-          beginUiOp("Saving learning profile...");
-          if (envProfileStatus) envProfileStatus.textContent = "Saving...";
-          try {
-            const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/environment-profile", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Accept": "application/json" },
-              body: JSON.stringify(payload)
-            });
-            if (!response.ok) {
-              if (envProfileStatus) envProfileStatus.textContent = "Save failed";
-              failUiOp("Learning profile save failed.");
-              showToast("error", "Learning profile save failed.");
-              return;
-            }
-            if (envProfileStatus) envProfileStatus.textContent = "Saved";
-            finishUiOp("Learning profile saved.");
-            showToast("success", "Learning profile saved.");
-          } catch (error) {
-            if (envProfileStatus) envProfileStatus.textContent = "Save failed";
-            failUiOp("Learning profile save failed.");
-            showToast("error", "Learning profile save failed.");
-          } finally {
-            setButtonLoading(envProfileSave, false);
-            setRegionBusy(sectionLearning, false);
-          }
-        }
 
         async function submitQuestionFeedback(threadId, feedbackValue, statusNode, triggerButton) {
           const payload = {
@@ -438,6 +701,9 @@
           const sourceReliabilityField = card.querySelector(".observation-source-reliability");
           const infoCredibilityField = card.querySelector(".observation-information-credibility");
           const sourceRefField = card.querySelector(".observation-source-ref");
+          const claimTypeField = card.querySelector(".observation-claim-type");
+          const citationUrlField = card.querySelector(".observation-citation-url");
+          const observedOnField = card.querySelector(".observation-observed-on");
           const noteField = card.querySelector(".observation-note");
           const metaNode = card.querySelector("[data-observation-meta]");
           const guidanceNode = card.querySelector("[data-observation-guidance]");
@@ -447,13 +713,20 @@
           if (sourceReliabilityField && data.source_reliability !== undefined) sourceReliabilityField.value = data.source_reliability;
           if (infoCredibilityField && data.information_credibility !== undefined) infoCredibilityField.value = data.information_credibility;
           if (sourceRefField && data.source_ref) sourceRefField.value = data.source_ref;
+          if (claimTypeField) claimTypeField.value = String(data.claim_type || "assessment");
+          if (citationUrlField) citationUrlField.value = String(data.citation_url || "");
+          if (observedOnField) observedOnField.value = String(data.observed_on || "");
           if (noteField && data.note) noteField.value = data.note;
           if (metaNode) {
             const updatedAt = String(data.updated_at || "");
             const updatedBy = String(data.updated_by || "");
             const confidence = String(data.confidence || "moderate");
+            const claimType = String(data.claim_type || "assessment");
             const ratingText = ratingLabel(data);
-            metaNode.textContent = updatedAt ? "Saved " + updatedAt + " by " + (updatedBy || "analyst") + " | " + confidence + " | rating " + ratingText : "";
+            const observedOn = String(data.observed_on || "");
+            metaNode.textContent = updatedAt
+              ? "Saved " + updatedAt + " by " + (updatedBy || "analyst") + " | " + claimType + " | " + confidence + " | rating " + ratingText + (observedOn ? " | observed " + observedOn : "")
+              : "";
           }
           if (guidanceNode) {
             const guidanceItems = Array.isArray(data.quality_guidance) ? data.quality_guidance : [];
@@ -482,10 +755,21 @@
             row.className = "observation-history-item";
             const head = document.createElement("div");
             head.className = "observation-history-head";
-            head.textContent = String(entry.updated_at || "") + " | " + String(entry.updated_by || "analyst") + " | " + String(entry.confidence || "moderate");
+            head.textContent = String(entry.updated_at || "")
+              + " | " + String(entry.updated_by || "analyst")
+              + " | " + String(entry.claim_type || "assessment")
+              + " | " + String(entry.confidence || "moderate");
             const body = document.createElement("div");
             body.textContent = String(entry.note || "(no note text)");
             row.append(head, body);
+            const citation = String(entry.citation_url || "").trim();
+            const observedOn = String(entry.observed_on || "").trim();
+            if (citation || observedOn) {
+              const meta = document.createElement("div");
+              meta.className = "observation-history-head";
+              meta.textContent = (observedOn ? ("Observed: " + observedOn) : "") + (citation ? ((observedOn ? " | " : "") + citation) : "");
+              row.appendChild(meta);
+            }
             historyNode.appendChild(row);
           });
         }
@@ -553,6 +837,23 @@
             body.className = "ledger-body";
             body.textContent = String(item.note || "(no note text)");
             wrap.append(head, body);
+            const claimMeta = document.createElement("div");
+            claimMeta.className = "ledger-link";
+            claimMeta.textContent =
+              "Claim: " + String(item.claim_type || "assessment")
+              + (item.observed_on ? " | Observed: " + String(item.observed_on) : "");
+            wrap.appendChild(claimMeta);
+            if (String(item.citation_url || "").trim()) {
+              const citationWrap = document.createElement("div");
+              citationWrap.className = "ledger-link";
+              const citationLink = document.createElement("a");
+              citationLink.href = String(item.citation_url);
+              citationLink.target = "_blank";
+              citationLink.rel = "noreferrer";
+              citationLink.textContent = "Citation";
+              citationWrap.appendChild(citationLink);
+              wrap.appendChild(citationWrap);
+            }
             const sourceTitle = String(item.source_title || item.source_name || "");
             const sourceUrl = String(item.source_url || "");
             if (sourceTitle || sourceUrl) {
@@ -694,6 +995,9 @@
             const confidence = String((card.querySelector(".observation-confidence") || {}).value || "moderate");
             const sourceReliability = String((card.querySelector(".observation-source-reliability") || {}).value || "");
             const informationCredibility = String((card.querySelector(".observation-information-credibility") || {}).value || "");
+            const claimType = String((card.querySelector(".observation-claim-type") || {}).value || "assessment");
+            const citationUrl = String((card.querySelector(".observation-citation-url") || {}).value || "");
+            const observedOn = String((card.querySelector(".observation-observed-on") || {}).value || "");
             const sourceRef = String((card.querySelector(".observation-source-ref") || {}).value || "");
             const note = String((card.querySelector(".observation-note") || {}).value || "");
             const payload = {
@@ -701,6 +1005,9 @@
               confidence: confidence,
               source_reliability: sourceReliability,
               information_credibility: informationCredibility,
+              claim_type: claimType,
+              citation_url: citationUrl,
+              observed_on: observedOn,
               source_ref: sourceRef,
               note: note
             };
@@ -761,7 +1068,6 @@
           });
         }
 
-        if (envProfileSave) envProfileSave.addEventListener("click", saveEnvironmentProfile);
         questionFeedbackButtons.forEach((button) => {
           button.addEventListener("click", () => {
             const threadId = String(button.getAttribute("data-thread-id") || "");
@@ -789,9 +1095,160 @@
             nextRow.scrollIntoView({ behavior: "smooth", block: "start" });
           });
         }
+        if (refreshActorForm) {
+          refreshActorForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            await submitRefreshJob();
+          });
+        }
+
+        if (terminalGenerateNotesButton) {
+          terminalGenerateNotesButton.addEventListener("click", async () => {
+            beginUiOp("Generating notes from current activity...");
+            setButtonLoading(terminalGenerateNotesButton, true, "Generating...");
+            try {
+              const response = await fetch("/actors/" + encodeURIComponent(actorId) + "/observations/auto-snapshot", {
+                method: "POST",
+                headers: { "Accept": "text/html" }
+              });
+              if (!response.ok) throw new Error("auto snapshot failed");
+              await loadObservations();
+              finishUiOp("Notes generated.");
+              showToast("success", "Generated notes from current activity.");
+            } catch (_error) {
+              failUiOp("Generate notes failed.");
+              showToast("error", "Could not generate notes right now.");
+            } finally {
+              setButtonLoading(terminalGenerateNotesButton, false);
+            }
+          });
+        }
+
+        if (terminalAddNoteButton) {
+          terminalAddNoteButton.addEventListener("click", () => setQuickNoteOpen(true));
+        }
+        if (quickNoteClose) quickNoteClose.addEventListener("click", () => setQuickNoteOpen(false));
+        if (quickNoteCancel) quickNoteCancel.addEventListener("click", () => setQuickNoteOpen(false));
+        if (quickNoteModal) {
+          quickNoteModal.addEventListener("click", (event) => {
+            if (event.target === quickNoteModal) setQuickNoteOpen(false);
+          });
+        }
+        if (quickNoteForm) {
+          if (quickNoteClaimType) {
+            quickNoteClaimType.addEventListener("change", updateQuickNoteMode);
+          }
+          quickNoteForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const analyst = String((quickNoteAnalyst && quickNoteAnalyst.value) || "").trim();
+            const confidence = String((quickNoteConfidence && quickNoteConfidence.value) || "moderate").trim().toLowerCase();
+            const claimType = String((quickNoteClaimType && quickNoteClaimType.value) || "assessment").trim().toLowerCase();
+            const citationUrl = String((quickNoteCitationUrl && quickNoteCitationUrl.value) || "").trim();
+            const observedOn = String((quickNoteObservedOn && quickNoteObservedOn.value) || "").trim();
+            const note = String((quickNoteText && quickNoteText.value) || "").trim();
+            if (!analyst || !note) {
+              if (quickNoteStatus) quickNoteStatus.textContent = "Analyst and note are required.";
+              return;
+            }
+            if (claimType === "evidence" && (!citationUrl || !observedOn)) {
+              if (quickNoteStatus) quickNoteStatus.textContent = "Citation URL and observed date are required for evidence-backed notes.";
+              return;
+            }
+            localStorage.setItem(quickNoteAnalystKey, analyst);
+            beginUiOp("Saving analyst note...");
+            if (quickNoteStatus) quickNoteStatus.textContent = "Saving...";
+            try {
+              const response = await fetch(
+                "/actors/" + encodeURIComponent(actorId) + "/observations/actor/summary",
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                  },
+                  body: JSON.stringify({
+                    updated_by: analyst,
+                    confidence: confidence,
+                    note: note,
+                    source_ref: claimType === "evidence" ? "terminal-panel-evidence" : "terminal-panel",
+                    claim_type: claimType,
+                    citation_url: citationUrl,
+                    observed_on: observedOn
+                  })
+                }
+              );
+              if (!response.ok) throw new Error("save note failed");
+              await loadObservations();
+              if (quickNoteText) quickNoteText.value = "";
+              if (quickNoteCitationUrl) quickNoteCitationUrl.value = "";
+              if (quickNoteObservedOn) quickNoteObservedOn.value = "";
+              if (quickNoteClaimType) quickNoteClaimType.value = "assessment";
+              updateQuickNoteMode();
+              if (quickNoteStatus) quickNoteStatus.textContent = "Saved.";
+              setQuickNoteOpen(false);
+              finishUiOp("Analyst note saved.");
+              showToast("success", "Analyst note saved.");
+            } catch (_error) {
+              if (quickNoteStatus) quickNoteStatus.textContent = "Save failed. Retry.";
+              failUiOp("Analyst note save failed.");
+              showToast("error", "Analyst note save failed.");
+            }
+          });
+        }
+
+        if (workflowTourOpen) {
+          workflowTourOpen.addEventListener("click", () => setWorkflowTourOpen(true));
+        }
+        if (workflowTourClose) {
+          workflowTourClose.addEventListener("click", () => setWorkflowTourOpen(false));
+        }
+        if (workflowTourDismiss) {
+          workflowTourDismiss.addEventListener("click", () => {
+            localStorage.setItem(workflowTourHideKey, "1");
+            setWorkflowTourOpen(false);
+          });
+        }
+        if (workflowTourModal) {
+          workflowTourModal.addEventListener("click", (event) => {
+            if (event.target === workflowTourModal) setWorkflowTourOpen(false);
+          });
+        }
+        if (workflowTourModal && localStorage.getItem(workflowTourHideKey) !== "1") {
+          window.setTimeout(() => setWorkflowTourOpen(true), 700);
+        }
+
+        if (mainTabButtons.length && mainPanels.length) {
+          mainTabButtons.forEach((button) => {
+            button.addEventListener("click", () => {
+              const key = String(button.getAttribute("data-main-tab") || "who");
+              setMainTab(key);
+            });
+          });
+          const storedTab = String(localStorage.getItem("tracker:mainTab") || "who");
+          setMainTab(storedTab);
+        }
+        if (advTabButtons.length && advPanels.length) {
+          advTabButtons.forEach((button) => {
+            button.addEventListener("click", () => {
+              const key = String(button.getAttribute("data-adv-tab") || "history");
+              setAdvancedTab(key);
+            });
+          });
+          const storedAdvancedTab = String(localStorage.getItem("tracker:advancedTab") || "history");
+          setAdvancedTab(storedAdvancedTab);
+        }
+        if (notesTabButtons.length && notesPanels.length) {
+          notesTabButtons.forEach((button) => {
+            button.addEventListener("click", () => {
+              const key = String(button.getAttribute("data-notes-tab") || "capture");
+              setNotesTab(key);
+            });
+          });
+          const storedNotesTab = String(localStorage.getItem("tracker:notesTab") || "capture");
+          setNotesTab(storedNotesTab);
+        }
 
         loadObservations();
-        loadEnvironmentProfile();
         if (timelineRows.length) renderTimelineChips();
         renderSinceReview();
 

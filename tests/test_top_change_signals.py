@@ -106,3 +106,34 @@ def test_top_change_signals_excludes_ransomware_live_trend_noise():
 
     assert len(top) == 1
     assert 'ESXi encryption path' in str(top[0]['evidence_title'])
+
+
+def test_top_change_signals_penalizes_vendor_boilerplate_without_actor_match():
+    items = [
+        {
+            'evidence_title': 'Check Point Harmony Endpoint provides protection against this threat',
+            'text': 'Check Point IPS provides protection against this threat and command injection attempts.',
+            'category': 'impact',
+            'ttp_ids': 'T1190',
+            'target_text': '',
+            'corroboration_sources': '3',
+            'source_id': 's1',
+            'timeline_event_id': 't1',
+            'evidence_group_domain': 'vendor.example',
+        },
+        {
+            'evidence_title': 'Qilin shifted to VPN exploit chain in telecom sector',
+            'text': 'New campaign observed this month with actor-linked payload staging.',
+            'category': 'initial access',
+            'ttp_ids': 'T1190',
+            'target_text': 'Telecommunications',
+            'corroboration_sources': '2',
+            'source_id': 's2',
+            'timeline_event_id': 't2',
+            'evidence_group_domain': 'cisa.gov',
+        },
+    ]
+
+    top = build_top_change_signals(items, actor_terms=['Qilin'], limit=3)
+    assert len(top) == 1
+    assert 'Qilin shifted to VPN exploit chain' in str(top[0]['evidence_title'])

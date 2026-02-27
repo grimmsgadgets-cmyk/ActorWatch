@@ -44,6 +44,37 @@ def test_refresh_stats_contract(tmp_path):
     assert isinstance(body.get('source_state'), dict)
 
 
+def test_refresh_timeline_contract(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('Timeline Actor', None)
+    with TestClient(app_module.app) as client:
+        response = client.get(f"/actors/{actor['id']}/refresh/timeline")
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get('actor_id') == actor['id']
+    assert isinstance(body.get('recent_generation_runs'), list)
+    assert 'eta_seconds' in body
+
+
+def test_refresh_job_submit_and_detail_contract(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('Job Actor', None)
+    with TestClient(app_module.app) as client:
+        submit = client.post(f"/actors/{actor['id']}/refresh/jobs")
+        assert submit.status_code == 200
+        payload = submit.json()
+        assert payload.get('actor_id') == actor['id']
+        assert isinstance(payload.get('queued'), bool)
+        job_id = str(payload.get('job_id') or '')
+        if job_id:
+            detail = client.get(f"/actors/{actor['id']}/refresh/jobs/{job_id}")
+            assert detail.status_code == 200
+            detail_body = detail.json()
+            assert detail_body.get('actor_id') == actor['id']
+            assert detail_body.get('job_id') == job_id
+            assert isinstance(detail_body.get('phases'), list)
+
+
 def test_stix_export_contract(tmp_path):
     _setup_db(tmp_path)
     actor = app_module.create_actor_profile('Stix Contract Actor', None)
