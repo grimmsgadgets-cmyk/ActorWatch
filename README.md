@@ -129,8 +129,6 @@ Useful endpoints:
 - `GET /actors/{actor_id}/refresh/stats`
 - `GET /actors/{actor_id}/stix/export`
 - `POST /actors/{actor_id}/stix/import`
-- `GET /actors/{actor_id}/environment-profile`
-- `POST /actors/{actor_id}/environment-profile`
 - `POST /actors/{actor_id}/feedback`
 - `GET /actors/{actor_id}/feedback/summary`
 
@@ -168,7 +166,15 @@ If you want to target IOC-only ingestion, start from `IOC_INTELLIGENCE_FEEDS`.
 
 Quick checks are for immediate hunting actions. Notes are separate.
 
-When adding analyst notes in the sidebar:
+In the main notebook workflow, use **Analyst notes and history**:
+
+- Tabs:
+  - `Capture` for writing/saving notes
+  - `Since review` for baseline counters
+  - `Best practices` for note quality guidance
+  - `Advanced` for history, tasks/outcomes, alerts, and coverage views
+
+When adding analyst notes:
 
 - Use `observation -> evidence -> action`
 - Observation: include specific host/user/IOC/time scope

@@ -512,25 +512,128 @@
       }
       .sidebar .secondary-action button { min-height: 34px; font-size: 12px; }
       .sidebar .secondary-action[open] > summary { margin-bottom: 8px; }
+      .bastion-shell { display: none; }
+      .bastion-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border: 1px solid #6f4d29;
+        border-radius: 12px;
+        padding: 10px 12px;
+        background: linear-gradient(180deg, #1b1512, #100e0d);
+      }
+      .bastion-brand { font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; }
+      .bastion-sub { font-size: 11px; opacity: 0.85; }
+      .bastion-micro { display: grid; grid-template-columns: repeat(4, minmax(80px, 1fr)); gap: 8px; }
+      .bastion-micro .m { border: 1px solid #5f4221; border-radius: 8px; background: #140f0b; padding: 4px 6px; }
+      .bastion-micro .mk { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.8; }
+      .bastion-micro .mv { font-size: 12px; font-weight: 700; margin-top: 2px; }
+      .bastion-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+      .bastion-actions button {
+        padding: 6px 9px;
+        border-radius: 8px;
+        border: 1px solid #ae7a3b;
+        background: linear-gradient(180deg, #7c5530, #5a3d22);
+        color: #f7e8cf;
+        cursor: pointer;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .bastion-grid { display: grid; grid-template-columns: 1fr 320px; gap: 10px; min-height: 0; }
+      .bastion-main { display: grid; grid-template-rows: 260px 1fr; gap: 10px; min-height: 0; }
+      .bastion-viz { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height: 0; }
+      .bastion-card {
+        border: 1px solid #6f4d29;
+        border-radius: 10px;
+        background: linear-gradient(180deg, rgba(34, 26, 20, 0.96), rgba(19, 15, 12, 0.98));
+        color: #f0e5d2;
+        padding: 8px;
+      }
+      .bastion-card h3 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+      .bastion-bars { display: flex; align-items: flex-end; gap: 7px; min-height: 176px; }
+      .bastion-bar-col { width: 22px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+      .bastion-bar {
+        width: 100%;
+        border-radius: 5px 5px 2px 2px;
+        background: linear-gradient(180deg, #d9a254, #815b2e);
+        border: 1px solid #9b6b35;
+      }
+      .bastion-bar-label { font-size: 10px; color: #cbb394; }
+      .bastion-sections { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height: 0; }
+      .bastion-sections ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }
+      .bastion-right { display: grid; gap: 10px; align-content: start; }
+      .bastion-feed-list { display: grid; gap: 6px; max-height: 52vh; overflow: auto; }
+      .bastion-feed-item { border: 1px solid #554020; border-radius: 8px; background: #120f0c; padding: 6px; font-size: 12px; }
+      .bastion-mission-grid { display: grid; gap: 8px; }
+      .bastion-mission-item { border: 1px solid #5e4322; border-radius: 8px; padding: 6px; background: #140f0c; }
+      .bastion-mission-item .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #c9b089; }
+      .bastion-mission-item .value { margin-top: 3px; font-size: 12px; color: #f2e5cf; line-height: 1.35; }
+      .bastion-health-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+      .bastion-health-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        border: 1px solid #6a4a27;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 11px;
+        background: #1a130f;
+        color: #e8d3b3;
+      }
+      .bastion-health-chip.ok { border-color: #5f8d67; color: #cbf0d2; background: #122217; }
+      .bastion-health-chip.warn { border-color: #9f7a3f; color: #ffe2af; background: #22190f; }
+      .bastion-health-chip.bad { border-color: #9a4b3b; color: #ffd0c9; background: #271310; }
+      .bastion-attention-list { margin: 0; padding-left: 16px; display: grid; gap: 5px; font-size: 12px; }
+      .bastion-attention-list li { margin: 0; color: #ecdcc3; }
+      .bastion-terminal {
+        border: 1px solid #6f4d29;
+        border-radius: 10px;
+        background: #09090c;
+        padding: 8px;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 8px;
+        min-height: 190px;
+      }
+      .bastion-terminal .head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; letter-spacing: .07em; text-transform: uppercase; font-weight: 700; color: #f1dfc0; }
+      .bastion-terminal .log {
+        white-space: pre-wrap;
+        overflow: auto;
+        border: 1px solid #4e3620;
+        border-radius: 8px;
+        padding: 8px;
+        background: #0e0b09;
+        color: #dfcca8;
+        font-size: 12px;
+        min-height: 96px;
+      }
+      .bastion-terminal .cmds { display: flex; flex-wrap: wrap; gap: 6px; }
+      .bastion-terminal .cmds button {
+        background: linear-gradient(180deg, #b77c2f, #704819);
+        border: 1px solid #d9a254;
+        color: #fff4de;
+        border-radius: 6px;
+        padding: 4px 8px;
+        cursor: pointer;
+        font-size: 11px;
+        text-transform: uppercase;
+      }
       body[data-ui-mode="redraw"] {
-        background: radial-gradient(1200px 700px at 15% -5%, #1f2e26 0%, #050808 45%, #010203 100%);
-        color: #dbe9e4;
+        background:
+          radial-gradient(1200px 720px at 12% -8%, #173c2c 0%, #07140f 52%, #030806 100%),
+          repeating-linear-gradient(0deg, rgba(64, 160, 116, 0.08) 0 1px, transparent 1px 4px);
+        color: #d7f5e8;
       }
       body[data-ui-mode="redraw"] .sidebar {
-        background: linear-gradient(180deg, #152922, #101f1a 65%, #0c1713);
-        color: #e4f1eb;
-      }
-      body[data-ui-mode="redraw"] .sidebar-panel,
-      body[data-ui-mode="redraw"] .sidebar-card,
-      body[data-ui-mode="redraw"] .sidebar details.compact,
-      body[data-ui-mode="redraw"] .sidebar .interactive-panel,
-      body[data-ui-mode="redraw"] .sidebar .review-strip {
-        background: #172f28;
-        border-color: #2d4b41;
-        color: #e4f1eb;
+        background: linear-gradient(180deg, #0f2a20, #0a1b15 70%, #08120f);
+        border-right: 2px solid #2f7a58;
+        box-shadow: inset -1px 0 0 rgba(84, 201, 151, 0.35);
+        color: #ddfff1;
       }
       body[data-ui-mode="redraw"] .main {
-        background: linear-gradient(180deg, #0d1412, #0a0f0e);
+        background: linear-gradient(180deg, #07120d, #050d09);
       }
       body[data-ui-mode="redraw"] .card,
       body[data-ui-mode="redraw"] .ops-health,
@@ -539,10 +642,16 @@
       body[data-ui-mode="redraw"] .who-summary,
       body[data-ui-mode="redraw"] .who-why,
       body[data-ui-mode="redraw"] .technique-item,
-      body[data-ui-mode="redraw"] .change-row {
-        background: #111b18;
-        border-color: #2a3f38;
-        color: #dbe9e4;
+      body[data-ui-mode="redraw"] .change-row,
+      body[data-ui-mode="redraw"] .sidebar-panel,
+      body[data-ui-mode="redraw"] .sidebar-card,
+      body[data-ui-mode="redraw"] details.compact,
+      body[data-ui-mode="redraw"] .interactive-panel,
+      body[data-ui-mode="redraw"] .review-strip {
+        background: linear-gradient(180deg, rgba(14, 39, 30, 0.96), rgba(9, 26, 20, 0.98));
+        border-color: #2e7a58;
+        color: #dcf7eb;
+        box-shadow: inset 0 0 0 1px rgba(86, 204, 154, 0.16), 0 6px 14px rgba(0, 0, 0, 0.24);
       }
       body[data-ui-mode="redraw"] .section-title,
       body[data-ui-mode="redraw"] .timeline-meta,
@@ -550,31 +659,240 @@
       body[data-ui-mode="redraw"] .who-meta,
       body[data-ui-mode="redraw"] .source-meta,
       body[data-ui-mode="redraw"] .refresh-run-meta {
-        color: #a6c2b8;
+        color: #97d8be;
       }
-      body[data-ui-mode="redraw"] .badge {
-        border-color: #3f6f62;
-        background: #163028;
-        color: #cce8de;
+      body[data-ui-mode="redraw"] .badge,
+      body[data-ui-mode="redraw"] .status-chip,
+      body[data-ui-mode="redraw"] .live-pill {
+        background: #0d2a20;
+        border-color: #2e7a58;
+        color: #d5f7e8;
       }
       body[data-ui-mode="redraw"] .action-button,
       body[data-ui-mode="redraw"] .quick-actions a,
       body[data-ui-mode="redraw"] .quick-actions button,
       body[data-ui-mode="redraw"] .quick-actions details.quick-export-menu > summary,
-      body[data-ui-mode="redraw"] button[type="submit"] {
-        background: linear-gradient(180deg, #2f8f6f, #1f6d54);
-        border-color: #4bc39a;
-        color: #f3fff9;
+      body[data-ui-mode="redraw"] button[type="submit"],
+      body[data-ui-mode="redraw"] .geo-open-btn.compact {
+        background: linear-gradient(180deg, #2a8b61, #1f6849);
+        border-color: #72d0a8;
+        color: #eafff6;
+        letter-spacing: 0.02em;
+      }
+      body[data-ui-mode="redraw"] .main-tab-btn,
+      body[data-ui-mode="redraw"] .notes-tab-btn,
+      body[data-ui-mode="redraw"] .adv-tab-btn {
+        background: linear-gradient(180deg, #123b2c, #0d2a20);
+        border-color: #2e7a58;
+        color: #c7f0de;
+      }
+      body[data-ui-mode="redraw"] .main-tab-btn.active,
+      body[data-ui-mode="redraw"] .notes-tab-btn.active,
+      body[data-ui-mode="redraw"] .adv-tab-btn.active {
+        background: linear-gradient(180deg, #2b9a6c, #227a56);
+        border-color: #90e0bf;
+        color: #f1fffa;
       }
       body[data-ui-mode="redraw"] .ui-mode-top {
-        background: #142721;
-        border-color: #2d4b41;
+        background: #0d2a20;
+        border-color: #2f7a58;
       }
-      body[data-ui-mode="redraw"] .ui-mode-top label { color: #c8ded6; }
+      body[data-ui-mode="redraw"] .ui-mode-top label { color: #a9e7cd; }
       body[data-ui-mode="redraw"] .ui-mode-top select {
-        background: #0f1f1a;
-        border-color: #3f6f62;
-        color: #dbe9e4;
+        background: #0b2119;
+        border-color: #2f7a58;
+        color: #daf8ec;
+      }
+      body[data-ui-mode="redraw"] .actor-link {
+        background: #0f2e22;
+        border-color: #2f7a58;
+        color: #dbf8eb;
+      }
+      body[data-ui-mode="redraw"] .actor-link.selected {
+        background: #1f6f4f;
+        border-color: #88e1bd;
+        color: #f4fffb;
+      }
+      body[data-ui-mode="redraw"] .actor-row .actor-remove { color: #a9e7cd; }
+      body[data-ui-mode="redraw"] .actor-row .actor-remove:hover { color: #e9fff6; }
+      body[data-ui-mode="bastion"] {
+        background:
+          radial-gradient(1200px 700px at 15% -5%, #2a2014 0%, #0a0807 45%, #050505 100%),
+          repeating-linear-gradient(0deg, rgba(168, 34, 34, 0.07) 0 1px, transparent 1px 4px);
+        color: #eadfce;
+        letter-spacing: 0.01em;
+        font-family: "Rajdhani", "Cinzel", "Segoe UI", system-ui, sans-serif;
+      }
+      body[data-ui-mode="bastion"] .layout { grid-template-columns: 340px 1fr; }
+      body[data-ui-mode="bastion"] .sidebar {
+        background:
+          linear-gradient(180deg, #2c2115, #19130f 65%, #100d0a);
+        color: #f0e5d2;
+        border-right: 2px solid #6f4d29;
+        box-shadow: inset -1px 0 0 rgba(178, 125, 66, 0.45);
+      }
+      body[data-ui-mode="bastion"] .sidebar-panel,
+      body[data-ui-mode="bastion"] .sidebar-card,
+      body[data-ui-mode="bastion"] .sidebar details.compact,
+      body[data-ui-mode="bastion"] .sidebar .interactive-panel,
+      body[data-ui-mode="bastion"] .sidebar .review-strip {
+        background:
+          linear-gradient(180deg, rgba(62, 45, 28, 0.9), rgba(33, 25, 18, 0.95));
+        border: 1px solid #7a5831;
+        color: #f0e5d2;
+        box-shadow: inset 0 0 0 1px rgba(174, 120, 58, 0.18);
+      }
+      body[data-ui-mode="bastion"] .main {
+        background: linear-gradient(180deg, #120f0d, #0b0a09);
+      }
+      body[data-ui-mode="bastion"] .card,
+      body[data-ui-mode="bastion"] .ops-health,
+      body[data-ui-mode="bastion"] .refresh-run-card,
+      body[data-ui-mode="bastion"] .snapshot-card,
+      body[data-ui-mode="bastion"] .who-summary,
+      body[data-ui-mode="bastion"] .who-why,
+      body[data-ui-mode="bastion"] .technique-item,
+      body[data-ui-mode="bastion"] .change-row {
+        background:
+          linear-gradient(180deg, rgba(34, 26, 20, 0.96), rgba(19, 15, 12, 0.98));
+        border: 1px solid #7a5831;
+        color: #f0e5d2;
+        box-shadow:
+          inset 0 0 0 1px rgba(175, 118, 52, 0.16),
+          0 6px 14px rgba(0, 0, 0, 0.28);
+        border-radius: 6px;
+      }
+      body[data-ui-mode="bastion"] .section-title,
+      body[data-ui-mode="bastion"] .timeline-meta,
+      body[data-ui-mode="bastion"] .inline-note,
+      body[data-ui-mode="bastion"] .who-meta,
+      body[data-ui-mode="bastion"] .source-meta,
+      body[data-ui-mode="bastion"] .refresh-run-meta {
+        color: #cbb394;
+      }
+      body[data-ui-mode="bastion"] .badge {
+        border-color: #805936;
+        background: #2b2219;
+        color: #f4debe;
+        border-radius: 4px;
+      }
+      body[data-ui-mode="bastion"] .action-button,
+      body[data-ui-mode="bastion"] .quick-actions a,
+      body[data-ui-mode="bastion"] .quick-actions button,
+      body[data-ui-mode="bastion"] .quick-actions details.quick-export-menu > summary,
+      body[data-ui-mode="bastion"] button[type="submit"] {
+        background: linear-gradient(180deg, #7c5530, #5a3d22);
+        border-color: #ae7a3b;
+        color: #f7e8cf;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-weight: 700;
+      }
+      body[data-ui-mode="bastion"] .ui-mode-top {
+        background: #241b13;
+        border-color: #7a5831;
+      }
+      body[data-ui-mode="bastion"] .ui-mode-top label { color: #e7d0af; }
+      body[data-ui-mode="bastion"] .ui-mode-top select {
+        background: #1a1410;
+        border-color: #7a5831;
+        color: #f0e5d2;
+      }
+      body[data-ui-mode="bastion"] .main-tab-btn,
+      body[data-ui-mode="bastion"] .notes-tab-btn,
+      body[data-ui-mode="bastion"] .adv-tab-btn {
+        background: linear-gradient(180deg, #2f2419, #1c1510);
+        border-color: #845f35;
+        color: #e9d6bc;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      body[data-ui-mode="bastion"] .main-tab-btn.active,
+      body[data-ui-mode="bastion"] .notes-tab-btn.active,
+      body[data-ui-mode="bastion"] .adv-tab-btn.active {
+        background: linear-gradient(180deg, #8b612f, #6b4926);
+        border-color: #d19a57;
+        color: #fff3e0;
+        box-shadow: 0 0 0 1px rgba(214, 156, 88, 0.35);
+      }
+      body[data-ui-mode="bastion"] .ataglance-metric,
+      body[data-ui-mode="bastion"] .who-kpi,
+      body[data-ui-mode="bastion"] .review-metric,
+      body[data-ui-mode="bastion"] .ops-health-item,
+      body[data-ui-mode="bastion"] .ledger-item,
+      body[data-ui-mode="bastion"] .refresh-run-card {
+        background: #221912;
+        border-color: #6f4d29;
+      }
+      body[data-ui-mode="bastion"] .live-pill,
+      body[data-ui-mode="bastion"] .status-chip {
+        background: #221911;
+        border-color: #6f4d29;
+        color: #e6d1b2;
+      }
+      body[data-ui-mode="bastion"] .interactive-panel,
+      body[data-ui-mode="bastion"] .review-strip,
+      body[data-ui-mode="bastion"] details.compact {
+        background: #1b1410;
+        border-color: #6f4d29;
+      }
+      body[data-ui-mode="bastion"] .ledger-controls input,
+      body[data-ui-mode="bastion"] .ledger-controls select,
+      body[data-ui-mode="bastion"] .obs-row input,
+      body[data-ui-mode="bastion"] .obs-row select,
+      body[data-ui-mode="bastion"] .obs-row textarea {
+        background: #130f0c;
+        border-color: #6f4d29;
+        color: #f0e5d2;
+      }
+      body[data-ui-mode="bastion"] .geo-open-btn.compact {
+        background: linear-gradient(180deg, #7c5530, #5a3d22);
+        border-color: #ae7a3b;
+        color: #f7e8cf;
+      }
+      body[data-ui-mode="bastion"] .actor-link {
+        background: #241a12;
+        border-color: #6f4d29;
+        color: #f0e5d2;
+      }
+      body[data-ui-mode="bastion"] .actor-link.selected {
+        background: #5b3f23;
+        border-color: #d19a57;
+        color: #fff2de;
+        box-shadow: inset 0 0 0 1px rgba(214, 156, 88, 0.35);
+      }
+      body[data-ui-mode="bastion"] .actor-row .actor-remove { color: #d8be98; }
+      body[data-ui-mode="bastion"] .actor-row .actor-remove:hover { color: #fff0d7; }
+      body[data-ui-mode="bastion"] .main { position: relative; overflow: visible; }
+      body[data-ui-mode="bastion"] .main::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.11;
+        background-image:
+          linear-gradient(rgba(183,124,47,.18) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(183,124,47,.14) 1px, transparent 1px);
+        background-size: 38px 38px;
+      }
+      body[data-ui-mode="bastion"] .top-status-row,
+      body[data-ui-mode="bastion"] .dashboard { display: none; }
+      body[data-ui-mode="bastion"] .bastion-shell {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 10px;
+        min-height: calc(100vh - 120px);
+      }
+      @media (max-width: 1500px) {
+        .bastion-grid { grid-template-columns: 1fr; }
+        .bastion-right { grid-template-columns: 1fr 1fr; }
+      }
+      @media (max-width: 1120px) {
+        .bastion-viz, .bastion-sections { grid-template-columns: 1fr; }
+        .bastion-right { grid-template-columns: 1fr; }
+        .bastion-micro { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
       }
       .sidebar .interactive-panel { background: #2b3445; border-color: #3d4658; color: #fff; }
       .sidebar .review-strip { background: #2b3445; border-color: #3d4658; }
@@ -929,14 +1247,11 @@
         <div class="sidebar-card">
           <h3>Quick actions</h3>
           <div class="quick-actions">
-            <form id="refresh-actor-form" method="post" action="/actors/{{ notebook.actor.id }}/refresh">
-              <button id="refresh-actor-button" type="submit">Refresh actor</button>
-            </form>
             <form method="post" action="/actors/{{ notebook.actor.id }}/observations/auto-snapshot">
               <button type="submit">Auto-note changes</button>
             </form>
             <button id="workflow-tour-open" type="button">Workflow tour</button>
-            <a href="/actors/{{ notebook.actor.id }}/timeline/details">Open timeline details</a>
+            <a id="open-timeline-details-link" href="/actors/{{ notebook.actor.id }}/timeline/details">Open timeline details</a>
             <details class="quick-export-menu" id="analyst-pack-menu">
               <summary id="analyst-pack-menu-trigger">Export analyst pack</summary>
               <div class="quick-export-panel">
@@ -966,6 +1281,9 @@
               </div>
             </details>
           </div>
+          <form id="refresh-actor-form" method="post" action="/actors/{{ notebook.actor.id }}/refresh" hidden>
+            <button id="refresh-actor-button" type="submit" hidden aria-hidden="true" tabindex="-1">Refresh actor</button>
+          </form>
           <details class="compact secondary-action">
             <summary class="action-button">More actions</summary>
             <form method="post" action="/actors/{{ notebook.actor.id }}/requirements/generate">
@@ -1255,6 +1573,7 @@
             <select id="ui-mode-select" aria-label="Interface mode">
               <option value="classic">Classic</option>
               <option value="redraw">Redraw</option>
+              <option value="bastion">Bastion</option>
             </select>
           </div>
           <div id="ui-activity-strip" class="notice status-chip ui-activity-strip status-idle" role="status" aria-live="polite" hidden>
@@ -1268,8 +1587,8 @@
             </summary>
             <div class="status-ops-panel">
               <div class="refresh-activity-actions" style="margin-bottom:8px;">
-                <button id="terminal-generate-notes" type="button">Generate notes</button>
-                <button id="terminal-add-note" type="button">Add note</button>
+                <button id="terminal-generate-notes" type="button">Auto-draft notes</button>
+                <button id="terminal-add-note" type="button">Write analyst note</button>
               </div>
               <div class="status-ops-grid">
                 <div class="status-ops-item">
@@ -1331,6 +1650,190 @@
           </details>
           {% endif %}
         </div>
+        {% if notebook %}
+        {% set recent_change = notebook.get('recent_change_summary', {'new_reports': '0', 'targets': 'Not clear yet', 'damage': 'No clear damage outcome reported yet'}) %}
+        {% set bastion_trend = notebook.timeline_graph[-8:] if notebook.timeline_graph else [] %}
+        {% set bastion_ns = namespace(trend_max=1) %}
+        {% for bucket in bastion_trend %}
+          {% if bucket.total > bastion_ns.trend_max %}{% set bastion_ns.trend_max = bucket.total %}{% endif %}
+        {% endfor %}
+        <section id="bastion-shell" class="bastion-shell" aria-label="Bastion command deck">
+          <div class="bastion-top">
+            <div>
+              <div class="bastion-sub">Immersive command workflow for rapid actor review</div>
+            </div>
+            <div class="bastion-micro">
+              <div class="m"><div class="mk">Status</div><div id="bastion-k-status" class="mv">{{ notebook_health.state|capitalize }}</div></div>
+              <div class="m"><div class="mk">Sources</div><div id="bastion-k-sources" class="mv">{{ notebook_health.last_refresh_sources }}</div></div>
+              <div class="m"><div class="mk">Activity</div><div id="bastion-k-activity" class="mv">{{ recent_change.new_reports }}</div></div>
+              <div class="m"><div class="mk">Techniques</div><div id="bastion-k-techniques" class="mv">{{ notebook.top_techniques|length if notebook.top_techniques else 0 }}</div></div>
+            </div>
+            <div class="bastion-actions">
+              <button type="button" id="bastion-cmd-map">Geography</button>
+              <button type="button" id="bastion-cmd-refresh">Refresh actor</button>
+            </div>
+          </div>
+          <div class="bastion-grid">
+            <div class="bastion-main">
+              <section class="bastion-viz">
+                <article class="bastion-card">
+                  <h3>Operational Trend</h3>
+                  <div class="bastion-bars">
+                    {% if bastion_trend %}
+                      {% for bucket in bastion_trend %}
+                      {% set h = ((bucket.total / bastion_ns.trend_max) * 150) | int if bastion_ns.trend_max else 12 %}
+                      <div class="bastion-bar-col">
+                        <div class="bastion-bar" style="height: {{ [h, 12]|max }}px;" title="{{ bucket.label }}: {{ bucket.total }}"></div>
+                        <div class="bastion-bar-label">{{ bucket.label[-5:] if bucket.label else '-' }}</div>
+                      </div>
+                      {% endfor %}
+                    {% else %}
+                      <div class="inline-note">No timeline buckets available yet.</div>
+                    {% endif %}
+                  </div>
+                </article>
+                <article class="bastion-card">
+                  <h3>Technique Pressure</h3>
+                  <div class="bastion-bars">
+                    {% if notebook.top_techniques %}
+                      {% for technique in notebook.top_techniques[:8] %}
+                      {% set score = technique.event_count or technique.source_count or 1 %}
+                      {% set th = (score * 18) | int %}
+                      {% set th_clamped = [170, [th, 14]|max]|min %}
+                      <div class="bastion-bar-col">
+                        <div class="bastion-bar" style="height: {{ th_clamped }}px;" title="{{ technique.technique_id }} {{ technique.technique_name }}"></div>
+                        <div class="bastion-bar-label">{{ technique.technique_id or 'T' }}</div>
+                      </div>
+                      {% endfor %}
+                    {% else %}
+                      <div class="inline-note">No mapped techniques yet.</div>
+                    {% endif %}
+                  </div>
+                </article>
+              </section>
+              <section class="bastion-sections">
+                <article class="bastion-card">
+                  <h3>What changed and why it matters</h3>
+                  <ul>
+                    {% if notebook.top_change_signals %}
+                      {% for signal in notebook.top_change_signals[:5] %}
+                      <li>{{ signal.change_summary or signal.change_why_new or 'No summarized change text yet.' }}</li>
+                      {% endfor %}
+                    {% else %}
+                      <li>No validated change signals yet.</li>
+                    {% endif %}
+                  </ul>
+                </article>
+                <article class="bastion-card">
+                  <h3>AI review: what changed recently</h3>
+                  <ul>
+                    {% if notebook.recent_activity_synthesis %}
+                      {% for synthesis in notebook.recent_activity_synthesis[:5] %}
+                      <li>{{ synthesis.text }}</li>
+                      {% endfor %}
+                    {% else %}
+                      <li>No recent AI synthesis available yet.</li>
+                    {% endif %}
+                  </ul>
+                </article>
+              </section>
+            </div>
+            <aside class="bastion-right">
+              {% set latest_run = (refresh_stats.recent_generation_runs[0] if refresh_stats and refresh_stats.recent_generation_runs else None) %}
+              {% set latest_signal_text = '' %}
+              {% if notebook.top_change_signals and notebook.top_change_signals[0] %}
+                {% set latest_signal_text = notebook.top_change_signals[0].change_summary or notebook.top_change_signals[0].change_why_new or '' %}
+              {% elif notebook.recent_activity_synthesis and notebook.recent_activity_synthesis[0] %}
+                {% set latest_signal_text = notebook.recent_activity_synthesis[0].text or '' %}
+              {% endif %}
+              {% set open_alerts_ns = namespace(count=0) %}
+              {% if notebook.alert_queue %}
+                {% for alert in notebook.alert_queue %}
+                  {% if alert and (alert.status or '')|lower == 'open' %}
+                    {% set open_alerts_ns.count = open_alerts_ns.count + 1 %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+              <article class="bastion-card">
+                <h3>Mission console</h3>
+                <div class="bastion-mission-grid">
+                  <div class="bastion-mission-item">
+                    <div class="label">Now processing</div>
+                    <div class="value">
+                      {% if latest_run %}
+                        {{ latest_run.status|capitalize }} | {{ latest_run.trigger_type|replace('_', ' ')|capitalize }}{% if latest_run.created_at %} | {{ latest_run.created_at[:19].replace('T', ' ') }}{% endif %}
+                      {% else %}
+                        Idle
+                      {% endif %}
+                    </div>
+                  </div>
+                  <div class="bastion-mission-item">
+                    <div class="label">Latest signal</div>
+                    <div class="value">{{ latest_signal_text or 'No prioritized change signal yet.' }}</div>
+                  </div>
+                  <div class="bastion-mission-item">
+                    <div class="label">Attention queue</div>
+                    <ul class="bastion-attention-list">
+                      {% set shown_ns = namespace(count=0) %}
+                      {% if notebook.ops_tasks %}
+                        {% for task in notebook.ops_tasks %}
+                          {% if shown_ns.count < 3 and task and (task.status or '')|lower != 'done' %}
+                          {% set shown_ns.count = shown_ns.count + 1 %}
+                          <li>{{ task.title }}{% if task.owner %} | {{ task.owner }}{% endif %}{% if task.due_date %} | due {{ task.due_date }}{% endif %}</li>
+                          {% endif %}
+                        {% endfor %}
+                      {% endif %}
+                      {% if shown_ns.count == 0 %}
+                      <li>No open tasks in queue.</li>
+                      {% endif %}
+                    </ul>
+                  </div>
+                  <div class="bastion-mission-item">
+                    <div class="label">System health</div>
+                    <div class="bastion-health-chips">
+                      <span class="bastion-health-chip {% if notebook_health.state in ['ready', 'idle'] %}ok{% elif notebook_health.state == 'warning' %}warn{% else %}bad{% endif %}">
+                        System: {{ notebook_health.state|capitalize }}
+                      </span>
+                      <span class="bastion-health-chip {% if llm_ready %}ok{% else %}bad{% endif %}">
+                        LLM: {% if llm_ready %}Ready{% else %}Offline{% endif %}
+                      </span>
+                      <span class="bastion-health-chip {% if open_alerts_ns.count > 0 %}warn{% else %}ok{% endif %}">
+                        Alerts: {{ open_alerts_ns.count }}
+                      </span>
+                      <span class="bastion-health-chip {% if notebook.ops_tasks %}warn{% else %}ok{% endif %}">
+                        Tasks: {{ notebook.ops_tasks|length if notebook.ops_tasks else 0 }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="bastion-mission-item">
+                    <div class="label">Last analyst action</div>
+                    <div class="value">
+                      {% if notebook.operational_outcomes and notebook.operational_outcomes[0] %}
+                        {{ notebook.operational_outcomes[0].outcome_type }} | {{ notebook.operational_outcomes[0].created_at }}{% if notebook.operational_outcomes[0].created_by %} | {{ notebook.operational_outcomes[0].created_by }}{% endif %}
+                      {% else %}
+                        No operational outcomes recorded yet.
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </aside>
+          </div>
+          <section class="bastion-terminal">
+            <div class="head"><span>Operations Terminal</span><span id="bastion-terminal-ping">ONLINE</span></div>
+            <pre id="bastion-terminal-log" class="log">[BOOT] Bastion deck online for {{ notebook.actor.display_name }}
+[STATUS] System: {{ notebook_health.message }}
+[SYNC] Live updates enabled
+[READY] Use command buttons above to run notebook actions.</pre>
+            <div class="cmds">
+              <button type="button" id="bastion-cmd-terminal-notes">Write analyst note</button>
+              <button type="button" id="bastion-cmd-terminal-gennotes">Auto-draft notes</button>
+              <button type="button" id="bastion-cmd-terminal-timeline">Timeline</button>
+              <button type="button" id="bastion-cmd-terminal-top">Back to top</button>
+            </div>
+          </section>
+        </section>
+        {% endif %}
         {% if not notebook %}
         <div class="empty">Select an actor to open the notebook.</div>
         {% else %}
