@@ -133,6 +133,40 @@ Useful endpoints:
 - `POST /actors/{actor_id}/feedback`
 - `GET /actors/{actor_id}/feedback/summary`
 
+------------------------------------------------------------------------
+
+## Interface Modes
+
+Use the **Interface mode** dropdown in the top-right of the main screen.
+
+- `Classic`: standard community layout.
+- `Redraw`: green-tint operations layout.
+- `Bastion`: immersive command-deck layout (same data/workflows, different presentation).
+
+Notes:
+
+- These are built-in UI modes; no separate login/auth mode is required.
+- Mode choice is stored in browser local storage and reused on reload.
+
+### Bastion Control Layout
+
+In `Bastion` mode:
+
+- Top command bar keeps high-frequency actions:
+  - `Geography`
+  - `Refresh actor`
+- Bottom operations terminal focuses on analyst workflow actions:
+  - `Write analyst note`
+  - `Auto-draft notes`
+  - `Timeline`
+  - `Back to top`
+- Right-side `Mission console` shows:
+  - `Now processing`
+  - `Latest signal`
+  - `Attention queue`
+  - `System health`
+  - `Last analyst action`
+
 Auto-refresh defaults:
 
 - `AUTO_REFRESH_ENABLED=1`
