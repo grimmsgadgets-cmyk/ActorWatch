@@ -1353,11 +1353,20 @@ def build_recent_activity_highlights(
         summary = str(item.get('summary') or '')
         source_text = str(source.get('pasted_text') if source else '')
         source_url = str(source.get('url') if source else '')
+        is_partial_match_source = False
+        if isinstance(source, dict):
+            source_type_value = str(source.get('source_type') or '').strip().lower()
+            try:
+                source_weight = int(source.get('confidence_weight') or 0)
+            except Exception:
+                source_weight = 0
+            is_partial_match_source = source_type_value == 'feed_partial_match' and source_weight >= 2
         if not looks_like_activity_sentence(summary):
             continue
-        if not (_actor_specific_text(summary, terms) or _actor_specific_text(source_text, terms)):
+        actor_specific = _actor_specific_text(summary, terms) or _actor_specific_text(source_text, terms)
+        if not actor_specific and not is_partial_match_source:
             continue
-        if source_url and not _is_trusted_domain(source_url) and not _actor_specific_text(summary, terms):
+        if source_url and not _is_trusted_domain(source_url) and not actor_specific and not is_partial_match_source:
             continue
 
         ttp_list = [str(t) for t in item.get('ttp_ids', [])]
@@ -1488,8 +1497,14 @@ def build_recent_activity_highlights(
         text = str(source.get('pasted_text') or '').strip()
         if not text:
             continue
+        source_type_value = str(source.get('source_type') or '').strip().lower()
+        try:
+            source_weight = int(source.get('confidence_weight') or 0)
+        except Exception:
+            source_weight = 0
+        is_partial_match_source = source_type_value == 'feed_partial_match' and source_weight >= 2
         combined = f'{source.get("source_name") or ""} {source.get("url") or ""} {text}'
-        if actor_terms and not text_contains_actor_term(combined, actor_terms):
+        if actor_terms and not text_contains_actor_term(combined, actor_terms) and not is_partial_match_source:
             continue
         if not _is_trusted_domain(str(source.get('url') or '')):
             continue
@@ -1677,7 +1692,7 @@ def fetch_actor_notebook_core(
             SELECT
                 id, source_name, url, published_at, ingested_at, source_date_type, retrieved_at, pasted_text,
                 title, headline, og_title, html_title, publisher, site_name,
-                source_tier, confidence_weight
+                source_type, source_tier, confidence_weight
             FROM sources
             WHERE actor_id = ?
             ORDER BY COALESCE(published_at, ingested_at, retrieved_at) DESC
@@ -1700,8 +1715,9 @@ def fetch_actor_notebook_core(
                 'html_title': row[11],
                 'publisher': row[12],
                 'site_name': row[13],
-                'source_tier': row[14],
-                'confidence_weight': row[15],
+                'source_type': row[14],
+                'source_tier': row[15],
+                'confidence_weight': row[16],
             }
             for row in sources
         ]
@@ -2476,8 +2492,9 @@ def fetch_actor_notebook_core(
             'html_title': row[11],
             'publisher': row[12],
             'site_name': row[13],
-            'source_tier': row[14],
-            'confidence_weight': row[15],
+            'source_type': row[14],
+            'source_tier': row[15],
+            'confidence_weight': row[16],
         }
         for row in sources
     ]
@@ -3026,7 +3043,7 @@ def fetch_actor_notebook_core(
         and normalized_source_days is None
     )
     if strict_default_mode:
-        normalized_min_confidence = 3
+        normalized_min_confidence = 2
         normalized_source_days = 90
 
     source_cutoff_dt = (
@@ -3043,6 +3060,9 @@ def fetch_actor_notebook_core(
     ):
         filtered_sources: list[dict[str, object]] = []
         for source in source_items:
+            source_type_value = str(source.get('source_type') or '').strip().lower()
+            if strict_default_mode and source_type_value == 'feed_soft_match':
+                continue
             source_tier_value = str(source.get('source_tier') or '').strip().lower() or 'unrated'
             if normalized_source_tier is not None and source_tier_value != normalized_source_tier:
                 continue

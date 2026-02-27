@@ -25,8 +25,11 @@ def _detect_ioc_type(value: str) -> str:
         return 'hash'
     if re.fullmatch(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', value):
         return 'email'
-    parsed = urlparse(value)
-    if parsed.scheme.lower() in {'http', 'https'} and parsed.netloc:
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        parsed = None
+    if parsed is not None and parsed.scheme.lower() in {'http', 'https'} and parsed.netloc:
         return 'url'
     if re.fullmatch(r'(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}', value):
         return 'domain'
@@ -97,7 +100,13 @@ def validate_ioc_candidate_core(
         else:
             reason = 'invalid domain format'
     elif ioc_type == 'url':
-        parsed = urlparse(value)
+        try:
+            parsed = urlparse(value)
+        except Exception:
+            parsed = None
+        if parsed is None:
+            reason = 'invalid url format'
+            parsed = urlparse('')
         scheme = parsed.scheme.lower()
         host = str(parsed.hostname or '').strip()
         if scheme in {'http', 'https'} and host:

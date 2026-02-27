@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import uuid
+import re
 from collections.abc import Callable
 
 from fastapi import HTTPException
@@ -29,6 +30,26 @@ def build_notebook_core(
     ollama_enrich_quick_checks: Callable[[str, list[dict[str, object]]], dict[str, dict[str, str]]] | None = None,
     store_quick_check_overrides: Callable[[sqlite3.Connection, str, dict[str, dict[str, str]], str], None] | None = None,
 ) -> None:
+    def _fallback_category(text: str) -> str:
+        lowered = str(text or '').lower()
+        if any(token in lowered for token in ('phish', 'email', 'exploit', 'initial access', 'cve-')):
+            return 'initial_access'
+        if any(token in lowered for token in ('beacon', 'c2', 'command and control', 'dns')):
+            return 'command_and_control'
+        if any(token in lowered for token in ('ransom', 'encrypt', 'impact', 'wiper')):
+            return 'impact'
+        return 'execution'
+
+    def _fallback_summary(text: str) -> str:
+        compact = ' '.join(str(text or '').split()).strip()
+        if not compact:
+            return 'Partial actor-linked activity signal from source ingestion.'
+        sentence_split = [segment.strip() for segment in re.split(r'(?<=[.!?])\s+', compact) if segment.strip()]
+        first = sentence_split[0] if sentence_split else compact
+        if len(first) > 220:
+            first = first[:220].rsplit(' ', 1)[0] + '...'
+        return first
+
     now = now_iso()
     with sqlite3.connect(db_path) as connection:
         if not actor_exists(connection, actor_id):
@@ -49,7 +70,9 @@ def build_notebook_core(
 
         sources = connection.execute(
             '''
-            SELECT id, source_name, url, published_at, retrieved_at, pasted_text, title, headline, og_title, html_title
+            SELECT
+                id, source_name, url, published_at, retrieved_at, pasted_text,
+                title, headline, og_title, html_title, source_type, source_tier, confidence_weight
             FROM sources
             WHERE actor_id = ?
             ORDER BY retrieved_at ASC
@@ -67,6 +90,21 @@ def build_notebook_core(
                 moves = extract_major_move_events(source[1], source[0], occurred_at, text, actor_terms, source_title)
                 if moves:
                     timeline_candidates.extend(moves[:6])
+                source_type = str(source[10] or '').strip().lower()
+                source_confidence = int(source[12] or 0) if source[12] is not None else 0
+                if not moves and source_type == 'feed_partial_match' and source_confidence >= 2:
+                    timeline_candidates.append(
+                        {
+                            'id': str(uuid.uuid4()),
+                            'occurred_at': occurred_at,
+                            'category': _fallback_category(text),
+                            'title': source_title or 'Partial actor-linked activity signal',
+                            'summary': _fallback_summary(text),
+                            'source_id': source[0],
+                            'target_text': '',
+                            'ttp_ids': [],
+                        }
+                    )
 
             deduped_timeline: list[dict[str, object]] = []
             seen_summaries: list[str] = []

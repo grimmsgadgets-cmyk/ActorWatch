@@ -147,15 +147,24 @@ AUTO_MERGE_DUPLICATE_ACTORS = os.environ.get('AUTO_MERGE_DUPLICATE_ACTORS', '1')
     '1', 'true', 'yes', 'on',
 }
 ACTOR_FEED_LOOKBACK_DAYS = int(os.environ.get('ACTOR_FEED_LOOKBACK_DAYS', '180'))
-FEED_IMPORT_MAX_SECONDS = max(20, int(os.environ.get('FEED_IMPORT_MAX_SECONDS', '90')))
+FEED_IMPORT_MAX_SECONDS = max(20, int(os.environ.get('FEED_IMPORT_MAX_SECONDS', '45')))
 FEED_FETCH_TIMEOUT_SECONDS = max(3.0, float(os.environ.get('FEED_FETCH_TIMEOUT_SECONDS', '10')))
 FEED_ENTRY_SCAN_LIMIT = max(5, int(os.environ.get('FEED_ENTRY_SCAN_LIMIT', '12')))
 FEED_IMPORTED_LIMIT = max(10, int(os.environ.get('FEED_IMPORTED_LIMIT', '30')))
+FEED_SOFT_MATCH_LIMIT = max(0, int(os.environ.get('FEED_SOFT_MATCH_LIMIT', '0')))
+FEED_RETAIN_SOFT_CANDIDATES = os.environ.get('FEED_RETAIN_SOFT_CANDIDATES', '1').strip().lower() in {
+    '1', 'true', 'yes', 'on',
+}
+FEED_IMPORT_INTERACTIVE_MAX_SECONDS = max(10, int(os.environ.get('FEED_IMPORT_INTERACTIVE_MAX_SECONDS', '25')))
+FEED_INTERACTIVE_HIGH_SIGNAL_TARGET = max(1, int(os.environ.get('FEED_INTERACTIVE_HIGH_SIGNAL_TARGET', '2')))
 ACTOR_SEARCH_LINK_LIMIT = max(1, int(os.environ.get('ACTOR_SEARCH_LINK_LIMIT', '6')))
 FEED_REQUIRE_PUBLISHED_AT = os.environ.get('FEED_REQUIRE_PUBLISHED_AT', '1').strip().lower() in {
     '1', 'true', 'yes', 'on',
 }
 ENFORCE_OLLAMA_SYNTHESIS = os.environ.get('ENFORCE_OLLAMA_SYNTHESIS', '0').strip().lower() in {
+    '1', 'true', 'yes', 'on',
+}
+EVIDENCE_PIPELINE_V2 = os.environ.get('EVIDENCE_PIPELINE_V2', '0').strip().lower() in {
     '1', 'true', 'yes', 'on',
 }
 
@@ -2174,6 +2183,8 @@ def run_actor_generation(actor_id: str, *, trigger_type: str = 'manual_refresh',
                 'finalize_generation_job': _finalize_generation_job,
                 'trigger_type': trigger_type,
                 'job_id': job_id,
+                'interactive_feed_import_max_seconds': FEED_IMPORT_INTERACTIVE_MAX_SECONDS,
+                'interactive_high_signal_target': FEED_INTERACTIVE_HIGH_SIGNAL_TARGET,
             },
         )
         success = True
@@ -2741,7 +2752,13 @@ def _source_fingerprint(
     )
 
 
-def import_default_feeds_for_actor(actor_id: str) -> int:
+def import_default_feeds_for_actor(
+    actor_id: str,
+    *,
+    max_seconds: int | None = None,
+    import_mode: str = 'background',
+    high_signal_target: int | None = None,
+) -> int:
     _log_event('feed_import_started', actor_id=actor_id)
     imported = 0
     success = False
@@ -2755,12 +2772,25 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
                 'primary_cti_feeds': PRIMARY_CTI_FEEDS + EXPANDED_PRIMARY_ADVISORY_FEEDS,
                 'secondary_context_feeds': SECONDARY_CONTEXT_FEEDS,
                 'actor_feed_lookback_days': ACTOR_FEED_LOOKBACK_DAYS,
-                'feed_import_max_seconds': FEED_IMPORT_MAX_SECONDS,
+                'feed_import_max_seconds': (
+                    max(10, int(max_seconds))
+                    if max_seconds is not None
+                    else FEED_IMPORT_MAX_SECONDS
+                ),
                 'feed_fetch_timeout_seconds': FEED_FETCH_TIMEOUT_SECONDS,
                 'feed_entry_scan_limit': FEED_ENTRY_SCAN_LIMIT,
                 'feed_imported_limit': FEED_IMPORTED_LIMIT,
+                'feed_soft_match_limit': FEED_SOFT_MATCH_LIMIT,
                 'actor_search_link_limit': ACTOR_SEARCH_LINK_LIMIT,
                 'feed_require_published_at': FEED_REQUIRE_PUBLISHED_AT,
+                'evidence_pipeline_v2': EVIDENCE_PIPELINE_V2,
+                'feed_import_mode': str(import_mode or 'background'),
+                'feed_high_signal_target': (
+                    max(1, int(high_signal_target))
+                    if high_signal_target is not None
+                    else FEED_INTERACTIVE_HIGH_SIGNAL_TARGET
+                ),
+                'retain_soft_candidates': FEED_RETAIN_SOFT_CANDIDATES,
                 'actor_exists': actor_exists,
                 'build_actor_profile_from_mitre': _build_actor_profile_from_mitre,
                 'actor_terms': _actor_terms,
@@ -2775,6 +2805,7 @@ def import_default_feeds_for_actor(actor_id: str) -> int:
                 'upsert_source_for_actor': _upsert_source_for_actor,
                 'duckduckgo_actor_search_urls': _duckduckgo_actor_search_urls,
                 'utc_now_iso': utc_now_iso,
+                'source_trust_score': _source_trust_score,
             },
         )
         success = True
@@ -2853,6 +2884,7 @@ def _fetch_actor_notebook(
     source_days: int | None = None,
     prefer_cached: bool = True,
     build_on_cache_miss: bool = True,
+    allow_stale_cache: bool = False,
 ) -> dict[str, object]:
     return notebook_service.fetch_actor_notebook_wrapper_core(
         actor_id=actor_id,
@@ -2862,6 +2894,7 @@ def _fetch_actor_notebook(
             source_days=source_days,
             prefer_cached=prefer_cached,
             build_on_cache_miss=build_on_cache_miss,
+            allow_stale_cache=allow_stale_cache,
         ),
     )
 
@@ -2873,6 +2906,7 @@ def _fetch_actor_notebook_deps(
     source_days: int | None = None,
     prefer_cached: bool = True,
     build_on_cache_miss: bool = True,
+    allow_stale_cache: bool = False,
 ) -> dict[str, object]:
     return {
         'pipeline_fetch_actor_notebook_core': pipeline_fetch_actor_notebook_core,
@@ -2882,6 +2916,7 @@ def _fetch_actor_notebook_deps(
         'source_days': source_days,
         'prefer_cached': prefer_cached,
         'build_on_cache_miss': build_on_cache_miss,
+        'allow_stale_cache': allow_stale_cache,
         'parse_published_datetime': _parse_published_datetime,
         'safe_json_string_list': _safe_json_string_list,
         'actor_signal_categories': _actor_signal_categories,

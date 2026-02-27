@@ -9,8 +9,13 @@ def import_default_feeds_for_actor_core(*, actor_id: str, deps: dict[str, object
     _feed_fetch_timeout_seconds = deps['feed_fetch_timeout_seconds']
     _feed_entry_scan_limit = deps['feed_entry_scan_limit']
     _feed_imported_limit = deps['feed_imported_limit']
+    _feed_soft_match_limit = int(deps.get('feed_soft_match_limit', 0))
+    _feed_import_mode = str(deps.get('feed_import_mode', 'background') or 'background')
+    _feed_high_signal_target = max(1, int(deps.get('feed_high_signal_target', 2)))
+    _retain_soft_candidates = bool(deps.get('retain_soft_candidates', False))
     _actor_search_link_limit = deps['actor_search_link_limit']
     _feed_require_published_at = deps['feed_require_published_at']
+    _evidence_pipeline_v2 = bool(deps.get('evidence_pipeline_v2', False))
 
     return _pipeline_import_default_feeds_for_actor_core(
         actor_id,
@@ -23,8 +28,13 @@ def import_default_feeds_for_actor_core(*, actor_id: str, deps: dict[str, object
         feed_fetch_timeout_seconds=_feed_fetch_timeout_seconds,
         feed_entry_scan_limit=_feed_entry_scan_limit,
         feed_imported_limit=_feed_imported_limit,
+        feed_soft_match_limit=_feed_soft_match_limit,
+        import_mode=_feed_import_mode,
+        high_signal_target=_feed_high_signal_target,
+        retain_soft_candidates=_retain_soft_candidates,
         actor_search_link_limit=_actor_search_link_limit,
         feed_require_published_at=_feed_require_published_at,
+        evidence_pipeline_v2=_evidence_pipeline_v2,
         deps={
             'actor_exists': deps['actor_exists'],
             'build_actor_profile_from_mitre': deps['build_actor_profile_from_mitre'],
@@ -40,5 +50,6 @@ def import_default_feeds_for_actor_core(*, actor_id: str, deps: dict[str, object
             'upsert_source_for_actor': deps['upsert_source_for_actor'],
             'duckduckgo_actor_search_urls': deps['duckduckgo_actor_search_urls'],
             'utc_now_iso': deps['utc_now_iso'],
+            'source_trust_score': deps.get('source_trust_score'),
         },
     )

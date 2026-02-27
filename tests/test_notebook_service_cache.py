@@ -55,6 +55,9 @@ def _deps_for_cache_test(db_path: str, pipeline_fetch):
         'build_environment_checks': _noop,
         'build_notebook_kpis': _noop,
         'format_date_or_unknown': _noop,
+        'prefer_cached': True,
+        'build_on_cache_miss': True,
+        'allow_stale_cache': False,
     }
 
 
@@ -126,3 +129,46 @@ def test_notebook_cache_invalidates_when_sources_change(tmp_path):
     assert first['generated'] == 1
     assert second['generated'] == 2
     assert calls['count'] == 2
+
+
+def test_notebook_cache_can_return_stale_snapshot_without_rebuild(tmp_path):
+    db_path = tmp_path / 'app.db'
+    _init_db(db_path)
+
+    def fake_pipeline_fetch(actor_id, **_kwargs):
+        return {'actor': {'id': actor_id}, 'generated': 1}
+
+    deps = _deps_for_cache_test(str(db_path), fake_pipeline_fetch)
+    first = notebook_service.fetch_actor_notebook_wrapper_core(actor_id='actor-1', deps=deps)
+    assert first.get('generated') == 1
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, ingested_at, source_date_type, retrieved_at, pasted_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                str(uuid.uuid4()),
+                'actor-1',
+                'New Source',
+                'https://example.com/new',
+                '',
+                '2026-02-26T02:00:00+00:00',
+                'ingested',
+                '2026-02-26T02:00:00+00:00',
+                'new text',
+            ),
+        )
+        connection.commit()
+
+    stale_deps = dict(deps)
+    stale_deps['build_on_cache_miss'] = False
+    stale_deps['allow_stale_cache'] = True
+    stale = notebook_service.fetch_actor_notebook_wrapper_core(actor_id='actor-1', deps=stale_deps)
+
+    assert stale.get('generated') == 1
+    assert stale.get('snapshot_stale') is True
+    assert not stale.get('cache_miss')

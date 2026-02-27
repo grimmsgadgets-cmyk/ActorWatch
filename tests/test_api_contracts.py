@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import sqlite3
 
 import app as app_module
 
@@ -73,6 +74,125 @@ def test_refresh_job_submit_and_detail_contract(tmp_path):
             assert detail_body.get('actor_id') == actor['id']
             assert detail_body.get('job_id') == job_id
             assert isinstance(detail_body.get('phases'), list)
+
+
+def test_ingest_diagnostics_contract(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('Diagnostics Actor', None)
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO ingest_decisions (
+                id, source_id, actor_id, stage, decision, reason_code, details_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'dec-1',
+                None,
+                actor['id'],
+                'resolve',
+                'rejected',
+                'missing_published_at',
+                '{}',
+                '2026-02-27T00:00:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO ingest_decisions (
+                id, source_id, actor_id, stage, decision, reason_code, details_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'dec-2',
+                None,
+                actor['id'],
+                'acquire_feed',
+                'accepted',
+                'source_upserted',
+                '{}',
+                '2026-02-27T00:01:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, ingested_at, source_date_type, retrieved_at,
+                pasted_text, source_type, source_tier, confidence_weight
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-diag-1',
+                actor['id'],
+                'Trusted Feed',
+                'https://example.test/trusted',
+                '2026-02-27T00:00:00+00:00',
+                '2026-02-27T00:00:00+00:00',
+                'published',
+                '2026-02-27T00:00:00+00:00',
+                'trusted evidence',
+                'feed_partial_match',
+                'trusted',
+                2,
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, ingested_at, source_date_type, retrieved_at,
+                pasted_text, source_type, source_tier, confidence_weight
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-diag-2',
+                actor['id'],
+                'Context Feed',
+                'https://example.test/context',
+                '2026-02-27T00:00:00+00:00',
+                '2026-02-27T00:00:00+00:00',
+                'published',
+                '2026-02-27T00:00:00+00:00',
+                'context evidence',
+                'feed_soft_match',
+                'context',
+                1,
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO timeline_events (
+                id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'evt-diag-1',
+                actor['id'],
+                '2026-02-27T00:00:00+00:00',
+                'execution',
+                'Trusted event',
+                'Trusted summary',
+                'src-diag-1',
+                '',
+                '[]',
+            ),
+        )
+        connection.commit()
+    with TestClient(app_module.app) as client:
+        response = client.get(f"/actors/{actor['id']}/ingest/diagnostics")
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get('actor_id') == actor['id']
+    assert isinstance(body.get('funnel_totals'), dict)
+    assert isinstance(body.get('stage_breakdown'), dict)
+    assert isinstance(body.get('top_rejection_reasons'), list)
+    assert isinstance(body.get('recent_decisions'), list)
+    assert isinstance(body.get('quality_mix'), list)
+    assert isinstance(body.get('default_surface_estimate'), dict)
+    assert isinstance(body.get('totals_snapshot'), dict)
+    assert int(body['funnel_totals'].get('accepted', 0)) >= 1
+    assert int(body['funnel_totals'].get('rejected', 0)) >= 1
+    assert int(body['default_surface_estimate'].get('eligible_sources', 0)) >= 1
+    assert int(body['default_surface_estimate'].get('eligible_timeline_events', 0)) >= 1
 
 
 def test_stix_export_contract(tmp_path):

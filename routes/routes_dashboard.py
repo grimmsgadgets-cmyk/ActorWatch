@@ -234,6 +234,7 @@ def render_dashboard_root(
                     min_confidence_weight=normalized_min_confidence_weight,
                     source_days=normalized_source_days,
                     build_on_cache_miss=False,
+                    allow_stale_cache=True,
                 )
             if isinstance(notebook, dict) and bool(notebook.get('cache_miss')):
                 if callable(_submit_actor_refresh_job):

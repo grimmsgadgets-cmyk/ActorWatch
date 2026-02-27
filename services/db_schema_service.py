@@ -1,5 +1,5 @@
 def ensure_schema(connection) -> None:
-    schema_version = '2026-02-27.2'
+    schema_version = '2026-02-27.3'
     connection.execute(
         '''
         CREATE TABLE IF NOT EXISTS schema_meta (
@@ -482,6 +482,107 @@ def ensure_schema(connection) -> None:
         '''
         CREATE INDEX IF NOT EXISTS idx_sources_actor_fingerprint
         ON sources(actor_id, source_fingerprint)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS source_documents (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            raw_text TEXT NOT NULL DEFAULT '',
+            html_text TEXT NOT NULL DEFAULT '',
+            fetched_at TEXT NOT NULL,
+            http_status INTEGER,
+            content_type TEXT NOT NULL DEFAULT '',
+            parse_status TEXT NOT NULL DEFAULT 'unknown',
+            parse_error TEXT NOT NULL DEFAULT ''
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_source_documents_source_fetched
+        ON source_documents(source_id, fetched_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS source_entities (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_value TEXT NOT NULL,
+            normalized_value TEXT NOT NULL DEFAULT '',
+            confidence REAL NOT NULL DEFAULT 0.0,
+            extractor TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_source_entities_source_type
+        ON source_entities(source_id, entity_type)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS actor_resolution (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            actor_id TEXT NOT NULL,
+            match_type TEXT NOT NULL DEFAULT '',
+            matched_term TEXT NOT NULL DEFAULT '',
+            confidence REAL NOT NULL DEFAULT 0.0,
+            explanation_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_actor_resolution_actor_source
+        ON actor_resolution(actor_id, source_id)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS source_scoring (
+            source_id TEXT PRIMARY KEY,
+            relevance_score REAL NOT NULL DEFAULT 0.0,
+            trust_score REAL NOT NULL DEFAULT 0.0,
+            recency_score REAL NOT NULL DEFAULT 0.0,
+            novelty_score REAL NOT NULL DEFAULT 0.0,
+            final_score REAL NOT NULL DEFAULT 0.0,
+            scored_at TEXT NOT NULL,
+            features_json TEXT NOT NULL DEFAULT '{}'
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_source_scoring_final
+        ON source_scoring(final_score DESC, scored_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS ingest_decisions (
+            id TEXT PRIMARY KEY,
+            source_id TEXT,
+            actor_id TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            reason_code TEXT NOT NULL DEFAULT '',
+            details_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_ingest_decisions_actor_stage_created
+        ON ingest_decisions(actor_id, stage, created_at DESC)
         '''
     )
     connection.execute(

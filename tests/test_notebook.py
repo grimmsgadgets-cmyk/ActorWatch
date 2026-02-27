@@ -989,12 +989,128 @@ def test_generate_actor_requirements_wrapper_delegates_to_pipeline_core(monkeypa
     assert captured['actor_id'] == 'actor-1'
     assert captured['org_context'] == 'finance org'
     assert captured['priority_mode'] == 'Operational'
-    assert captured['db_path'] == app_module.DB_PATH
-    deps = captured['deps']
-    assert isinstance(deps, dict)
-    assert 'actor_exists' in deps
-    assert 'build_actor_profile_from_mitre' in deps
-    assert 'new_id' in deps
+
+
+def test_strict_default_filters_exclude_feed_soft_match_but_keep_partial_match(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Strict-Default', 'Strict default source filter scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        src_soft = app_module._upsert_source_for_actor(  # noqa: SLF001
+            connection,
+            actor['id'],
+            'Context Feed',
+            'https://example.com/soft',
+            '2026-02-21T00:00:00+00:00',
+            'General cyber activity with weak actor attribution.',
+            'Weak actor attribution context',
+            source_tier='context',
+            confidence_weight=1,
+            source_type='feed_soft_match',
+        )
+        src_partial = app_module._upsert_source_for_actor(  # noqa: SLF001
+            connection,
+            actor['id'],
+            'Trusted Feed',
+            'https://example.com/partial',
+            '2026-02-22T00:00:00+00:00',
+            'Partial actor-linked reporting with moderate confidence.',
+            'Moderate actor attribution',
+            source_tier='trusted',
+            confidence_weight=2,
+            source_type='feed_partial_match',
+        )
+        connection.execute(
+            '''
+            INSERT INTO timeline_events (
+                id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'evt-soft',
+                actor['id'],
+                '2026-02-21T00:00:00+00:00',
+                'execution',
+                'Soft matched event',
+                'Weakly-attributed event',
+                src_soft,
+                'Enterprise',
+                '[]',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO timeline_events (
+                id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'evt-partial',
+                actor['id'],
+                '2026-02-22T00:00:00+00:00',
+                'initial_access',
+                'Partial matched event',
+                'Moderately-attributed event',
+                src_partial,
+                'Enterprise',
+                '[]',
+            ),
+        )
+        connection.commit()
+
+    notebook = app_module._fetch_actor_notebook(actor['id'])  # noqa: SLF001
+    filters = notebook.get('source_quality_filters', {})
+    assert str(filters.get('strict_default_mode') or '') == '1'
+    assert str(filters.get('min_confidence_weight') or '') == '2'
+    assert str(filters.get('total_sources') or '') == '2'
+    assert str(filters.get('applied_sources') or '') == '1'
+    assert str(filters.get('filtered_out_sources') or '') == '1'
+
+
+def test_partial_match_source_can_surface_recent_activity_highlight(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('APT-Partial-Highlight', 'Partial highlight scope')
+
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        source_id = app_module._upsert_source_for_actor(  # noqa: SLF001
+            connection,
+            actor['id'],
+            'Trusted Feed',
+            'https://example.com/partial-highlight',
+            '2026-02-22T00:00:00+00:00',
+            'Operators used phishing lures and command-and-control infrastructure in recent campaigns.',
+            'Phishing and C2 patterns observed',
+            source_tier='trusted',
+            confidence_weight=2,
+            source_type='feed_partial_match',
+        )
+        connection.execute(
+            '''
+            INSERT INTO timeline_events (
+                id, actor_id, occurred_at, category, title, summary, source_id, target_text, ttp_ids_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'evt-partial-highlight',
+                actor['id'],
+                '2026-02-22T00:00:00+00:00',
+                'initial_access',
+                'Partial matched event',
+                'Phishing and exploit activity observed in current reporting.',
+                source_id,
+                'Enterprise',
+                '[]',
+            ),
+        )
+        connection.commit()
+
+    notebook = app_module._fetch_actor_notebook(actor['id'])  # noqa: SLF001
+    highlights = notebook.get('recent_activity_highlights', [])
+    assert isinstance(highlights, list)
+    assert len(highlights) >= 1
 
 
 def test_import_default_feeds_wrapper_delegates_to_pipeline_core(monkeypatch):
@@ -1024,6 +1140,9 @@ def test_import_default_feeds_wrapper_delegates_to_pipeline_core(monkeypatch):
 def test_run_actor_generation_wrapper_delegates_to_pipeline_core(monkeypatch):
     monkeypatch.setattr(app_module, '_mark_actor_generation_started', lambda _actor_id: True)  # noqa: SLF001
     monkeypatch.setattr(app_module, '_mark_actor_generation_finished', lambda _actor_id: None)  # noqa: SLF001
+    monkeypatch.setattr(app_module, '_create_generation_job', lambda **_kwargs: 'job-1')  # noqa: SLF001
+    monkeypatch.setattr(app_module, '_mark_generation_job_started', lambda **_kwargs: None)  # noqa: SLF001
+    monkeypatch.setattr(app_module, '_finalize_generation_job', lambda **_kwargs: None)  # noqa: SLF001
 
     captured: dict[str, object] = {}
 

@@ -14,6 +14,8 @@ def run_actor_generation_core(
     _enqueue_actor_llm_enrichment = deps.get('enqueue_actor_llm_enrichment')
     _job_id = str(deps.get('job_id') or '')
     _trigger_type = str(deps.get('trigger_type') or 'manual_refresh')
+    _interactive_feed_import_max_seconds = int(deps.get('interactive_feed_import_max_seconds', 25) or 25)
+    _interactive_high_signal_target = int(deps.get('interactive_high_signal_target', 2) or 2)
     _start_phase = deps.get('start_phase')
     _finish_phase = deps.get('finish_phase')
 
@@ -55,7 +57,20 @@ def run_actor_generation_core(
             'running',
             'Checking trusted sources for new updates...',
         )
-        imported = _import_default_feeds_for_actor(actor_id)
+        is_interactive_trigger = _trigger_type in {'manual_refresh', 'page_load', 'manual'}
+        import_kwargs: dict[str, object] = {}
+        if is_interactive_trigger:
+            import_kwargs = {
+                'max_seconds': max(10, int(_interactive_feed_import_max_seconds)),
+                'import_mode': 'interactive',
+                'high_signal_target': max(1, int(_interactive_high_signal_target)),
+            }
+        else:
+            import_kwargs = {'import_mode': 'background'}
+        try:
+            imported = int(_import_default_feeds_for_actor(actor_id, **import_kwargs))
+        except TypeError:
+            imported = int(_import_default_feeds_for_actor(actor_id))
         _phase_finish(
             source_phase_id,
             status='completed',
