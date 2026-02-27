@@ -4,6 +4,7 @@ A lightweight threat actor lookup tool that turns reporting into a clear
 starting point for defensive review.
 
 ![App Screenshot](docs/screenshots/updated2.png)
+![App Screenshot](docs/screenshots/bastion.png)
 
 ------------------------------------------------------------------------
 
