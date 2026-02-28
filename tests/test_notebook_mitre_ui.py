@@ -405,8 +405,12 @@ def test_root_renders_analyst_flow_headings(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     body = str(response.body.decode('utf-8', errors='ignore'))
-    assert '1) Who are they?' in body
-    assert '2) What have they been up to recently?' in body
+    # 5-tab nav structure
+    assert 'data-main-tab="overview"' in body
+    assert 'data-main-tab="timeline"' in body
+    assert 'data-main-tab="iocs"' in body
+    assert 'data-main-tab="notebook"' in body
+    assert 'data-main-tab="visuals"' in body
     assert 'Quick checks' in body
 
 

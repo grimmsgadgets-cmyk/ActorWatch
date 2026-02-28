@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ActorWatch</title>
+    <title>{{ app_name }}</title>
     <style>
       body { margin: 0; font-family: Arial, sans-serif; background: #f7f7f7; color: #111; line-height: 1.4; }
       .layout { display: grid; grid-template-columns: 320px 1fr; min-height: 100vh; }
@@ -1185,6 +1185,39 @@
         .ledger-controls { grid-template-columns: 1fr 1fr; }
         .review-grid { grid-template-columns: 1fr 1fr; }
       }
+      /* ── IOC tab ─────────────────────────────────────────────────────────── */
+      .ioc-table-wrap { display: flex; flex-direction: column; gap: 10px; }
+      .ioc-row { padding: 10px; border: 1px solid #3d4658; border-radius: 8px; background: #1e2938; }
+      .ioc-row-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+      .ioc-value { font-family: monospace; font-size: 12px; color: #e2eaf5; word-break: break-all; }
+      .ioc-source { font-size: 11px; color: #8a9ab5; }
+      .ioc-row-meta { font-size: 11px; color: #6b7e99; margin-bottom: 4px; }
+      .ioc-status-form { display: flex; gap: 6px; flex-wrap: wrap; }
+      .ioc-enrich-links { display: flex; gap: 4px; margin-left: 4px; }
+      .enrich-link {
+        display: inline-block; padding: 1px 6px; border-radius: 4px;
+        background: #2a3f5e; color: #7eb5f5; font-size: 10px; text-decoration: none;
+        border: 1px solid #3d5a7a;
+      }
+      .enrich-link:hover { background: #35527f; color: #fff; }
+      /* ── Visuals tab ─────────────────────────────────────────────────────── */
+      .visuals-placeholder-grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 14px; margin-top: 12px;
+      }
+      .visuals-placeholder {
+        padding: 16px; border: 1px dashed #4a5a72; border-radius: 8px;
+        background: #1a2535; color: #8a9ab5;
+      }
+      .visuals-placeholder-title { font-weight: 600; color: #c0cfe8; margin-bottom: 6px; font-size: 13px; }
+      .visuals-placeholder-desc { font-size: 11px; line-height: 1.5; }
+      /* ── Utility ─────────────────────────────────────────────────────────── */
+      .btn-secondary {
+        display: inline-block; padding: 7px 14px; border-radius: 6px;
+        background: #253348; color: #a8bdd4; border: 1px solid #3d4f66;
+        text-decoration: none; font-size: 12px;
+      }
+      .btn-secondary:hover { background: #35527f; color: #fff; }
     </style>
   </head>
   <body {% if notebook %}data-actor-id="{{ notebook.actor.id }}"{% endif %}>
@@ -1997,281 +2030,387 @@
 
         <div class="workspace-grid single-card">
         <section class="card pane giant-notebook-card">
-          <h2 class="section-title">Actor profile and recent activity</h2>
-          <p class="inline-note">Use tabs to switch between identity context and current activity signals.</p>
-          <span class="sr-only">1) Who are they?</span>
-          <span class="sr-only">2) What have they been up to recently?</span>
-          <div class="main-tabs" role="tablist" aria-label="Notebook sections">
-            <button type="button" class="main-tab-btn active" data-main-tab="who" role="tab" aria-selected="true">Actor profile</button>
-            <button type="button" class="main-tab-btn" data-main-tab="recent" role="tab" aria-selected="false">Recent activity</button>
+          <div class="main-tabs" role="tablist" aria-label="Actor sections">
+            <button type="button" class="main-tab-btn active" data-main-tab="overview" role="tab" aria-selected="true">Overview</button>
+            <button type="button" class="main-tab-btn" data-main-tab="timeline" role="tab" aria-selected="false">Timeline</button>
+            <button type="button" class="main-tab-btn" data-main-tab="iocs" role="tab" aria-selected="false">IOCs</button>
+            <button type="button" class="main-tab-btn" data-main-tab="notebook" role="tab" aria-selected="false">Notebook</button>
+            <button type="button" class="main-tab-btn" data-main-tab="visuals" role="tab" aria-selected="false">Visuals</button>
           </div>
-        <section data-step="who" id="section-who" data-main-panel="who">
-          <h3 class="section-title">Profile snapshot<span class="role-chip">Understand</span></h3>
-          <div class="section-body">
-          <div class="who-summary">
-            <p>{{ notebook.actor_profile_summary }}</p>
-            <div class="who-meta">Framework Group Match: {{ notebook.actor_profile_group_name }} | Source: <a href="{{ notebook.actor_profile_source_url }}" target="_blank" rel="noreferrer">{{ notebook.actor_profile_source_label }}</a> | Created: {{ notebook.actor_created_date }}</div>
-          </div>
-          {% set why_now_signal = notebook.top_change_signals[0] if notebook.top_change_signals else None %}
-          {% set why_now_synthesis = notebook.recent_activity_synthesis[0] if notebook.recent_activity_synthesis else None %}
-          {% set why_now_text = '' %}
-          {% if why_now_signal and why_now_signal.change_why_new %}
-            {% set why_now_text = why_now_signal.change_why_new %}
-          {% elif why_now_synthesis and why_now_synthesis.text %}
-            {% set why_now_text = why_now_synthesis.text %}
-          {% elif why_now_signal and why_now_signal.change_summary %}
-            {% set why_now_text = why_now_signal.change_summary %}
-          {% else %}
-            {% set llm_msg = (ollama_status.message if ollama_status and ollama_status.message else '')|lower %}
-            {% set llm_ready = (ollama_status and ollama_status.available and ('not found' not in llm_msg)) %}
-            {% if llm_ready %}
-              {% set why_now_text = 'No validated LLM synthesis is available for this actor yet. Refresh after additional actor-linked evidence is ingested.' %}
+
+          <!-- ─── Overview ──────────────────────────────────────────────── -->
+          <section id="section-overview" data-main-panel="overview">
+            <h3 class="section-title">Profile snapshot<span class="role-chip">Understand</span></h3>
+            <div class="section-body">
+            <div class="who-summary">
+              <p>{{ notebook.actor_profile_summary }}</p>
+              <div class="who-meta">Framework Group Match: {{ notebook.actor_profile_group_name }} | Source: <a href="{{ notebook.actor_profile_source_url }}" target="_blank" rel="noreferrer">{{ notebook.actor_profile_source_label }}</a> | Created: {{ notebook.actor_created_date }}</div>
+            </div>
+            {% set why_now_signal = notebook.top_change_signals[0] if notebook.top_change_signals else None %}
+            {% set why_now_synthesis = notebook.recent_activity_synthesis[0] if notebook.recent_activity_synthesis else None %}
+            {% set why_now_text = '' %}
+            {% if why_now_signal and why_now_signal.change_why_new %}
+              {% set why_now_text = why_now_signal.change_why_new %}
+            {% elif why_now_synthesis and why_now_synthesis.text %}
+              {% set why_now_text = why_now_synthesis.text %}
+            {% elif why_now_signal and why_now_signal.change_summary %}
+              {% set why_now_text = why_now_signal.change_summary %}
             {% else %}
-              {% set why_now_text = 'LLM synthesis is unavailable right now. Confirm Ollama/model status, then refresh this actor notebook.' %}
+              {% set llm_msg = (ollama_status.message if ollama_status and ollama_status.message else '')|lower %}
+              {% set llm_ready = (ollama_status and ollama_status.available and ('not found' not in llm_msg)) %}
+              {% if llm_ready %}
+                {% set why_now_text = 'No validated LLM synthesis is available for this actor yet. Refresh after additional actor-linked evidence is ingested.' %}
+              {% else %}
+                {% set why_now_text = 'LLM synthesis is unavailable right now. Confirm Ollama/model status, then refresh this actor notebook.' %}
+              {% endif %}
             {% endif %}
-          {% endif %}
-          <div class="who-why">
-            <strong>What changed and why you should care:</strong> {{ why_now_text }}
-            {% if why_now_signal and why_now_signal.validated_source_count %}
-            <div class="who-meta">Supported by {{ why_now_signal.validated_source_count }} corroborated source(s).</div>
-            {% endif %}
-          </div>
-          <p class="who-heading"><strong>Common moves they use (top 3)</strong></p>
-          {% if notebook.top_techniques %}
-          <div class="technique-grid">
-            {% for technique in notebook.top_techniques[:3] %}
-            <div class="technique-item">
-              <div class="technique-head">
-                {% if technique.technique_url %}
-                <a class="technique-pill" href="{{ technique.technique_url }}" target="_blank" rel="noreferrer">{{ technique.technique_id or 'Technique' }}</a>
-                {% else %}
-                <span class="technique-pill">{{ technique.technique_id or 'Technique' }}</span>
+            <div class="who-why">
+              <strong>What changed and why you should care:</strong> {{ why_now_text }}
+              {% if why_now_signal and why_now_signal.validated_source_count %}
+              <div class="who-meta">Supported by {{ why_now_signal.validated_source_count }} corroborated source(s).</div>
+              {% endif %}
+            </div>
+            <p class="who-heading"><strong>Common moves they use (top 3)</strong></p>
+            {% if notebook.top_techniques %}
+            <div class="technique-grid">
+              {% for technique in notebook.top_techniques[:3] %}
+              <div class="technique-item">
+                <div class="technique-head">
+                  {% if technique.technique_url %}
+                  <a class="technique-pill" href="{{ technique.technique_url }}" target="_blank" rel="noreferrer">{{ technique.technique_id or 'Technique' }}</a>
+                  {% else %}
+                  <span class="technique-pill">{{ technique.technique_id or 'Technique' }}</span>
+                  {% endif %}
+                </div>
+                <div class="technique-name">{{ technique.technique_name }}</div>
+                {% if technique.phase %}
+                <div class="technique-phase">{{ technique.phase.replace('_', ' ') }}</div>
                 {% endif %}
               </div>
-              <div class="technique-name">{{ technique.technique_name }}</div>
-              {% if technique.phase %}
-              <div class="technique-phase">{{ technique.phase.replace('_', ' ') }}</div>
-              {% endif %}
+              {% endfor %}
             </div>
-            {% endfor %}
-          </div>
-          <p><small>New to ATT&CK IDs? Treat these as behavior tags to guide detections and hunts.</small></p>
-          {% else %}
-          <p><small>No mapped technique profile available yet.</small></p>
-          {% endif %}
-          <div class="who-kpis">
-            <div class="who-kpi">
-              <div class="who-kpi-label">30d activity</div>
-              <div class="who-kpi-value">{{ notebook.kpis.activity_30d }}</div>
-            </div>
-            <div class="who-kpi">
-              <div class="who-kpi-label">New techniques</div>
-              <div class="who-kpi-value">{{ notebook.kpis.new_techniques_30d }}</div>
-            </div>
-            <div class="who-kpi">
-              <div class="who-kpi-label">Last checked</div>
-              <div class="who-kpi-value">{{ notebook.kpis.last_verified_update }}</div>
-            </div>
-          </div>
-          <details class="compact">
-            <summary>Emerging techniques observed ({{ notebook.emerging_techniques|length if notebook.emerging_techniques else 0 }})</summary>
-          {% if notebook.emerging_techniques %}
-          <ul class="summary-list">
-            {% for technique in notebook.emerging_techniques[:3] %}
-            <li>
-              {% if technique.technique_url %}
-              <a href="{{ technique.technique_url }}" target="_blank" rel="noreferrer">{{ technique.technique_id }}</a>
-              {% else %}
-              {{ technique.technique_id }}
-              {% endif %}
-              {% if technique.technique_name %} - {{ technique.technique_name }}{% endif %}
-              <small>(first seen {{ technique.first_seen or 'unknown' }}, {{ technique.source_count }} sources, {{ technique.event_count }} events)</small>
-            </li>
-            {% endfor %}
-          </ul>
-          {% else %}
-          <p><small>No new technique IDs observed yet in actor-specific recent reporting.</small></p>
-          {% endif %}
-          </details>
-          </div>
-          {% if not notebook.actor.is_tracked %}
-          <form method="post" action="/actors/{{ notebook.actor.id }}/track">
-            <button type="submit">Track actor</button>
-          </form>
-          {% endif %}
-        </section>
-
-        <section class="tab-panel-hidden" data-step="recent" id="section-recent" data-main-panel="recent">
-          <h3 class="section-title">Recent activity snapshot<span class="role-chip">Watch</span></h3>
-          {% if notebook.actor.notebook_status == 'running' %}
-          <div class="notice status-working">Source collection is running in the background. This section will populate automatically.</div>
-          {% endif %}
-          <div class="section-body">
-          <p><strong>Recent activity snapshot:</strong></p>
-          <ul class="summary-list">
-            <li><strong>Report count:</strong> {{ recent_change.new_reports }}</li>
-            <li><strong>Target sectors:</strong> <span id="recent-targets">{{ recent_change.targets }}</span></li>
-            <li><strong>Reported impact:</strong> {{ recent_change.damage }}</li>
-          </ul>
-          {% if notebook.recent_activity_synthesis %}
-          <p class="inline-note"><strong>How to read:</strong> left to right = change, affected area, and recommended first action.</p>
-          <div class="snapshot-grid">
-            {% for synthesis in notebook.recent_activity_synthesis %}
-            {% if synthesis.label != 'What changed' %}
-            <div class="snapshot-card conf-{{ (synthesis.confidence or 'low') | lower }}">
-              <h3 class="snapshot-title">{{ synthesis.label }}</h3>
-              <p class="snapshot-text">{{ synthesis.text }}</p>
-              <div class="snapshot-meta">
-                <span class="badge">{{ synthesis.confidence }}</span>
-                <span>{{ synthesis.lineage }}</span>
+            <p><small>New to ATT&amp;CK IDs? Treat these as behavior tags to guide detections and hunts.</small></p>
+            {% else %}
+            <p><small>No mapped technique profile available yet.</small></p>
+            {% endif %}
+            <div class="who-kpis">
+              <div class="who-kpi">
+                <div class="who-kpi-label">30d activity</div>
+                <div class="who-kpi-value">{{ notebook.kpis.activity_30d }}</div>
+              </div>
+              <div class="who-kpi">
+                <div class="who-kpi-label">New techniques</div>
+                <div class="who-kpi-value">{{ notebook.kpis.new_techniques_30d }}</div>
+              </div>
+              <div class="who-kpi">
+                <div class="who-kpi-label">Last checked</div>
+                <div class="who-kpi-value">{{ notebook.kpis.last_verified_update }}</div>
               </div>
             </div>
+            <details class="compact">
+              <summary>Emerging techniques observed ({{ notebook.emerging_techniques|length if notebook.emerging_techniques else 0 }})</summary>
+            {% if notebook.emerging_techniques %}
+            <ul class="summary-list">
+              {% for technique in notebook.emerging_techniques[:3] %}
+              <li>
+                {% if technique.technique_url %}
+                <a href="{{ technique.technique_url }}" target="_blank" rel="noreferrer">{{ technique.technique_id }}</a>
+                {% else %}
+                {{ technique.technique_id }}
+                {% endif %}
+                {% if technique.technique_name %} - {{ technique.technique_name }}{% endif %}
+                <small>(first seen {{ technique.first_seen or 'unknown' }}, {{ technique.source_count }} sources, {{ technique.event_count }} events)</small>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p><small>No new technique IDs observed yet in actor-specific recent reporting.</small></p>
             {% endif %}
-            {% endfor %}
-          </div>
-          {% endif %}
-          {% if notebook.recent_activity_highlights %}
-          {% set quality_filters = notebook.get('source_quality_filters', source_quality_filters or {}) %}
-          <p class="inline-note">
-            Built from fresh, higher-confidence reporting.
-            Using {{ quality_filters.get('applied_sources', 0) }} of {{ quality_filters.get('total_sources', 0) }} sources{% if quality_filters.get('filtered_out_sources', 0) %} (filtered out: {{ quality_filters.get('filtered_out_sources', 0) }}){% endif %}.
-          </p>
-          <p><strong>What changed recently (AI reviewed):</strong></p>
-          {% if notebook.top_change_signals %}
-          <div class="change-list" id="latest-sources-list">
-            {% for item in notebook.top_change_signals %}
-            <div class="change-row">
-              <div class="change-row-main">
-                <div class="change-row-title">{{ item.change_summary }}</div>
-                <div>
-                  {% if item.change_window_days %}<span class="badge">first seen in the last {{ item.change_window_days }} days</span>{% endif %}
-                  {% if item.change_confidence %}<span class="badge">{{ item.change_confidence }}</span>{% endif %}
+            </details>
+            </div>
+            {% if not notebook.actor.is_tracked %}
+            <form method="post" action="/actors/{{ notebook.actor.id }}/track">
+              <button type="submit">Track actor</button>
+            </form>
+            {% endif %}
+
+            <!-- Recent activity sub-section -->
+            <h3 class="section-title" style="margin-top:16px;">Recent activity<span class="role-chip">Watch</span></h3>
+            {% if notebook.actor.notebook_status == 'running' %}
+            <div class="notice status-working">Source collection is running in the background. This section will populate automatically.</div>
+            {% endif %}
+            <div class="section-body">
+            <ul class="summary-list">
+              <li><strong>Report count:</strong> {{ recent_change.new_reports }}</li>
+              <li><strong>Target sectors:</strong> <span id="recent-targets">{{ recent_change.targets }}</span></li>
+              <li><strong>Reported impact:</strong> {{ recent_change.damage }}</li>
+            </ul>
+            {% if notebook.recent_activity_synthesis %}
+            <p class="inline-note"><strong>How to read:</strong> left to right = change, affected area, and recommended first action.</p>
+            <div class="snapshot-grid">
+              {% for synthesis in notebook.recent_activity_synthesis %}
+              {% if synthesis.label != 'What changed' %}
+              <div class="snapshot-card conf-{{ (synthesis.confidence or 'low') | lower }}">
+                <h3 class="snapshot-title">{{ synthesis.label }}</h3>
+                <p class="snapshot-text">{{ synthesis.text }}</p>
+                <div class="snapshot-meta">
+                  <span class="badge">{{ synthesis.confidence }}</span>
+                  <span>{{ synthesis.lineage }}</span>
                 </div>
               </div>
-              {% if item.change_why_new %}
-              <div class="change-row-source"><em>{{ item.change_why_new }}</em></div>
               {% endif %}
-              <div class="change-row-source">
-                Based on {{ item.validated_source_count or '0' }} source(s) we checked
-                {% if item.category and item.category != 'activity synthesis' %} | {{ item.category.replace('_', ' ') }}{% endif %}
-                {% if item.ttp_ids %} | {{ item.ttp_ids }}{% endif %}
-                {% if item.target_text %} | target: {{ item.target_text }}{% endif %}
-              </div>
-              {% if item.validated_sources %}
-              <ul class="recent-source-list" style="margin-top:6px;">
-                {% for evidence in item.validated_sources %}
-                <li>
-                  <div class="source-headline">
-                    {% if evidence.source_date %}<span class="badge">{{ evidence.source_date }}</span>{% endif %}
-                    {% if evidence.freshness_label %}<span class="badge {{ evidence.freshness_class }}">{{ evidence.freshness_label }}</span>{% endif %}
-                    <a class="source-title-link" href="{{ evidence.source_url }}" target="_blank" rel="noreferrer">{{ evidence.source_label or evidence.source_url }}</a>
+              {% endfor %}
+            </div>
+            {% endif %}
+            {% if notebook.recent_activity_highlights %}
+            {% set quality_filters = notebook.get('source_quality_filters', source_quality_filters or {}) %}
+            <p class="inline-note">
+              Built from fresh, higher-confidence reporting.
+              Using {{ quality_filters.get('applied_sources', 0) }} of {{ quality_filters.get('total_sources', 0) }} sources{% if quality_filters.get('filtered_out_sources', 0) %} (filtered out: {{ quality_filters.get('filtered_out_sources', 0) }}){% endif %}.
+            </p>
+            <p><strong>What changed recently (AI reviewed):</strong></p>
+            {% if notebook.top_change_signals %}
+            <div class="change-list" id="latest-sources-list">
+              {% for item in notebook.top_change_signals %}
+              <div class="change-row">
+                <div class="change-row-main">
+                  <div class="change-row-title">{{ item.change_summary }}</div>
+                  <div>
+                    {% if item.change_window_days %}<span class="badge">first seen in the last {{ item.change_window_days }} days</span>{% endif %}
+                    {% if item.change_confidence %}<span class="badge">{{ item.change_confidence }}</span>{% endif %}
                   </div>
-                  {% if evidence.proof %}<small class="source-meta">{{ evidence.proof }}</small>{% endif %}
-                </li>
+                </div>
+                {% if item.change_why_new %}
+                <div class="change-row-source"><em>{{ item.change_why_new }}</em></div>
+                {% endif %}
+                <div class="change-row-source">
+                  Based on {{ item.validated_source_count or '0' }} source(s) we checked
+                  {% if item.category and item.category != 'activity synthesis' %} | {{ item.category.replace('_', ' ') }}{% endif %}
+                  {% if item.ttp_ids %} | {{ item.ttp_ids }}{% endif %}
+                  {% if item.target_text %} | target: {{ item.target_text }}{% endif %}
+                </div>
+                {% if item.validated_sources %}
+                <ul class="recent-source-list" style="margin-top:6px;">
+                  {% for evidence in item.validated_sources %}
+                  <li>
+                    <div class="source-headline">
+                      {% if evidence.source_date %}<span class="badge">{{ evidence.source_date }}</span>{% endif %}
+                      {% if evidence.freshness_label %}<span class="badge {{ evidence.freshness_class }}">{{ evidence.freshness_label }}</span>{% endif %}
+                      <a class="source-title-link" href="{{ evidence.source_url }}" target="_blank" rel="noreferrer">{{ evidence.source_label or evidence.source_url }}</a>
+                    </div>
+                    {% if evidence.proof %}<small class="source-meta">{{ evidence.proof }}</small>{% endif %}
+                  </li>
+                  {% endfor %}
+                </ul>
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <p><small>No clear new behavior was confirmed from recent reporting (last 30/60/90 days).</small></p>
+            {% endif %}
+            <div class="timeline-footer-link"><a href="/actors/{{ notebook.actor.id }}/timeline/details">View full timeline</a></div>
+            {% else %}
+            <p>No recent activity summary yet. <a href="/actors/{{ notebook.actor.id }}/timeline/details">Open the timeline</a> to review sources.</p>
+            {% endif %}
+            </div>
+          </section>
+
+          <!-- ─── Timeline ───────────────────────────────────────────────── -->
+          <section class="tab-panel-hidden" id="section-timeline" data-main-panel="timeline">
+            <h3 class="section-title">Timeline</h3>
+            <div class="section-body">
+              <p class="inline-note">Full chronological event history for this actor. Add events manually, or let source ingest populate it automatically.</p>
+              <div style="margin:12px 0;">
+                <a href="/actors/{{ notebook.actor.id }}/timeline/details" class="btn-secondary">Open full timeline</a>
+              </div>
+              {% if notebook.top_change_signals %}
+              <div class="who-kpis" style="margin-bottom:12px;">
+                <div class="who-kpi"><div class="who-kpi-label">Recent signals</div><div class="who-kpi-value">{{ notebook.top_change_signals|length }}</div></div>
+                <div class="who-kpi"><div class="who-kpi-label">30d activity</div><div class="who-kpi-value">{{ notebook.kpis.activity_30d }}</div></div>
+                <div class="who-kpi"><div class="who-kpi-label">Last checked</div><div class="who-kpi-value">{{ notebook.kpis.last_verified_update }}</div></div>
+              </div>
+              <p><strong>Recent signals (preview — open the timeline for full history):</strong></p>
+              <div class="change-list">
+                {% for item in notebook.top_change_signals[:5] %}
+                <div class="change-row">
+                  <div class="change-row-main">
+                    <div class="change-row-title">{{ item.change_summary }}</div>
+                    <div>
+                      {% if item.change_window_days %}<span class="badge">last {{ item.change_window_days }}d</span>{% endif %}
+                      {% if item.change_confidence %}<span class="badge">{{ item.change_confidence }}</span>{% endif %}
+                    </div>
+                  </div>
+                  <div class="change-row-source">{{ item.validated_source_count or 0 }} source(s){% if item.category and item.category != 'activity synthesis' %} | {{ item.category.replace('_', ' ') }}{% endif %}</div>
+                </div>
                 {% endfor %}
-              </ul>
+              </div>
+              {% else %}
+              <div class="timeline-empty">
+                <p>No timeline events yet. <a href="/actors/{{ notebook.actor.id }}/timeline/details">Open the full timeline</a> to add the first event.</p>
+              </div>
               {% endif %}
             </div>
-            {% endfor %}
-          </div>
-          {% else %}
-          <p><small>No clear new behavior was confirmed from recent reporting (last 30/60/90 days).</small></p>
-          {% endif %}
-          <div class="timeline-footer-link"><a href="/actors/{{ notebook.actor.id }}/timeline/details">View source timeline evidence</a></div>
-          {% else %}
-          <p>No recent activity summary yet.</p>
-          {% endif %}
+          </section>
 
-          </div>
+          <!-- ─── IOCs ───────────────────────────────────────────────────── -->
+          <section class="tab-panel-hidden" id="section-iocs" data-main-panel="iocs">
+            <h3 class="section-title">IOCs</h3>
+            <div class="section-body">
+            {% if notebook.ioc_items %}
+            <p class="inline-note">{{ notebook.ioc_items|length }} indicator(s) tracked for this actor. Update status or TLP below. Enrich links open in a new tab — no API keys required.</p>
+            <div class="ioc-table-wrap">
+              {% for ioc in notebook.ioc_items %}
+              <div class="ioc-row">
+                <div class="ioc-row-head">
+                  <span class="badge">{{ ioc.ioc_type }}</span>
+                  <span class="ioc-value">{{ ioc.ioc_value }}</span>
+                  {% if ioc.source_ref %}<span class="ioc-source">({{ ioc.source_ref }})</span>{% endif %}
+                  <!-- Enrichment link-outs (external only, no API calls) -->
+                  {% set itype = (ioc.ioc_type or '')|lower %}
+                  {% if itype in ['ip', 'ipv4', 'ipv6', 'ip address'] %}
+                  <span class="ioc-enrich-links">
+                    <a href="https://www.virustotal.com/gui/search/{{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">VT</a>
+                    <a href="https://www.greynoise.io/noise/{{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">GreyNoise</a>
+                    <a href="https://www.abuseipdb.com/check/{{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">AbuseIPDB</a>
+                  </span>
+                  {% elif itype in ['domain', 'hostname', 'fqdn'] %}
+                  <span class="ioc-enrich-links">
+                    <a href="https://www.virustotal.com/gui/domain/{{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">VT</a>
+                    <a href="https://urlscan.io/search/#{{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">URLScan</a>
+                    <a href="https://threatfox.abuse.ch/browse/?q={{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">ThreatFox</a>
+                  </span>
+                  {% elif itype in ['hash', 'md5', 'sha1', 'sha256', 'sha512', 'file hash'] %}
+                  <span class="ioc-enrich-links">
+                    <a href="https://www.virustotal.com/gui/file/{{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">VT</a>
+                    <a href="https://bazaar.abuse.ch/browse/?q={{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">MalwareBazaar</a>
+                    <a href="https://threatfox.abuse.ch/browse/?q={{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">ThreatFox</a>
+                  </span>
+                  {% elif itype in ['url'] %}
+                  <span class="ioc-enrich-links">
+                    <a href="https://urlscan.io/search/#{{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">URLScan</a>
+                    <a href="https://www.virustotal.com/gui/search/{{ ioc.ioc_value }}" target="_blank" rel="noreferrer noopener" class="enrich-link">VT</a>
+                  </span>
+                  {% endif %}
+                </div>
+                <div class="ioc-row-meta">
+                  <small>Status: {{ ioc.lifecycle_status or 'active' }} | TLP: {{ ioc.handling_tlp or 'TLP:CLEAR' }} | Seen: {{ ioc.seen_count or 1 }} | Last seen: {{ ioc.last_seen_at or ioc.created_at or 'unknown' }}</small>
+                </div>
+                <form method="post" action="/actors/{{ notebook.actor.id }}/iocs/{{ ioc.id }}/status" class="ioc-status-form" style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
+                  <select name="lifecycle_status">
+                    <option value="active" {% if (ioc.lifecycle_status or '') == 'active' %}selected{% endif %}>active</option>
+                    <option value="monitor" {% if (ioc.lifecycle_status or '') == 'monitor' %}selected{% endif %}>monitor</option>
+                    <option value="superseded" {% if (ioc.lifecycle_status or '') == 'superseded' %}selected{% endif %}>superseded</option>
+                    <option value="revoked" {% if (ioc.lifecycle_status or '') == 'revoked' %}selected{% endif %}>revoked</option>
+                    <option value="false_positive" {% if (ioc.lifecycle_status or '') == 'false_positive' %}selected{% endif %}>false_positive</option>
+                  </select>
+                  <select name="handling_tlp">
+                    <option value="TLP:CLEAR" {% if (ioc.handling_tlp or 'TLP:CLEAR') == 'TLP:CLEAR' %}selected{% endif %}>TLP:CLEAR</option>
+                    <option value="TLP:GREEN" {% if (ioc.handling_tlp or '') == 'TLP:GREEN' %}selected{% endif %}>TLP:GREEN</option>
+                    <option value="TLP:AMBER" {% if (ioc.handling_tlp or '') == 'TLP:AMBER' %}selected{% endif %}>TLP:AMBER</option>
+                    <option value="TLP:AMBER+STRICT" {% if (ioc.handling_tlp or '') == 'TLP:AMBER+STRICT' %}selected{% endif %}>TLP:AMBER+STRICT</option>
+                    <option value="TLP:RED" {% if (ioc.handling_tlp or '') == 'TLP:RED' %}selected{% endif %}>TLP:RED</option>
+                  </select>
+                  <input type="text" name="status_reason" placeholder="reason (optional)" />
+                  <button type="submit">Update</button>
+                </form>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="timeline-empty">
+              <p>No IOCs tracked yet for this actor.</p>
+              <p class="inline-note">IOCs are automatically extracted from source feeds when this actor is tracked. Once ingested, they appear here with one-click enrichment links.</p>
+            </div>
+            {% endif %}
+            </div>
+          </section>
 
-        </section>
-        </section>
-        </div>
-
-        <section class="card span-2" id="section-history-left">
-          <h2 class="section-title">Analyst notes and history</h2>
-          <p class="inline-note">Capture what matters, then review outcomes and coverage without leaving the workflow.</p>
-          <div class="notes-tabs" role="tablist" aria-label="Analyst notes tabs">
-            <button type="button" class="notes-tab-btn active" data-notes-tab="capture" role="tab" aria-selected="true">Capture</button>
-            <button type="button" class="notes-tab-btn" data-notes-tab="review" role="tab" aria-selected="false">Since review</button>
-            <button type="button" class="notes-tab-btn" data-notes-tab="bestpractices" role="tab" aria-selected="false">Best practices</button>
-            <button type="button" class="notes-tab-btn" data-notes-tab="advanced" role="tab" aria-selected="false">Advanced</button>
-          </div>
-          <div data-notes-panel="capture">
-          <div class="interactive-panel" data-observation-item-type="actor" data-observation-item-key="summary">
-            <div class="obs-row">
-              <div>
-                <label>Analyst</label>
-                <input type="text" class="observation-analyst" placeholder="name or handle" />
-              </div>
-              <div>
-                <label>Confidence</label>
-                <select class="observation-confidence">
-                  <option value="moderate">Moderate</option>
-                  <option value="high">High</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
-              <div>
-                <label>Claim type</label>
-                <select class="observation-claim-type">
-                  <option value="assessment">Assessment</option>
-                  <option value="evidence">Evidence-backed</option>
-                </select>
-              </div>
-              <div>
-                <label>Observed on</label>
-                <input type="date" class="observation-observed-on" />
-              </div>
-              <div style="grid-column: 1 / -1;">
-                <label>Citation URL</label>
-                <input type="url" class="observation-citation-url" placeholder="https://source.example/report" />
-              </div>
-              <textarea class="observation-note" placeholder="What changed that matters for this actor?"></textarea>
+          <!-- ─── Notebook ───────────────────────────────────────────────── -->
+          <section class="tab-panel-hidden" id="section-notebook" data-main-panel="notebook">
+            <h2 class="section-title">Analyst notes</h2>
+            <p class="inline-note">Capture what matters, then review outcomes and coverage without leaving the workflow.</p>
+            <div class="notes-tabs" role="tablist" aria-label="Analyst notes tabs">
+              <button type="button" class="notes-tab-btn active" data-notes-tab="capture" role="tab" aria-selected="true">Capture</button>
+              <button type="button" class="notes-tab-btn" data-notes-tab="review" role="tab" aria-selected="false">Since review</button>
+              <button type="button" class="notes-tab-btn" data-notes-tab="bestpractices" role="tab" aria-selected="false">Best practices</button>
+              <button type="button" class="notes-tab-btn" data-notes-tab="advanced" role="tab" aria-selected="false">Advanced</button>
             </div>
-            <div class="obs-actions">
-              <button type="button" class="observation-save">Save note</button>
-              <button type="button" class="observation-history-toggle">View history</button>
-              <span class="observation-meta" data-observation-meta></span>
+            <div data-notes-panel="capture">
+            <div class="interactive-panel" data-observation-item-type="actor" data-observation-item-key="summary">
+              <div class="obs-row">
+                <div>
+                  <label>Analyst</label>
+                  <input type="text" class="observation-analyst" placeholder="name or handle" />
+                </div>
+                <div>
+                  <label>Confidence</label>
+                  <select class="observation-confidence">
+                    <option value="moderate">Moderate</option>
+                    <option value="high">High</option>
+                    <option value="low">Low</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Claim type</label>
+                  <select class="observation-claim-type">
+                    <option value="assessment">Assessment</option>
+                    <option value="evidence">Evidence-backed</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Observed on</label>
+                  <input type="date" class="observation-observed-on" />
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label>Citation URL</label>
+                  <input type="url" class="observation-citation-url" placeholder="https://source.example/report" />
+                </div>
+                <textarea class="observation-note" placeholder="What changed that matters for this actor?"></textarea>
+              </div>
+              <div class="obs-actions">
+                <button type="button" class="observation-save">Save note</button>
+                <button type="button" class="observation-history-toggle">View history</button>
+                <span class="observation-meta" data-observation-meta></span>
+              </div>
+              <div class="observation-history" data-observation-history style="display:none;"></div>
             </div>
-            <div class="observation-history" data-observation-history style="display:none;"></div>
-          </div>
-          </div>
-          <div class="tab-panel-hidden" data-notes-panel="review">
-          <div class="review-strip" style="margin-top:8px;">
-            <h4>Since last review</h4>
-            <div class="review-grid">
-              <div class="review-metric"><div class="label">Since</div><div class="value" id="since-review-date">Not set</div></div>
-              <div class="review-metric"><div class="label">Notes</div><div class="value" id="since-review-observations">0</div></div>
-              <div class="review-metric"><div class="label">Sources</div><div class="value" id="since-review-sources">0</div></div>
-              <div class="review-metric"><div class="label">Reports</div><div class="value" id="since-review-reports">0</div></div>
             </div>
-            <div class="review-actions">
-              <button type="button" id="mark-reviewed">Mark reviewed now</button>
-              <button type="button" id="clear-reviewed">Clear baseline</button>
-              <span id="review-meta" class="review-meta"></span>
-            </div>
-          </div>
-          </div>
-          <div class="tab-panel-hidden" data-notes-panel="bestpractices">
-            <div class="interactive-panel">
-              <div class="section-body">
-                <div><strong>Use this format:</strong> observation -> evidence -> action.</div>
-                <div><strong>Observation:</strong> what you saw (specific event, host, user, IOC).</div>
-                <div><strong>Evidence:</strong> one source link or log reference that supports it.</div>
-                <div><strong>Action:</strong> contain, monitor, escalate, or close.</div>
-                <div><strong>Avoid:</strong> long narratives, assumptions without evidence, and duplicate notes.</div>
+            <div class="tab-panel-hidden" data-notes-panel="review">
+            <div class="review-strip" style="margin-top:8px;">
+              <h4>Since last review</h4>
+              <div class="review-grid">
+                <div class="review-metric"><div class="label">Since</div><div class="value" id="since-review-date">Not set</div></div>
+                <div class="review-metric"><div class="label">Notes</div><div class="value" id="since-review-observations">0</div></div>
+                <div class="review-metric"><div class="label">Sources</div><div class="value" id="since-review-sources">0</div></div>
+                <div class="review-metric"><div class="label">Reports</div><div class="value" id="since-review-reports">0</div></div>
+              </div>
+              <div class="review-actions">
+                <button type="button" id="mark-reviewed">Mark reviewed now</button>
+                <button type="button" id="clear-reviewed">Clear baseline</button>
+                <span id="review-meta" class="review-meta"></span>
               </div>
             </div>
-          </div>
-          <details class="compact tab-panel-hidden" data-notes-panel="advanced">
-            <summary>Advanced history and operations</summary>
-            <div class="adv-tabs" role="tablist" aria-label="Advanced operations tabs">
-              <button type="button" class="adv-tab-btn active" data-adv-tab="history" role="tab" aria-selected="true">History</button>
-              <button type="button" class="adv-tab-btn" data-adv-tab="tasks" role="tab" aria-selected="false">Tasks</button>
-              <button type="button" class="adv-tab-btn" data-adv-tab="alerts" role="tab" aria-selected="false">Alerts</button>
-              <button type="button" class="adv-tab-btn" data-adv-tab="coverage" role="tab" aria-selected="false">Coverage</button>
             </div>
+            <div class="tab-panel-hidden" data-notes-panel="bestpractices">
+              <div class="interactive-panel">
+                <div class="section-body">
+                  <div><strong>Use this format:</strong> observation -> evidence -> action.</div>
+                  <div><strong>Observation:</strong> what you saw (specific event, host, user, IOC).</div>
+                  <div><strong>Evidence:</strong> one source link or log reference that supports it.</div>
+                  <div><strong>Action:</strong> contain, monitor, escalate, or close.</div>
+                  <div><strong>Avoid:</strong> long narratives, assumptions without evidence, and duplicate notes.</div>
+                </div>
+              </div>
+            </div>
+            <details class="compact tab-panel-hidden" data-notes-panel="advanced">
+              <summary>Advanced history and operations</summary>
+              <div class="adv-tabs" role="tablist" aria-label="Advanced operations tabs">
+                <button type="button" class="adv-tab-btn active" data-adv-tab="history" role="tab" aria-selected="true">History</button>
+                <button type="button" class="adv-tab-btn" data-adv-tab="tasks" role="tab" aria-selected="false">Tasks</button>
+                <button type="button" class="adv-tab-btn" data-adv-tab="alerts" role="tab" aria-selected="false">Alerts</button>
+                <button type="button" class="adv-tab-btn" data-adv-tab="coverage" role="tab" aria-selected="false">Coverage</button>
+              </div>
             <div data-adv-panel="history">
             <h4 style="margin-top:8px;">History, filters, export</h4>
             <div class="ledger-controls">
@@ -2449,41 +2588,37 @@
             <div class="timeline-empty">No relationship graph edges yet.</div>
             {% endif %}
             </div>
-          </details>
-        </section>
 
-          {% if notebook.ioc_items %}
-          <details class="compact">
-            <summary>Recent IOCs</summary>
+            </details>
+          </section>
+
+          <!-- ─── Visuals ────────────────────────────────────────────────── -->
+          <section class="tab-panel-hidden" id="section-visuals" data-main-panel="visuals">
+            <h3 class="section-title">Visuals</h3>
             <div class="section-body">
-              {% for ioc in notebook.ioc_items[:20] %}
-              <div style="margin-bottom:6px;">
-                <div><span class="badge">{{ ioc.ioc_type }}</span> {{ ioc.ioc_value }}{% if ioc.source_ref %} ({{ ioc.source_ref }}){% endif %}</div>
-                <div><small>Status: {{ ioc.lifecycle_status or 'active' }} | TLP: {{ ioc.handling_tlp or 'TLP:CLEAR' }} | Seen: {{ ioc.seen_count or 1 }} | Last seen: {{ ioc.last_seen_at or ioc.created_at or 'unknown' }}</small></div>
-                <form method="post" action="/actors/{{ notebook.actor.id }}/iocs/{{ ioc.id }}/status" style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
-                  <select name="lifecycle_status">
-                    <option value="active" {% if (ioc.lifecycle_status or '') == 'active' %}selected{% endif %}>active</option>
-                    <option value="monitor" {% if (ioc.lifecycle_status or '') == 'monitor' %}selected{% endif %}>monitor</option>
-                    <option value="superseded" {% if (ioc.lifecycle_status or '') == 'superseded' %}selected{% endif %}>superseded</option>
-                    <option value="revoked" {% if (ioc.lifecycle_status or '') == 'revoked' %}selected{% endif %}>revoked</option>
-                    <option value="false_positive" {% if (ioc.lifecycle_status or '') == 'false_positive' %}selected{% endif %}>false_positive</option>
-                  </select>
-                  <select name="handling_tlp">
-                    <option value="TLP:CLEAR" {% if (ioc.handling_tlp or 'TLP:CLEAR') == 'TLP:CLEAR' %}selected{% endif %}>TLP:CLEAR</option>
-                    <option value="TLP:GREEN" {% if (ioc.handling_tlp or '') == 'TLP:GREEN' %}selected{% endif %}>TLP:GREEN</option>
-                    <option value="TLP:AMBER" {% if (ioc.handling_tlp or '') == 'TLP:AMBER' %}selected{% endif %}>TLP:AMBER</option>
-                    <option value="TLP:AMBER+STRICT" {% if (ioc.handling_tlp or '') == 'TLP:AMBER+STRICT' %}selected{% endif %}>TLP:AMBER+STRICT</option>
-                    <option value="TLP:RED" {% if (ioc.handling_tlp or '') == 'TLP:RED' %}selected{% endif %}>TLP:RED</option>
-                  </select>
-                  <input type="text" name="status_reason" placeholder="reason (optional)" />
-                  <button type="submit">Update</button>
-                </form>
+              <p class="inline-note">Charts and visualizations generated from this actor's tracked data. All built from local data — no external calls.</p>
+              <div class="visuals-placeholder-grid">
+                <div class="visuals-placeholder">
+                  <div class="visuals-placeholder-title">IOC Volume Over Time</div>
+                  <div class="visuals-placeholder-desc">IOC count per month, broken down by type. Shows when this actor was infrastructure-heavy vs. quiet.</div>
+                </div>
+                <div class="visuals-placeholder">
+                  <div class="visuals-placeholder-title">Actor Activity Calendar</div>
+                  <div class="visuals-placeholder-desc">GitHub-style heatmap — each cell = one day, intensity = event and IOC count.</div>
+                </div>
+                <div class="visuals-placeholder">
+                  <div class="visuals-placeholder-title">ATT&amp;CK Coverage Map</div>
+                  <div class="visuals-placeholder-desc">MITRE tactic columns with highlighted techniques attributed to this actor. Click to see referencing events.</div>
+                </div>
+                <div class="visuals-placeholder">
+                  <div class="visuals-placeholder-title">Activity vs. Reporting Correlation</div>
+                  <div class="visuals-placeholder-desc">Analyst-added events vs. public reporting over time. Shows whether reporting lags behind observed activity.</div>
+                </div>
               </div>
-              {% endfor %}
             </div>
-          </details>
-          {% endif %}
+          </section>
 
+        </section>
         </div>
         {% endif %}
       </main>

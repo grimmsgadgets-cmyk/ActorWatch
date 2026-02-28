@@ -374,7 +374,7 @@
         }
 
         function setMainTab(tabKey) {
-          const key = String(tabKey || "who").toLowerCase();
+          const key = String(tabKey || "overview").toLowerCase();
           mainTabButtons.forEach((button) => {
             const active = String(button.getAttribute("data-main-tab") || "").toLowerCase() === key;
             button.classList.toggle("active", active);
@@ -1332,11 +1332,11 @@
         if (mainTabButtons.length && mainPanels.length) {
           mainTabButtons.forEach((button) => {
             button.addEventListener("click", () => {
-              const key = String(button.getAttribute("data-main-tab") || "who");
+              const key = String(button.getAttribute("data-main-tab") || "overview");
               setMainTab(key);
             });
           });
-          const storedTab = String(localStorage.getItem("tracker:mainTab") || "who");
+          const storedTab = String(localStorage.getItem("tracker:mainTab") || "overview");
           setMainTab(storedTab);
         }
         if (advTabButtons.length && advPanels.length) {
