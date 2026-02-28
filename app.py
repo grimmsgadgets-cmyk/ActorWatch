@@ -71,6 +71,8 @@ import services.source_reliability_service as source_reliability_service
 import services.requirements_service as requirements_service
 import services.status_service as status_service
 import services.metrics_service as metrics_service
+import services.app_config_service as app_config_service
+import services.event_service as event_service
 import services.llm_cache_service as llm_cache_service
 import services.llm_facade_service as llm_facade_service
 import services.alert_delivery_service as alert_delivery_service
@@ -140,6 +142,8 @@ app = FastAPI(lifespan=app_lifespan)
 DB_PATH = '/data/app.db'
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / 'templates'))
+templates.env.globals['app_name'] = app_config_service.APP_NAME
+templates.env.globals['base_path'] = app_config_service.BASE_PATH
 app.mount('/static', StaticFiles(directory=str(BASE_DIR / 'static')), name='static')
 ATTACK_ENTERPRISE_STIX_URL = (
     'https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json'

@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
+from services import event_service
+
 
 def normalize_actor_name_core(value: str) -> str:
     return ' '.join(str(value or '').strip().lower().split())
@@ -443,6 +445,7 @@ def create_actor_profile_core(
             ),
         )
         connection.commit()
+    event_service.emit('actor.created', {'id': actor_profile['id'], 'display_name': actor_profile['display_name']})
     return actor_profile
 
 
