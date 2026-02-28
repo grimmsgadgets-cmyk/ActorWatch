@@ -1,4 +1,5 @@
 import html
+import re
 from urllib.parse import quote_plus, urlparse
 
 
@@ -57,9 +58,9 @@ def actor_search_queries_core(actor_terms: list[str]) -> list[str]:
             continue
         queries.extend(
             [
-                f'"{compact}" ransomware activity',
-                f'"{compact}" threat actor report',
-                f'"{compact}" CISA advisory',
+                f'"{compact}" threat intelligence report',
+                f'"{compact}" malware analysis',
+                f'"{compact}" ransomware attack',
             ]
         )
         if len(queries) >= 9:
@@ -81,7 +82,6 @@ def duckduckgo_actor_search_urls_core(actor_terms: list[str], *, limit: int, dep
     _actor_search_queries = deps['actor_search_queries']
     _http_get = deps['http_get']
     _domain_allowed_for_actor_search = deps['domain_allowed_for_actor_search']
-    _re_finditer = deps['re_finditer']
 
     urls: list[str] = []
     seen: set[str] = set()
@@ -101,8 +101,17 @@ def duckduckgo_actor_search_urls_core(actor_terms: list[str], *, limit: int, dep
         except Exception:
             continue
 
-        for match in _re_finditer(r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"', body):
-            candidate = html.unescape(match.group(1)).strip()
+        # Two-pass extraction: find all <a> tags that carry the result__a class,
+        # then pull href from each tag. This handles any attribute ordering
+        # (DDG renders both class-before-href and href-before-class).
+        for tag_match in re.finditer(r'<a\b([^>]*)>', body):
+            attrs = tag_match.group(1)
+            if 'result__a' not in attrs:
+                continue
+            href_match = re.search(r'\bhref="([^"]+)"', attrs)
+            if not href_match:
+                continue
+            candidate = html.unescape(href_match.group(1)).strip()
             if not candidate.startswith('http'):
                 continue
             if candidate in seen:

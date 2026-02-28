@@ -15,8 +15,18 @@ def parse_feed_entries_core(xml_text: str) -> list[dict[str, str | None]]:
         title = (item.findtext('title') or '').strip() or None
         link = (item.findtext('link') or '').strip() or None
         pub = (item.findtext('pubDate') or '').strip() or None
+        # Google News RSS: <source url="https://publisher.com">Publisher Name</source>
+        source_el = item.find('source')
+        source_domain = (source_el.get('url') if source_el is not None else None) or None
+        source_name = ((source_el.text or '').strip() or None) if source_el is not None else None
         if link:
-            entries.append({'title': title, 'link': link, 'published_at': pub})
+            entries.append({
+                'title': title,
+                'link': link,
+                'published_at': pub,
+                'source_domain': source_domain,
+                'source_name': source_name,
+            })
 
     # Atom
     namespace = {'atom': 'http://www.w3.org/2005/Atom'}

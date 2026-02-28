@@ -108,6 +108,39 @@ def canonical_group_domain(
     return host or 'unknown-source'
 
 
+def _extract_structured_blocks(content: str, *, host: str) -> tuple[list[str], str]:
+    body = str(content or '')
+    lowered_host = str(host or '').strip('.').lower()
+    parse_status = 'parsed'
+    containers: list[str] = []
+    if lowered_host == 'attack.mitre.org':
+        parse_status = 'parsed_structured_mitre'
+        containers = re.findall(r'<main[^>]*>(.*?)</main>', body, flags=re.IGNORECASE | re.DOTALL)
+        if not containers:
+            containers = re.findall(r'<article[^>]*>(.*?)</article>', body, flags=re.IGNORECASE | re.DOTALL)
+    elif lowered_host.endswith('cisa.gov'):
+        parse_status = 'parsed_structured_cisa'
+        containers = re.findall(r'<main[^>]*>(.*?)</main>', body, flags=re.IGNORECASE | re.DOTALL)
+        if not containers:
+            containers = re.findall(r'<article[^>]*>(.*?)</article>', body, flags=re.IGNORECASE | re.DOTALL)
+    else:
+        return ([], parse_status)
+
+    if not containers:
+        return ([], parse_status)
+
+    scoped = ' '.join(containers[:2])
+    paragraph_matches = re.findall(r'<p[^>]*>(.*?)</p>', scoped, flags=re.IGNORECASE | re.DOTALL)
+    list_matches = re.findall(r'<li[^>]*>(.*?)</li>', scoped, flags=re.IGNORECASE | re.DOTALL)
+    heading_matches = re.findall(r'<h[12][^>]*>(.*?)</h[12]>', scoped, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = [
+        strip_html(part)
+        for part in (heading_matches[:4] + paragraph_matches[:20] + list_matches[:20])
+    ]
+    cleaned = [part for part in cleaned if len(part) >= 25]
+    return (cleaned, parse_status)
+
+
 def derive_source_from_url_core(
     source_url: str,
     *,
@@ -131,6 +164,7 @@ def derive_source_from_url_core(
     content = response.text
     parsed = urlparse(str(response.url))
     domain = parsed.netloc or 'unknown'
+    host = (parsed.hostname or '').strip('.').lower()
 
     site_name = extract_meta(
         content,
@@ -193,9 +227,12 @@ def derive_source_from_url_core(
     if not published_at and (parsed.hostname or '').strip('.').lower() == 'attack.mitre.org':
         published_at = str(response.headers.get('Last-Modified') or '').strip() or None
 
+    structured_blocks, parse_status = _extract_structured_blocks(content, host=host)
     paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', content, flags=re.IGNORECASE | re.DOTALL)
     cleaned_paragraphs = [strip_html(paragraph) for paragraph in paragraphs]
     cleaned_paragraphs = [paragraph for paragraph in cleaned_paragraphs if len(paragraph) > 40]
+    if structured_blocks:
+        cleaned_paragraphs = structured_blocks + cleaned_paragraphs
 
     if cleaned_paragraphs:
         pasted_text = ' '.join(cleaned_paragraphs[:10])
@@ -223,4 +260,9 @@ def derive_source_from_url_core(
         'published_at': published_at,
         'pasted_text': pasted_text,
         'trigger_excerpt': trigger_excerpt,
+        'raw_html': content,
+        'http_status': int(response.status_code),
+        'content_type': str(response.headers.get('content-type') or ''),
+        'parse_status': parse_status,
+        'parse_error': '',
     }

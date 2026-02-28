@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 
 def create_generation_job_core(
@@ -271,6 +272,71 @@ def active_generation_job_for_actor_core(*, actor_id: str, deps: dict[str, objec
         'error_message': str(row['error_message'] or ''),
         'phases': [],
     }
+
+
+def expire_stale_generation_jobs_for_actor_core(
+    *,
+    actor_id: str,
+    stale_after_minutes: int,
+    deps: dict[str, object],
+) -> int:
+    _db_path = deps['db_path']
+    _utc_now_iso = deps['utc_now_iso']
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc - timedelta(minutes=max(5, int(stale_after_minutes)))
+    expired_job_ids: list[str] = []
+
+    def _parse_iso(value: object) -> datetime | None:
+        raw = str(value or '').strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    with sqlite3.connect(_db_path()) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            '''
+            SELECT id, created_at, started_at
+            FROM notebook_generation_jobs
+            WHERE actor_id = ?
+              AND status IN ('queued', 'running')
+            ''',
+            (str(actor_id),),
+        ).fetchall()
+
+        for row in rows:
+            reference_dt = _parse_iso(row['started_at']) or _parse_iso(row['created_at'])
+            if reference_dt is None:
+                continue
+            if reference_dt > cutoff:
+                continue
+            expired_job_ids.append(str(row['id'] or ''))
+
+        now_iso = _utc_now_iso()
+        for job_id in expired_job_ids:
+            connection.execute(
+                '''
+                UPDATE notebook_generation_jobs
+                SET status = 'error',
+                    finished_at = ?,
+                    duration_ms = COALESCE(duration_ms, 0),
+                    error_message = CASE
+                        WHEN TRIM(COALESCE(error_message, '')) = '' THEN 'stale_generation_job_recovered'
+                        ELSE error_message
+                    END
+                WHERE id = ?
+                ''',
+                (now_iso, job_id),
+            )
+        if expired_job_ids:
+            connection.commit()
+    return len(expired_job_ids)
 
 
 def generation_job_detail_core(*, actor_id: str, job_id: str, deps: dict[str, object]) -> dict[str, object] | None:

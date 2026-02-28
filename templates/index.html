@@ -1678,7 +1678,7 @@
               <section class="bastion-viz">
                 <article class="bastion-card">
                   <h3>Operational Trend</h3>
-                  <div class="bastion-bars">
+                  <div id="bastion-trend-bars" class="bastion-bars">
                     {% if bastion_trend %}
                       {% for bucket in bastion_trend %}
                       {% set h = ((bucket.total / bastion_ns.trend_max) * 150) | int if bastion_ns.trend_max else 12 %}
@@ -1694,7 +1694,7 @@
                 </article>
                 <article class="bastion-card">
                   <h3>Technique Pressure</h3>
-                  <div class="bastion-bars">
+                  <div id="bastion-technique-bars" class="bastion-bars">
                     {% if notebook.top_techniques %}
                       {% for technique in notebook.top_techniques[:8] %}
                       {% set score = technique.event_count or technique.source_count or 1 %}
@@ -1714,7 +1714,7 @@
               <section class="bastion-sections">
                 <article class="bastion-card">
                   <h3>What changed and why it matters</h3>
-                  <ul>
+                  <ul id="bastion-change-list">
                     {% if notebook.top_change_signals %}
                       {% for signal in notebook.top_change_signals[:5] %}
                       <li>{{ signal.change_summary or signal.change_why_new or 'No summarized change text yet.' }}</li>
@@ -1726,7 +1726,7 @@
                 </article>
                 <article class="bastion-card">
                   <h3>AI review: what changed recently</h3>
-                  <ul>
+                  <ul id="bastion-ai-list">
                     {% if notebook.recent_activity_synthesis %}
                       {% for synthesis in notebook.recent_activity_synthesis[:5] %}
                       <li>{{ synthesis.text }}</li>

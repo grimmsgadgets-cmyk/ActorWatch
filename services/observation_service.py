@@ -148,34 +148,62 @@ def map_observation_rows_core(
     *,
     source_lookup: dict[str, dict[str, str]],
 ) -> list[dict[str, object]]:
-    return [
-        {
-            'item_type': row[0],
-            'item_key': row[1],
-            'note': row[2] or '',
-            'source_ref': row[3] or '',
-            'confidence': row[4] or 'moderate',
-            'source_reliability': row[5] or '',
-            'information_credibility': row[6] or '',
-            'claim_type': row[7] or 'assessment',
-            'citation_url': row[8] or '',
-            'observed_on': row[9] or '',
-            'updated_by': row[10] or '',
-            'updated_at': row[11] or '',
+    def _row_value(row: tuple[object, ...], index: int, default: object = '') -> object:
+        return row[index] if index < len(row) else default
+
+    def _mapped_row(row: tuple[object, ...]) -> dict[str, object]:
+        item_type = _row_value(row, 0, '')
+        item_key = _row_value(row, 1, '')
+        note = _row_value(row, 2, '')
+        source_ref = _row_value(row, 3, '')
+        confidence = _row_value(row, 4, 'moderate')
+        source_reliability = _row_value(row, 5, '')
+        information_credibility = _row_value(row, 6, '')
+        # Backward-compatible shape support:
+        # old rows had: updated_by, updated_at at positions 7,8.
+        # new rows have: claim_type, citation_url, observed_on, updated_by, updated_at at 7..11.
+        if len(row) >= 12:
+            claim_type = _row_value(row, 7, 'assessment')
+            citation_url = _row_value(row, 8, '')
+            observed_on = _row_value(row, 9, '')
+            updated_by = _row_value(row, 10, '')
+            updated_at = _row_value(row, 11, '')
+        else:
+            claim_type = 'assessment'
+            citation_url = ''
+            observed_on = ''
+            updated_by = _row_value(row, 7, '')
+            updated_at = _row_value(row, 8, '')
+        return {
+            'item_type': item_type,
+            'item_key': item_key,
+            'note': note or '',
+            'source_ref': source_ref or '',
+            'confidence': confidence or 'moderate',
+            'source_reliability': source_reliability or '',
+            'information_credibility': information_credibility or '',
+            'claim_type': claim_type or 'assessment',
+            'citation_url': citation_url or '',
+            'observed_on': observed_on or '',
+            'updated_by': updated_by or '',
+            'updated_at': updated_at or '',
             'quality_guidance': observation_quality_guidance_core(
-                note=str(row[2] or ''),
-                source_ref=str(row[3] or ''),
-                confidence=str(row[4] or 'moderate'),
-                source_reliability=str(row[5] or ''),
-                information_credibility=str(row[6] or ''),
-                claim_type=str(row[7] or 'assessment'),
-                citation_url=str(row[8] or ''),
-                observed_on=str(row[9] or ''),
+                note=str(note or ''),
+                source_ref=str(source_ref or ''),
+                confidence=str(confidence or 'moderate'),
+                source_reliability=str(source_reliability or ''),
+                information_credibility=str(information_credibility or ''),
+                claim_type=str(claim_type or 'assessment'),
+                citation_url=str(citation_url or ''),
+                observed_on=str(observed_on or ''),
             ),
-            'source_name': source_lookup.get(str(row[1]), {}).get('source_name', ''),
-            'source_url': source_lookup.get(str(row[1]), {}).get('source_url', ''),
-            'source_title': source_lookup.get(str(row[1]), {}).get('source_title', ''),
-            'source_date': source_lookup.get(str(row[1]), {}).get('source_date', ''),
+            'source_name': source_lookup.get(str(item_key), {}).get('source_name', ''),
+            'source_url': source_lookup.get(str(item_key), {}).get('source_url', ''),
+            'source_title': source_lookup.get(str(item_key), {}).get('source_title', ''),
+            'source_date': source_lookup.get(str(item_key), {}).get('source_date', ''),
         }
+
+    return [
+        _mapped_row(row)
         for row in rows
     ]

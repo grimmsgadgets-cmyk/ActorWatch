@@ -620,6 +620,29 @@ def ensure_schema(connection) -> None:
     )
     connection.execute(
         '''
+        CREATE TABLE IF NOT EXISTS taxii_sync_runs (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL,
+            collection_url TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            status TEXT NOT NULL DEFAULT 'running',
+            objects_received INTEGER NOT NULL DEFAULT 0,
+            imported_iocs INTEGER NOT NULL DEFAULT 0,
+            imported_notes INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            error_detail TEXT NOT NULL DEFAULT ''
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_taxii_sync_runs_actor_started
+        ON taxii_sync_runs(actor_id, started_at DESC)
+        '''
+    )
+    connection.execute(
+        '''
         CREATE TABLE IF NOT EXISTS timeline_events (
             id TEXT PRIMARY KEY,
             actor_id TEXT NOT NULL,

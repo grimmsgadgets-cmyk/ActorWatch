@@ -128,8 +128,11 @@ Useful endpoints:
 - `GET /actors/{actor_id}/hunts/iocs`
 - `POST /actors/{target_actor_id}/merge` (form or JSON with `source_actor_id`)
 - `GET /actors/{actor_id}/refresh/stats`
+- `GET /actors/{actor_id}/evidence/ranked`
 - `GET /actors/{actor_id}/stix/export`
 - `POST /actors/{actor_id}/stix/import`
+- `POST /actors/{actor_id}/taxii/sync` (optional local/manual sync; requires collection URL)
+- `GET /actors/{actor_id}/taxii/runs`
 - `POST /actors/{actor_id}/feedback`
 - `GET /actors/{actor_id}/feedback/summary`
 
@@ -170,9 +173,9 @@ In `Bastion` mode:
 Auto-refresh defaults:
 
 - `AUTO_REFRESH_ENABLED=1`
-- `AUTO_REFRESH_MIN_INTERVAL_HOURS=24`
+- `AUTO_REFRESH_MIN_INTERVAL_HOURS=6`
 - `AUTO_REFRESH_LOOP_SECONDS=300`
-- `AUTO_REFRESH_BATCH_SIZE=3`
+- `AUTO_REFRESH_BATCH_SIZE=8`
 - `AUTO_MERGE_DUPLICATE_ACTORS=1`
 
 ------------------------------------------------------------------------

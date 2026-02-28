@@ -84,6 +84,12 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
                 'get_actor_refresh_job': deps.get('get_actor_refresh_job'),
                 'run_actor_generation': deps['run_actor_generation'],
                 'enqueue_actor_generation': deps['enqueue_actor_generation'],
+                'list_ranked_evidence': deps.get('list_ranked_evidence'),
+                'sync_taxii_collection': deps.get('sync_taxii_collection'),
+                'list_taxii_sync_runs': deps.get('list_taxii_sync_runs'),
+                'taxii_collection_url': deps.get('taxii_collection_url'),
+                'taxii_auth_token': deps.get('taxii_auth_token'),
+                'taxii_lookback_hours': deps.get('taxii_lookback_hours', 72),
             }
         )
     )

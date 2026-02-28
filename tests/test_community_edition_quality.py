@@ -140,12 +140,18 @@ def test_dashboard_get_has_no_write_side_effects() -> None:
     assert tracker['enqueue_called'] == 0
 
 
-def test_dashboard_running_state_skips_heavy_fetch() -> None:
+def test_dashboard_running_state_uses_cached_snapshot_fetch() -> None:
     tracker = {'fetch_called': 0}
 
     def _fetch_notebook(*_args, **_kwargs):
         tracker['fetch_called'] += 1
-        raise AssertionError('fetch should not be called while running')
+        return {
+            'actor': {'id': 'actor-1', 'display_name': 'APT Demo', 'is_tracked': 1, 'notebook_status': 'running'},
+            'counts': {'sources': 0},
+            'priority_questions': [],
+            'top_change_signals': [],
+            'recent_activity_synthesis': [],
+        }
 
     html_response = render_dashboard_root(
         request=object(),
@@ -196,4 +202,4 @@ def test_dashboard_running_state_skips_heavy_fetch() -> None:
     actor = notebook.get('actor')
     assert isinstance(actor, dict)
     assert actor.get('notebook_status') == 'running'
-    assert tracker['fetch_called'] == 0
+    assert tracker['fetch_called'] == 1

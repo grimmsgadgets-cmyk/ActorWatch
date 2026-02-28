@@ -1,497 +1,61 @@
-import sqlite3
-import uuid
-from urllib.parse import urlparse
+from fastapi import APIRouter
 
-import route_paths
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from routes.actor_ops_refresh_diagnostics import register_actor_refresh_and_diagnostic_routes
+from routes.actor_ops_sources_iocs import register_actor_source_and_ioc_routes
+from routes.actor_ops_stix_taxii import register_actor_stix_and_taxii_routes
 
 
 def create_actor_ops_router(*, deps: dict[str, object]) -> APIRouter:
     router = APIRouter()
 
-    _enforce_request_size = deps['enforce_request_size']
-    _source_upload_body_limit_bytes = deps['source_upload_body_limit_bytes']
-    _default_body_limit_bytes = deps['default_body_limit_bytes']
-    _db_path = deps['db_path']
-    _actor_exists = deps['actor_exists']
-    _derive_source_from_url = deps['derive_source_from_url']
-    _upsert_source_for_actor = deps['upsert_source_for_actor']
-    _import_default_feeds_for_actor = deps['import_default_feeds_for_actor']
-    _parse_ioc_values = deps['parse_ioc_values']
-    _upsert_ioc_item = deps['upsert_ioc_item']
-    _export_actor_stix_bundle = deps['export_actor_stix_bundle']
-    _import_actor_stix_bundle = deps['import_actor_stix_bundle']
-    _utc_now_iso = deps['utc_now_iso']
-    _set_actor_notebook_status = deps['set_actor_notebook_status']
-    _get_actor_refresh_stats = deps['get_actor_refresh_stats']
-    _get_actor_refresh_timeline = deps.get('get_actor_refresh_timeline')
-    _submit_actor_refresh_job = deps.get('submit_actor_refresh_job')
-    _get_actor_refresh_job = deps.get('get_actor_refresh_job')
-    _enqueue_actor_generation = deps.get('enqueue_actor_generation', deps['run_actor_generation'])
+    register_actor_source_and_ioc_routes(
+        router=router,
+        deps={
+            'enforce_request_size': deps['enforce_request_size'],
+            'source_upload_body_limit_bytes': deps['source_upload_body_limit_bytes'],
+            'default_body_limit_bytes': deps['default_body_limit_bytes'],
+            'db_path': deps['db_path'],
+            'actor_exists': deps['actor_exists'],
+            'derive_source_from_url': deps['derive_source_from_url'],
+            'upsert_source_for_actor': deps['upsert_source_for_actor'],
+            'import_default_feeds_for_actor': deps['import_default_feeds_for_actor'],
+            'parse_ioc_values': deps['parse_ioc_values'],
+            'upsert_ioc_item': deps['upsert_ioc_item'],
+            'utc_now_iso': deps['utc_now_iso'],
+        },
+    )
 
-    @router.post('/actors/{actor_id}/sources')
-    async def add_source(actor_id: str, request: Request) -> RedirectResponse:
-        await _enforce_request_size(request, _source_upload_body_limit_bytes)
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
+    register_actor_refresh_and_diagnostic_routes(
+        router=router,
+        deps={
+            'db_path': deps['db_path'],
+            'actor_exists': deps['actor_exists'],
+            'set_actor_notebook_status': deps['set_actor_notebook_status'],
+            'get_actor_refresh_stats': deps['get_actor_refresh_stats'],
+            'get_actor_refresh_timeline': deps.get('get_actor_refresh_timeline'),
+            'submit_actor_refresh_job': deps.get('submit_actor_refresh_job'),
+            'get_actor_refresh_job': deps.get('get_actor_refresh_job'),
+            'enqueue_actor_generation': deps.get('enqueue_actor_generation', deps['run_actor_generation']),
+        },
+    )
 
-        form_data = await request.form()
-        source_url = str(form_data.get('source_url', '')).strip()
-
-        source_name = str(form_data.get('source_name', '')).strip()
-        published_at = str(form_data.get('published_at', '')).strip() or None
-        pasted_text = str(form_data.get('pasted_text', '')).strip()
-        trigger_excerpt = str(form_data.get('trigger_excerpt', '')).strip() or None
-        source_title: str | None = None
-        source_headline: str | None = None
-        source_og_title: str | None = None
-        source_html_title: str | None = None
-        source_publisher: str | None = None
-        source_site_name: str | None = None
-
-        if not source_url:
-            raise HTTPException(status_code=400, detail='source_url is required')
-
-        if not pasted_text:
-            derived = _derive_source_from_url(source_url)
-            source_name = str(derived['source_name'])
-            source_url = str(derived['source_url'])
-            published_at = str(derived['published_at']) if derived['published_at'] else published_at
-            pasted_text = str(derived['pasted_text'])
-            trigger_excerpt = str(derived['trigger_excerpt']) if derived['trigger_excerpt'] else trigger_excerpt
-            source_title = str(derived.get('title') or '') or None
-            source_headline = str(derived.get('headline') or '') or None
-            source_og_title = str(derived.get('og_title') or '') or None
-            source_html_title = str(derived.get('html_title') or '') or None
-            source_publisher = str(derived.get('publisher') or '') or None
-            source_site_name = str(derived.get('site_name') or '') or None
-        elif not source_name:
-            parsed = urlparse(source_url)
-            source_name = (parsed.hostname or parsed.netloc or 'Manual source').strip()
-
-        with sqlite3.connect(_db_path()) as connection:
-            _upsert_source_for_actor(
-                connection,
-                actor_id,
-                source_name,
-                source_url,
-                published_at,
-                pasted_text,
-                trigger_excerpt,
-                source_title,
-                source_headline,
-                source_og_title,
-                source_html_title,
-                source_publisher,
-                source_site_name,
-            )
-            connection.commit()
-
-        return RedirectResponse(url=f'/?actor_id={actor_id}', status_code=303)
-
-    @router.post('/actors/{actor_id}/sources/import-feeds')
-    def import_feeds(actor_id: str) -> RedirectResponse:
-        _import_default_feeds_for_actor(actor_id)
-        return RedirectResponse(url=f'/?actor_id={actor_id}', status_code=303)
-
-    @router.post('/actors/{actor_id}/iocs')
-    async def add_iocs(actor_id: str, request: Request) -> RedirectResponse:
-        await _enforce_request_size(request, _default_body_limit_bytes)
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-
-        form_data = await request.form()
-        ioc_type = str(form_data.get('ioc_type', 'indicator')).strip() or 'indicator'
-        ioc_values_raw = str(form_data.get('ioc_values', '')).strip()
-        source_ref = str(form_data.get('source_ref', '')).strip() or None
-        handling_tlp = str(form_data.get('handling_tlp', 'TLP:CLEAR')).strip().upper() or 'TLP:CLEAR'
-        if handling_tlp not in {'TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED'}:
-            handling_tlp = 'TLP:CLEAR'
-
-        values = _parse_ioc_values(ioc_values_raw)
-        if not values:
-            raise HTTPException(status_code=400, detail='ioc_values is required')
-
-        inserted = 0
-        skipped: list[str] = []
-        with sqlite3.connect(_db_path()) as connection:
-            for value in values:
-                result = _upsert_ioc_item(
-                    connection,
-                    actor_id=actor_id,
-                    raw_ioc_type=ioc_type,
-                    raw_ioc_value=value,
-                    source_ref=source_ref,
-                    source_id=None,
-                    source_tier=None,
-                    extraction_method='manual',
-                    now_iso=_utc_now_iso(),
-                    lifecycle_status='active',
-                    handling_tlp=handling_tlp,
-                )
-                if bool(result.get('stored')):
-                    inserted += 1
-                else:
-                    skipped.append(str(result.get('reason') or 'invalid IOC'))
-            if inserted == 0:
-                raise HTTPException(status_code=400, detail=f'No valid IOCs saved: {", ".join(skipped[:3])}')
-            connection.commit()
-        notice = f'Saved+{inserted}+IOC(s)'
-        if skipped:
-            notice += f'.+Skipped+{len(skipped)}+invalid/suppressed'
-        return RedirectResponse(url=f'/?actor_id={actor_id}&notice={notice}', status_code=303)
-
-    @router.post('/actors/{actor_id}/iocs/{ioc_id}/status')
-    async def update_ioc_status(actor_id: str, ioc_id: str, request: Request) -> RedirectResponse:
-        await _enforce_request_size(request, _default_body_limit_bytes)
-        form_data = await request.form()
-        lifecycle_status = str(form_data.get('lifecycle_status', 'active')).strip().lower() or 'active'
-        if lifecycle_status not in {'active', 'monitor', 'superseded', 'revoked', 'false_positive'}:
-            lifecycle_status = 'active'
-        handling_tlp = str(form_data.get('handling_tlp', 'TLP:CLEAR')).strip().upper() or 'TLP:CLEAR'
-        if handling_tlp not in {'TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED'}:
-            handling_tlp = 'TLP:CLEAR'
-        status_reason = str(form_data.get('status_reason', '')).strip()[:240]
-        updated_at = _utc_now_iso()
-
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-            row = connection.execute(
-                '''
-                SELECT id, ioc_type, ioc_value, normalized_value, confidence_score, source_id, source_ref, extraction_method
-                FROM ioc_items
-                WHERE id = ? AND actor_id = ?
-                ''',
-                (ioc_id, actor_id),
-            ).fetchone()
-            if row is None:
-                raise HTTPException(status_code=404, detail='ioc not found')
-            is_active = 1 if lifecycle_status in {'active', 'monitor'} else 0
-            connection.execute(
-                '''
-                UPDATE ioc_items
-                SET
-                    lifecycle_status = ?,
-                    handling_tlp = ?,
-                    is_active = ?,
-                    revoked = ?,
-                    revoked_at = CASE WHEN ? = 1 THEN COALESCE(revoked_at, ?) ELSE NULL END,
-                    updated_at = ?,
-                    validation_reason = ?
-                WHERE id = ? AND actor_id = ?
-                ''',
-                (
-                    lifecycle_status,
-                    handling_tlp,
-                    is_active,
-                    1 if lifecycle_status in {'revoked', 'false_positive'} else 0,
-                    1 if lifecycle_status in {'revoked', 'false_positive'} else 0,
-                    updated_at,
-                    updated_at,
-                    status_reason or '',
-                    ioc_id,
-                    actor_id,
-                ),
-            )
-            connection.execute(
-                '''
-                INSERT INTO ioc_history (
-                    id, ioc_item_id, actor_id, event_type, ioc_type, ioc_value, normalized_value,
-                    validation_status, validation_reason, confidence_score, source_id, source_ref,
-                    extraction_method, lifecycle_status, handling_tlp, valid_from, valid_until, revoked, revoked_at, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''',
-                (
-                    str(uuid.uuid4()),
-                    str(row[0]),
-                    actor_id,
-                    'status_change',
-                    str(row[1] or ''),
-                    str(row[2] or ''),
-                    str(row[3] or ''),
-                    'valid',
-                    status_reason or '',
-                    int(row[4] or 0),
-                    str(row[5] or ''),
-                    str(row[6] or ''),
-                    str(row[7] or ''),
-                    lifecycle_status,
-                    handling_tlp,
-                    None,
-                    None,
-                    1 if lifecycle_status in {'revoked', 'false_positive'} else 0,
-                    updated_at if lifecycle_status in {'revoked', 'false_positive'} else None,
-                    updated_at,
-                ),
-            )
-            connection.commit()
-        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=IOC+status+updated', status_code=303)
-
-    @router.post('/actors/{actor_id}/refresh')
-    def refresh_notebook(actor_id: str, background_tasks: BackgroundTasks) -> RedirectResponse:
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-        _set_actor_notebook_status(
-            actor_id,
-            'running',
-            'Refreshing sources, questions, and timeline entries...',
-        )
-        if callable(_submit_actor_refresh_job):
-            _submit_actor_refresh_job(actor_id, trigger_type='manual_refresh')
-        else:
-            _enqueue_actor_generation(actor_id)
-        return RedirectResponse(
-            url=f'/?actor_id={actor_id}&notice=Notebook refresh started',
-            status_code=303,
-        )
-
-    @router.post(route_paths.ACTOR_REFRESH_JOBS, response_class=JSONResponse)
-    def submit_refresh_job(actor_id: str) -> dict[str, object]:
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-        if callable(_submit_actor_refresh_job):
-            return _submit_actor_refresh_job(actor_id, trigger_type='manual_refresh')
-        queued = bool(_enqueue_actor_generation(actor_id))
-        return {
-            'actor_id': actor_id,
-            'job_id': '',
-            'status': 'queued' if queued else 'running',
-            'queued': queued,
-            'message': 'Refresh job queued.' if queued else 'Refresh already in progress.',
-        }
-
-    @router.get('/actors/{actor_id}/refresh/stats')
-    def actor_refresh_stats(actor_id: str) -> dict[str, object]:
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-        return _get_actor_refresh_stats(actor_id)
-
-    @router.get(route_paths.ACTOR_REFRESH_TIMELINE, response_class=JSONResponse)
-    def actor_refresh_timeline(actor_id: str) -> dict[str, object]:
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-        if callable(_get_actor_refresh_timeline):
-            return _get_actor_refresh_timeline(actor_id)
-        stats = _get_actor_refresh_stats(actor_id)
-        return {
-            'actor_id': actor_id,
-            'recent_generation_runs': stats.get('recent_generation_runs', []),
-            'eta_seconds': stats.get('eta_seconds'),
-            'avg_duration_ms': stats.get('avg_duration_ms'),
-            'llm_cache_state': stats.get('llm_cache_state', {}),
-            'queue_state': {},
-        }
-
-    @router.get(route_paths.ACTOR_REFRESH_JOB_DETAIL, response_class=JSONResponse)
-    def actor_refresh_job_detail(actor_id: str, job_id: str) -> dict[str, object]:
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-        if not callable(_get_actor_refresh_job):
-            raise HTTPException(status_code=404, detail='refresh job endpoint unavailable')
-        return _get_actor_refresh_job(actor_id, job_id)
-
-    @router.get(route_paths.ACTOR_INGEST_DIAGNOSTICS, response_class=JSONResponse)
-    def actor_ingest_diagnostics(actor_id: str) -> dict[str, object]:
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-            try:
-                stage_rows = connection.execute(
-                    '''
-                    SELECT stage, decision, COUNT(*)
-                    FROM ingest_decisions
-                    WHERE actor_id = ?
-                    GROUP BY stage, decision
-                    ''',
-                    (actor_id,),
-                ).fetchall()
-                rejection_rows = connection.execute(
-                    '''
-                    SELECT reason_code, COUNT(*)
-                    FROM ingest_decisions
-                    WHERE actor_id = ? AND decision = 'rejected'
-                    GROUP BY reason_code
-                    ORDER BY COUNT(*) DESC, reason_code ASC
-                    LIMIT 8
-                    ''',
-                    (actor_id,),
-                ).fetchall()
-                recent_rows = connection.execute(
-                    '''
-                    SELECT stage, decision, reason_code, details_json, created_at
-                    FROM ingest_decisions
-                    WHERE actor_id = ?
-                    ORDER BY created_at DESC
-                    LIMIT 20
-                    ''',
-                    (actor_id,),
-                ).fetchall()
-                source_quality_rows = connection.execute(
-                    '''
-                    SELECT
-                        COALESCE(NULLIF(TRIM(source_tier), ''), 'unrated'),
-                        COALESCE(confidence_weight, 0),
-                        COALESCE(NULLIF(TRIM(source_type), ''), 'unknown'),
-                        COUNT(*)
-                    FROM sources
-                    WHERE actor_id = ?
-                    GROUP BY
-                        COALESCE(NULLIF(TRIM(source_tier), ''), 'unrated'),
-                        COALESCE(confidence_weight, 0),
-                        COALESCE(NULLIF(TRIM(source_type), ''), 'unknown')
-                    ORDER BY COUNT(*) DESC, source_tier ASC, source_type ASC
-                    ''',
-                    (actor_id,),
-                ).fetchall()
-                total_sources_row = connection.execute(
-                    'SELECT COUNT(*) FROM sources WHERE actor_id = ?',
-                    (actor_id,),
-                ).fetchone()
-                total_timeline_row = connection.execute(
-                    'SELECT COUNT(*) FROM timeline_events WHERE actor_id = ?',
-                    (actor_id,),
-                ).fetchone()
-                eligible_sources_row = connection.execute(
-                    '''
-                    SELECT COUNT(*)
-                    FROM sources
-                    WHERE actor_id = ?
-                      AND LOWER(COALESCE(source_type, '')) <> 'feed_soft_match'
-                      AND COALESCE(confidence_weight, 0) >= 2
-                    ''',
-                    (actor_id,),
-                ).fetchone()
-                eligible_timeline_row = connection.execute(
-                    '''
-                    SELECT COUNT(*)
-                    FROM timeline_events te
-                    JOIN sources s ON s.id = te.source_id
-                    WHERE te.actor_id = ?
-                      AND LOWER(COALESCE(s.source_type, '')) <> 'feed_soft_match'
-                      AND COALESCE(s.confidence_weight, 0) >= 2
-                    ''',
-                    (actor_id,),
-                ).fetchone()
-            except sqlite3.OperationalError:
-                stage_rows = []
-                rejection_rows = []
-                recent_rows = []
-                source_quality_rows = []
-                total_sources_row = (0,)
-                total_timeline_row = (0,)
-                eligible_sources_row = (0,)
-                eligible_timeline_row = (0,)
-
-        stage_breakdown: dict[str, dict[str, int]] = {}
-        for row in stage_rows:
-            stage = str(row[0] or '').strip() or 'unknown'
-            decision = str(row[1] or '').strip() or 'unknown'
-            count = int(row[2] or 0)
-            stage_bucket = stage_breakdown.setdefault(stage, {'accepted': 0, 'rejected': 0, 'other': 0, 'total': 0})
-            if decision == 'accepted':
-                stage_bucket['accepted'] += count
-            elif decision == 'rejected':
-                stage_bucket['rejected'] += count
-            else:
-                stage_bucket['other'] += count
-            stage_bucket['total'] += count
-
-        totals = {
-            'accepted': sum(values.get('accepted', 0) for values in stage_breakdown.values()),
-            'rejected': sum(values.get('rejected', 0) for values in stage_breakdown.values()),
-            'other': sum(values.get('other', 0) for values in stage_breakdown.values()),
-        }
-        totals['all'] = totals['accepted'] + totals['rejected'] + totals['other']
-
-        top_rejections = [
-            {
-                'reason_code': str(row[0] or '').strip() or 'unknown',
-                'count': int(row[1] or 0),
-            }
-            for row in rejection_rows
-        ]
-        recent = [
-            {
-                'stage': str(row[0] or '').strip() or 'unknown',
-                'decision': str(row[1] or '').strip() or 'unknown',
-                'reason_code': str(row[2] or '').strip() or '',
-                'details_json': str(row[3] or '{}'),
-                'created_at': str(row[4] or ''),
-            }
-            for row in recent_rows
-        ]
-        quality_mix = [
-            {
-                'source_tier': str(row[0] or 'unrated'),
-                'confidence_weight': int(row[1] or 0),
-                'source_type': str(row[2] or 'unknown'),
-                'count': int(row[3] or 0),
-            }
-            for row in source_quality_rows
-        ]
-        default_surface_estimate = {
-            'eligible_sources': int(eligible_sources_row[0] or 0) if eligible_sources_row else 0,
-            'eligible_timeline_events': int(eligible_timeline_row[0] or 0) if eligible_timeline_row else 0,
-        }
-        totals_snapshot = {
-            'sources': int(total_sources_row[0] or 0) if total_sources_row else 0,
-            'timeline_events': int(total_timeline_row[0] or 0) if total_timeline_row else 0,
-        }
-
-        return {
-            'actor_id': actor_id,
-            'funnel_totals': totals,
-            'stage_breakdown': stage_breakdown,
-            'top_rejection_reasons': top_rejections,
-            'recent_decisions': recent,
-            'quality_mix': quality_mix,
-            'default_surface_estimate': default_surface_estimate,
-            'totals_snapshot': totals_snapshot,
-        }
-
-    @router.get(route_paths.ACTOR_STIX_EXPORT, response_class=JSONResponse)
-    def export_stix_bundle(actor_id: str) -> dict[str, object]:
-        with sqlite3.connect(_db_path()) as connection:
-            row = connection.execute(
-                'SELECT display_name FROM actor_profiles WHERE id = ?',
-                (actor_id,),
-            ).fetchone()
-            if row is None:
-                raise HTTPException(status_code=404, detail='actor not found')
-            return _export_actor_stix_bundle(
-                connection,
-                actor_id=actor_id,
-                actor_name=str(row[0] or actor_id),
-            )
-
-    @router.post(route_paths.ACTOR_STIX_IMPORT, response_class=JSONResponse)
-    async def import_stix_bundle(actor_id: str, request: Request) -> dict[str, object]:
-        await _enforce_request_size(request, _default_body_limit_bytes)
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail='invalid STIX bundle payload')
-        with sqlite3.connect(_db_path()) as connection:
-            if not _actor_exists(connection, actor_id):
-                raise HTTPException(status_code=404, detail='actor not found')
-            result = _import_actor_stix_bundle(
-                connection,
-                actor_id=actor_id,
-                bundle=payload,
-            )
-            connection.commit()
-        return {
-            'actor_id': actor_id,
-            **result,
-        }
+    register_actor_stix_and_taxii_routes(
+        router=router,
+        deps={
+            'enforce_request_size': deps['enforce_request_size'],
+            'default_body_limit_bytes': deps['default_body_limit_bytes'],
+            'db_path': deps['db_path'],
+            'actor_exists': deps['actor_exists'],
+            'export_actor_stix_bundle': deps['export_actor_stix_bundle'],
+            'import_actor_stix_bundle': deps['import_actor_stix_bundle'],
+            'list_ranked_evidence': deps.get('list_ranked_evidence'),
+            'sync_taxii_collection': deps.get('sync_taxii_collection'),
+            'list_taxii_sync_runs': deps.get('list_taxii_sync_runs'),
+            'taxii_collection_url': deps.get('taxii_collection_url', lambda: ''),
+            'taxii_auth_token': deps.get('taxii_auth_token', lambda: ''),
+            'taxii_lookback_hours': int(deps.get('taxii_lookback_hours', 72)),
+            'utc_now_iso': deps['utc_now_iso'],
+        },
+    )
 
     return router

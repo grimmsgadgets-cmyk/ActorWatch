@@ -70,7 +70,7 @@ def save_cached_payload_core(
     _db_path = deps['db_path']
     _utc_now_iso = deps['utc_now_iso']
     max_age_days = max(1, int(deps.get('max_age_days', 30)))
-    max_rows_per_actor_kind = max(10, int(deps.get('max_rows_per_actor_kind', 300)))
+    max_rows_per_actor_kind = max(1, int(deps.get('max_rows_per_actor_kind', 300)))
     now_iso = _utc_now_iso()
     payload_json = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
     with sqlite3.connect(_db_path()) as connection:

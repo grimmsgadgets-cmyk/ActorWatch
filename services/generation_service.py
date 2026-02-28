@@ -81,8 +81,8 @@ def run_actor_llm_enrichment_core(*, actor_id: str, deps: dict[str, object]) -> 
     try:
         _set_actor_notebook_status(
             actor_id,
-            'ready',
-            'Notebook is ready. Adding AI summary in the background...',
+            'running',
+            'Building AI summary...',
         )
         notebook: dict[str, object] | None = None
         for attempt in range(1, _max_attempts + 1):

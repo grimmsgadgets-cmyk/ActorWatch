@@ -195,6 +195,118 @@ def test_ingest_diagnostics_contract(tmp_path):
     assert int(body['default_surface_estimate'].get('eligible_timeline_events', 0)) >= 1
 
 
+def test_ranked_evidence_contract(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('Evidence Actor', None)
+    with sqlite3.connect(app_module.DB_PATH) as connection:
+        connection.execute(
+            '''
+            INSERT INTO sources (
+                id, actor_id, source_name, url, published_at, ingested_at, source_date_type, retrieved_at,
+                pasted_text, source_type, source_tier, confidence_weight
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-ev-1',
+                actor['id'],
+                'Example Intel',
+                'https://example.test/report',
+                '2026-02-27T00:00:00+00:00',
+                '2026-02-27T00:00:00+00:00',
+                'published',
+                '2026-02-27T00:00:00+00:00',
+                'evidence text',
+                'feed_partial_match',
+                'trusted',
+                2,
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO source_scoring (
+                source_id, relevance_score, trust_score, recency_score, novelty_score, final_score, scored_at, features_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'src-ev-1',
+                0.8,
+                1.0,
+                0.9,
+                0.6,
+                0.84,
+                '2026-02-27T00:00:00+00:00',
+                '{}',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO actor_resolution (
+                id, source_id, actor_id, match_type, matched_term, confidence, explanation_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'res-ev-1',
+                'src-ev-1',
+                actor['id'],
+                'exact_actor_term',
+                'Evidence Actor',
+                0.8,
+                '{}',
+                '2026-02-27T00:00:00+00:00',
+            ),
+        )
+        connection.execute(
+            '''
+            INSERT INTO source_entities (
+                id, source_id, entity_type, entity_value, normalized_value, confidence, extractor, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                'ent-ev-1',
+                'src-ev-1',
+                'domain',
+                'bad.example',
+                'bad.example',
+                0.8,
+                'test',
+                '2026-02-27T00:00:00+00:00',
+            ),
+        )
+        connection.commit()
+    with TestClient(app_module.app) as client:
+        response = client.get(
+            f"/actors/{actor['id']}/evidence/ranked?limit=10&min_final_score=0.7&source_tier=trusted&require_corroboration=0"
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get('actor_id') == actor['id']
+    assert int(body.get('count') or 0) >= 1
+    assert isinstance(body.get('items'), list)
+    assert float(body['items'][0]['scores']['final']) >= 0.8
+    assert 'corroboration_sources' in body['items'][0]
+
+
+def test_taxii_sync_contract_requires_collection_url_when_not_configured(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('Taxii Actor', None)
+    with TestClient(app_module.app) as client:
+        response = client.post(f"/actors/{actor['id']}/taxii/sync", json={})
+    assert response.status_code == 400
+    body = response.json()
+    assert isinstance(body.get('detail'), str)
+
+
+def test_taxii_runs_contract(tmp_path):
+    _setup_db(tmp_path)
+    actor = app_module.create_actor_profile('Taxii Runs Actor', None)
+    with TestClient(app_module.app) as client:
+        response = client.get(f"/actors/{actor['id']}/taxii/runs")
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get('actor_id') == actor['id']
+    assert isinstance(body.get('runs'), list)
+
+
 def test_stix_export_contract(tmp_path):
     _setup_db(tmp_path)
     actor = app_module.create_actor_profile('Stix Contract Actor', None)

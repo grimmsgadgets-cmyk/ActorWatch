@@ -123,13 +123,22 @@ def run_actor_generation_core(
                 (elapsed_ms, imported, actor_id),
             )
             connection.commit()
-        _set_actor_notebook_status(
-            actor_id,
-            'ready',
-            f'Notebook is ready with source-based analysis. Imported {imported} source update(s).',
-        )
         if callable(_enqueue_actor_llm_enrichment) and not skip_heavy_recompute:
+            # Stay 'running' — the LLM worker will write notebook_cache and then
+            # set status to 'ready'. Marking 'ready' here causes the UI to show
+            # a cache-miss placeholder while the LLM is still working.
+            _set_actor_notebook_status(
+                actor_id,
+                'running',
+                f'Sources collected ({imported} update(s)). Building AI summary...',
+            )
             _enqueue_actor_llm_enrichment(actor_id, job_id=_job_id)
+        else:
+            _set_actor_notebook_status(
+                actor_id,
+                'ready',
+                f'Notebook is ready with source-based analysis. Imported {imported} source update(s).',
+            )
         return {
             'success': True,
             'imported': int(imported),

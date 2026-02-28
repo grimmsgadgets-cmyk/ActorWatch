@@ -1,189 +1,7 @@
-import hashlib
-import json
 import sqlite3
-from datetime import datetime, timezone
 
-
-NOTEBOOK_CACHE_FORMAT_VERSION = '2026-02-27.2'
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _cache_key_core(
-    *,
-    source_tier: object = None,
-    min_confidence_weight: object = None,
-    source_days: object = None,
-    enforce_ollama_synthesis: object = None,
-    backfill_debug_ui_enabled: object = None,
-) -> str:
-    parts = [
-        f'fmt={NOTEBOOK_CACHE_FORMAT_VERSION}',
-        f'tier={str(source_tier or "").strip().lower()}',
-        f'min_conf={str(min_confidence_weight or "").strip()}',
-        f'source_days={str(source_days or "").strip()}',
-        f'enforce_ollama={1 if bool(enforce_ollama_synthesis) else 0}',
-        f'backfill_debug={1 if bool(backfill_debug_ui_enabled) else 0}',
-    ]
-    return '|'.join(parts)
-
-
-def _actor_data_fingerprint_core(connection: sqlite3.Connection, actor_id: str) -> str:
-    row = connection.execute(
-        '''
-        SELECT
-            COALESCE((SELECT MAX(COALESCE(published_at, ingested_at, retrieved_at, '')) FROM sources WHERE actor_id = ?), ''),
-            COALESCE((SELECT COUNT(*) FROM sources WHERE actor_id = ?), 0),
-            COALESCE((SELECT MAX(COALESCE(occurred_at, '')) FROM timeline_events WHERE actor_id = ?), ''),
-            COALESCE((SELECT COUNT(*) FROM timeline_events WHERE actor_id = ?), 0),
-            COALESCE((SELECT MAX(COALESCE(updated_at, created_at, '')) FROM question_threads WHERE actor_id = ?), ''),
-            COALESCE((SELECT COUNT(*) FROM question_threads WHERE actor_id = ?), 0),
-            COALESCE((
-                SELECT MAX(COALESCE(qu.created_at, ''))
-                FROM question_updates qu
-                JOIN question_threads qt ON qt.id = qu.thread_id
-                WHERE qt.actor_id = ?
-            ), ''),
-            COALESCE((
-                SELECT COUNT(*)
-                FROM question_updates qu
-                JOIN question_threads qt ON qt.id = qu.thread_id
-                WHERE qt.actor_id = ?
-            ), 0),
-            COALESCE((SELECT MAX(COALESCE(updated_at, last_seen_at, created_at, '')) FROM ioc_items WHERE actor_id = ?), ''),
-            COALESCE((SELECT COUNT(*) FROM ioc_items WHERE actor_id = ?), 0),
-            COALESCE((SELECT MAX(COALESCE(created_at, '')) FROM requirement_items WHERE actor_id = ?), ''),
-            COALESCE((SELECT COUNT(*) FROM requirement_items WHERE actor_id = ?), 0),
-            COALESCE((SELECT MAX(COALESCE(updated_at, '')) FROM analyst_observations WHERE actor_id = ?), ''),
-            COALESCE((SELECT COUNT(*) FROM analyst_observations WHERE actor_id = ?), 0),
-            COALESCE((SELECT MAX(COALESCE(generated_at, '')) FROM quick_check_overrides WHERE actor_id = ?), ''),
-            COALESCE((SELECT COUNT(*) FROM quick_check_overrides WHERE actor_id = ?), 0),
-            COALESCE((SELECT MAX(COALESCE(updated_at, '')) FROM tracking_intent_register WHERE actor_id = ?), ''),
-            COALESCE((SELECT priority FROM tracking_intent_register WHERE actor_id = ?), ''),
-            COALESCE((SELECT impact FROM tracking_intent_register WHERE actor_id = ?), ''),
-            COALESCE((SELECT MAX(COALESCE(updated_at, '')) FROM actor_collection_plans WHERE actor_id = ?), ''),
-            COALESCE((SELECT MAX(COALESCE(created_at, '')) FROM actor_change_items WHERE actor_id = ?), ''),
-            COALESCE((SELECT COUNT(*) FROM actor_change_items WHERE actor_id = ?), 0),
-            COALESCE((SELECT MAX(COALESCE(created_at, '')) FROM actor_alert_events WHERE actor_id = ?), ''),
-            COALESCE((SELECT COUNT(*) FROM actor_alert_events WHERE actor_id = ? AND status = 'open'), 0),
-            COALESCE((SELECT MAX(COALESCE(updated_at, '')) FROM actor_report_preferences WHERE actor_id = ?), ''),
-            COALESCE((SELECT MAX(COALESCE(last_confirmed_at, '')) FROM actor_profiles WHERE id = ?), ''),
-            COALESCE((SELECT MAX(COALESCE(last_confirmed_by, '')) FROM actor_profiles WHERE id = ?), '')
-        ''',
-        (
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-            actor_id,
-        ),
-    ).fetchone()
-    fingerprint_source = '|'.join(str(value or '') for value in (row or ()))
-    return hashlib.sha256(fingerprint_source.encode('utf-8')).hexdigest()
-
-
-def _load_cached_notebook_core(
-    connection: sqlite3.Connection,
-    *,
-    actor_id: str,
-    cache_key: str,
-    data_fingerprint: str,
-) -> dict[str, object] | None:
-    row = connection.execute(
-        '''
-        SELECT payload_json
-        FROM notebook_cache
-        WHERE actor_id = ? AND cache_key = ? AND data_fingerprint = ?
-        ''',
-        (actor_id, cache_key, data_fingerprint),
-    ).fetchone()
-    if row is None:
-        return None
-    raw = str(row[0] or '').strip()
-    if not raw:
-        return None
-    try:
-        payload = json.loads(raw)
-        return payload if isinstance(payload, dict) else None
-    except Exception:
-        return None
-
-
-def _load_latest_cached_notebook_for_key_core(
-    connection: sqlite3.Connection,
-    *,
-    actor_id: str,
-    cache_key: str,
-) -> dict[str, object] | None:
-    row = connection.execute(
-        '''
-        SELECT payload_json
-        FROM notebook_cache
-        WHERE actor_id = ? AND cache_key = ?
-        ORDER BY updated_at DESC
-        LIMIT 1
-        ''',
-        (actor_id, cache_key),
-    ).fetchone()
-    if row is None:
-        return None
-    raw = str(row[0] or '').strip()
-    if not raw:
-        return None
-    try:
-        payload = json.loads(raw)
-        return payload if isinstance(payload, dict) else None
-    except Exception:
-        return None
-
-
-def _save_cached_notebook_core(
-    connection: sqlite3.Connection,
-    *,
-    actor_id: str,
-    cache_key: str,
-    data_fingerprint: str,
-    payload: dict[str, object],
-) -> None:
-    now = _utc_now_iso()
-    payload_json = json.dumps(payload, ensure_ascii=True, separators=(',', ':'), sort_keys=True)
-    connection.execute(
-        '''
-        INSERT INTO notebook_cache (
-            actor_id, cache_key, data_fingerprint, payload_json, created_at, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(actor_id, cache_key) DO UPDATE SET
-            data_fingerprint = excluded.data_fingerprint,
-            payload_json = excluded.payload_json,
-            updated_at = excluded.updated_at
-        ''',
-        (actor_id, cache_key, data_fingerprint, payload_json, now, now),
-    )
+from services import notebook_cache_service
+from services.notebook_contract_service import finalize_notebook_contract_core
 
 
 def build_notebook_wrapper_core(
@@ -280,7 +98,7 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
     prefer_cached = bool(deps.get('prefer_cached', True))
     build_on_cache_miss = bool(deps.get('build_on_cache_miss', True))
     allow_stale_cache = bool(deps.get('allow_stale_cache', False))
-    cache_key = _cache_key_core(
+    cache_key = notebook_cache_service.cache_key_core(
         source_tier=source_tier,
         min_confidence_weight=min_confidence_weight,
         source_days=source_days,
@@ -291,8 +109,8 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
     if prefer_cached:
         with sqlite3.connect(_db_path(), timeout=30.0) as connection:
             connection.execute('PRAGMA busy_timeout = 30000')
-            data_fingerprint = _actor_data_fingerprint_core(connection, actor_id)
-            cached = _load_cached_notebook_core(
+            data_fingerprint = notebook_cache_service.actor_data_fingerprint_core(connection, actor_id)
+            cached = notebook_cache_service.load_cached_notebook_core(
                 connection,
                 actor_id=actor_id,
                 cache_key=cache_key,
@@ -300,17 +118,18 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
             )
             if isinstance(cached, dict):
                 cached['snapshot_stale'] = False
-                return cached
-            stale_cached = _load_latest_cached_notebook_for_key_core(
+                return finalize_notebook_contract_core(cached)
+            stale_cached = notebook_cache_service.load_latest_cached_notebook_for_key_core(
                 connection,
                 actor_id=actor_id,
                 cache_key=cache_key,
             )
             if allow_stale_cache and isinstance(stale_cached, dict):
                 stale_cached['snapshot_stale'] = True
-                return stale_cached
+                return finalize_notebook_contract_core(stale_cached)
             if not build_on_cache_miss:
-                return {
+                return finalize_notebook_contract_core(
+                    {
                     'cache_miss': True,
                     'actor': {
                         'id': actor_id,
@@ -318,7 +137,8 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
                         'notebook_message': 'Notebook cache is not ready yet.',
                     },
                     'counts': {'sources': 0},
-                }
+                    }
+                )
 
     notebook = _pipeline_fetch_actor_notebook_core(
         actor_id,
@@ -330,10 +150,11 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
     )
 
     if isinstance(notebook, dict):
+        notebook = finalize_notebook_contract_core(notebook)
         with sqlite3.connect(_db_path(), timeout=30.0) as connection:
             connection.execute('PRAGMA busy_timeout = 30000')
-            latest_fingerprint = _actor_data_fingerprint_core(connection, actor_id)
-            _save_cached_notebook_core(
+            latest_fingerprint = notebook_cache_service.actor_data_fingerprint_core(connection, actor_id)
+            notebook_cache_service.save_cached_notebook_core(
                 connection,
                 actor_id=actor_id,
                 cache_key=cache_key,
@@ -341,4 +162,4 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
                 payload=notebook,
             )
             connection.commit()
-    return notebook
+    return finalize_notebook_contract_core(notebook if isinstance(notebook, dict) else {})

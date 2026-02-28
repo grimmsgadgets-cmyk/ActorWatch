@@ -84,6 +84,62 @@ def test_feed_ingest_skips_google_news_wrapper_fallback(tmp_path):
     assert saved == []
 
 
+def test_feed_ingest_actor_query_feed_stores_google_news_wrapper_entries(tmp_path):
+    """Google News wrapper links from actor_query_feeds should be stored using the
+    RSS title and publisher name — no URL resolution attempted."""
+    db_path = tmp_path / 'feed_ingest.db'
+    actor_id = 'actor-gn'
+    _seed_actor_db(db_path, actor_id, 'Akira')
+
+    saved: list[dict] = []
+    google_news_search_url = 'https://news.google.com/rss/search?q=akira+ransomware'
+    google_wrapper_link = 'https://news.google.com/rss/articles/CBMi_UNIQUEKEY?oc=5'
+
+    derive_called = []
+
+    imported = import_default_feeds_for_actor_core(
+        actor_id,
+        db_path=str(db_path),
+        default_cti_feeds=[],
+        actor_feed_lookback_days=180,
+        feed_import_max_seconds=90,
+        feed_fetch_timeout_seconds=10.0,
+        feed_entry_scan_limit=12,
+        feed_imported_limit=30,
+        actor_search_link_limit=1,
+        feed_require_published_at=False,
+        deps={
+            'actor_exists': lambda connection, _actor_id: True,
+            'build_actor_profile_from_mitre': lambda _name: {'group_name': 'Akira', 'aliases_csv': 'Akira'},
+            'actor_terms': lambda *_args: ['akira'],
+            'actor_query_feeds': lambda _terms: [('Google News Actor Query', google_news_search_url)],
+            'import_ransomware_live_actor_activity': lambda *_args: 0,
+            'safe_http_get': lambda _url, timeout=10.0: _OkResponse(),
+            'parse_feed_entries': lambda _xml: [
+                {
+                    'title': 'Akira Ransomware Targets Healthcare Sector - SecurityWeek',
+                    'link': google_wrapper_link,
+                    'published_at': '2026-02-20T00:00:00Z',
+                    'source_domain': 'https://www.securityweek.com',
+                    'source_name': 'SecurityWeek',
+                }
+            ],
+            'text_contains_actor_term': lambda _text, _terms: True,
+            'within_lookback': lambda _published_at, _days: True,
+            'derive_source_from_url': lambda *_args, **_kwargs: derive_called.append(True) or {},
+            'upsert_source_for_actor': lambda _conn, *_args: saved.append({'url': _args[2]}),
+            'duckduckgo_actor_search_urls': lambda _terms, limit=1: [],
+        },
+    )
+
+    # Entry should be stored using the Google News wrapper URL as the source URL
+    assert imported == 1
+    assert len(saved) == 1
+    assert saved[0]['url'] == google_wrapper_link
+    # URL resolution should NOT have been attempted for actor_query_feed wrapper entries
+    assert derive_called == []
+
+
 def test_feed_ingest_uses_derived_actor_match_when_feed_title_does_not_match(tmp_path):
     db_path = tmp_path / 'feed_ingest.db'
     actor_id = 'actor-2'
@@ -737,6 +793,74 @@ def test_feed_ingest_v2_partial_match_gets_trusted_quality(tmp_path):
     assert row is not None
     assert row[0] == 'accepted'
     assert row[1] == 'actor_term_partial_match_soft'
+
+
+def test_feed_ingest_v2_linkage_signals_can_promote_actor_term_miss(tmp_path):
+    db_path = tmp_path / 'feed_ingest.db'
+    actor_id = 'actor-7b'
+    _seed_actor_db(db_path, actor_id, 'Ghostwriter')
+    with sqlite3.connect(str(db_path)) as connection:
+        connection.execute(
+            '''
+            CREATE TABLE ingest_decisions (
+                id TEXT PRIMARY KEY,
+                source_id TEXT,
+                actor_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                reason_code TEXT NOT NULL DEFAULT '',
+                details_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            )
+            '''
+        )
+        connection.commit()
+
+    saved_meta: list[tuple[object, object, object]] = []
+    imported = import_default_feeds_for_actor_core(
+        actor_id,
+        db_path=str(db_path),
+        default_cti_feeds=[('Primary Feed', 'https://example.com/feed.xml')],
+        actor_feed_lookback_days=180,
+        feed_require_published_at=True,
+        evidence_pipeline_v2=True,
+        feed_soft_match_limit=1,
+        deps={
+            'actor_exists': lambda connection, _actor_id: True,
+            'build_actor_profile_from_mitre': lambda _name: {'group_name': 'Ghostwriter', 'aliases_csv': ''},
+            'actor_terms': lambda *_args: ['ghostwriter'],
+            'actor_query_feeds': lambda _terms: [],
+            'import_ransomware_live_actor_activity': lambda *_args: 0,
+            'safe_http_get': lambda _url, timeout=10.0: _OkResponse(),
+            'parse_feed_entries': lambda _xml: [
+                {'title': 'Intrusion tradecraft update', 'link': 'https://example.com/new', 'published_at': '2026-02-20T00:00:00Z'},
+            ],
+            'text_contains_actor_term': lambda _text, _terms: False,
+            'within_lookback': lambda _published_at, _days: True,
+            'derive_source_from_url': lambda *_args, **_kwargs: {
+                'source_name': 'Example',
+                'source_url': 'https://example.com/new',
+                'published_at': '2026-02-20T00:00:00Z',
+                'pasted_text': (
+                    'Investigation mapped T1059 and T1566 activity with beacon domain bad.example '
+                    'and hash 44d88612fea8a8f36de82e1278abb02f plus C2 callbacks.'
+                ),
+                'trigger_excerpt': 'Investigation mapped T1059 activity',
+                'title': 'Tradecraft with indicators',
+                'headline': None,
+                'og_title': None,
+                'html_title': None,
+                'publisher': 'Example',
+                'site_name': 'Example',
+            },
+            'upsert_source_for_actor': lambda _connection, *_args: saved_meta.append((_args[12], _args[13], _args[14])),
+            'duckduckgo_actor_search_urls': lambda _terms, limit=1: [],
+            'utc_now_iso': lambda: '2026-02-23T00:00:00+00:00',
+        },
+    )
+
+    assert imported == 1
+    assert saved_meta == [('trusted', 2, 'feed_partial_match')]
 
 
 def test_feed_ingest_caps_secondary_context_volume(tmp_path):

@@ -3,6 +3,89 @@ from datetime import datetime, timedelta, timezone
 from threading import Event
 
 
+def submit_actor_refresh_job_core(
+    actor_id: str,
+    *,
+    trigger_type: str = 'manual_refresh',
+    deps: dict[str, object],
+) -> dict[str, object]:
+    _generation_journal_service = deps['generation_journal_service']
+    _generation_job_stale_minutes = int(deps['generation_job_stale_minutes'])
+    _generation_journal_deps = deps['generation_journal_deps']
+    _set_actor_notebook_status = deps['set_actor_notebook_status']
+    _create_generation_job = deps['create_generation_job']
+    _enqueue_actor_generation = deps['enqueue_actor_generation']
+    _finalize_generation_job = deps['finalize_generation_job']
+
+    try:
+        _generation_journal_service.expire_stale_generation_jobs_for_actor_core(
+            actor_id=actor_id,
+            stale_after_minutes=_generation_job_stale_minutes,
+            deps=_generation_journal_deps(),
+        )
+    except Exception:
+        pass
+
+    active = _generation_journal_service.active_generation_job_for_actor_core(
+        actor_id=actor_id,
+        deps=_generation_journal_deps(),
+    )
+    if isinstance(active, dict) and str(active.get('job_id') or '').strip():
+        _set_actor_notebook_status(
+            actor_id,
+            'running',
+            'Refresh is already in progress for this actor.',
+        )
+        return {
+            'actor_id': actor_id,
+            'job_id': str(active.get('job_id') or ''),
+            'status': str(active.get('status') or 'running'),
+            'queued': False,
+            'message': 'A refresh job is already in progress for this actor.',
+        }
+
+    job_id = _create_generation_job(actor_id=actor_id, trigger_type=trigger_type, initial_status='queued')
+    _set_actor_notebook_status(
+        actor_id,
+        'running',
+        'Refresh queued. Waiting for worker slot...',
+    )
+    queue_priority = 2 if str(trigger_type or '').strip().lower() == 'auto_refresh' else 0
+    enqueued = _enqueue_actor_generation(
+        actor_id,
+        trigger_type=trigger_type,
+        job_id=job_id,
+        priority=queue_priority,
+    )
+    if not enqueued:
+        _finalize_generation_job(
+            job_id=job_id,
+            status='skipped',
+            imported_sources=0,
+            duration_ms=0,
+            final_message='Skipped because another refresh was already queued.',
+            error_message='',
+        )
+        active = _generation_journal_service.active_generation_job_for_actor_core(
+            actor_id=actor_id,
+            deps=_generation_journal_deps(),
+        )
+        return {
+            'actor_id': actor_id,
+            'job_id': str((active or {}).get('job_id') or job_id),
+            'status': str((active or {}).get('status') or 'queued'),
+            'queued': False,
+            'message': 'Refresh already queued for this actor.',
+        }
+    return {
+        'actor_id': actor_id,
+        'job_id': str(job_id),
+        'status': 'queued',
+        'queued': True,
+        'message': 'Refresh job queued.',
+    }
+
+
 def run_tracked_actor_auto_refresh_once_core(
     *,
     db_path: str,

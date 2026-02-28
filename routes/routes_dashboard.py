@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse
+import services.notebook_service as notebook_service
 
 LOGGER = logging.getLogger(__name__)
 
@@ -20,7 +21,6 @@ def render_dashboard_root(
 ) -> HTMLResponse:
     _list_actor_profiles = deps['list_actor_profiles']
     _fetch_actor_notebook = deps['fetch_actor_notebook']
-    _submit_actor_refresh_job = deps.get('submit_actor_refresh_job')
     _get_ollama_status = deps['get_ollama_status']
     _get_actor_refresh_stats = deps.get('get_actor_refresh_stats')
     _page_refresh_auto_trigger_minutes = int(deps.get('page_refresh_auto_trigger_minutes', 30))
@@ -110,15 +110,17 @@ def render_dashboard_root(
         and normalized_min_confidence_weight is None
         and normalized_source_days is None
     )
-    if strict_default_mode:
-        normalized_min_confidence_weight = 3
-        normalized_source_days = 90
+    # Do not override to explicit values here. The pipeline applies the same
+    # defaults (min_conf=1, source_days=365) internally when params are None,
+    # and the cache key must stay None/None to match what the generation phase
+    # stores. Overriding here creates a different cache key and causes a
+    # permanent cache miss even when data exists.
 
     def _running_notebook_placeholder(actor: dict[str, object]) -> dict[str, object]:
         actor_id_value = str(actor.get('id') or '')
         actor_message = str(actor.get('notebook_message') or '').strip()
         actor_status = str(actor.get('notebook_status') or 'running')
-        return {
+        return notebook_service.finalize_notebook_contract_core({
             'actor': {
                 'id': actor_id_value,
                 'display_name': str(actor.get('display_name') or actor_id_value),
@@ -165,12 +167,12 @@ def render_dashboard_root(
             'actor_created_date': '',
             'timeline_compact_rows': [],
             'timeline_window_label': '',
-        }
+        })
 
     def _idle_notebook_placeholder(actor: dict[str, object], message: str) -> dict[str, object]:
         actor_id_value = str(actor.get('id') or '')
         actor_status = str(actor.get('notebook_status') or 'idle')
-        return {
+        return notebook_service.finalize_notebook_contract_core({
             'actor': {
                 'id': actor_id_value,
                 'display_name': str(actor.get('display_name') or actor_id_value),
@@ -217,31 +219,34 @@ def render_dashboard_root(
             'actor_created_date': '',
             'timeline_compact_rows': [],
             'timeline_window_label': '',
-        }
+        })
 
     if selected_actor_id is not None:
         selected_actor_summary = actors_by_id.get(str(selected_actor_id), {})
         selected_actor_status = str(selected_actor_summary.get('notebook_status') or '').strip().lower()
         if selected_actor_status == 'running':
-            notebook = _running_notebook_placeholder(selected_actor_summary)
             if not notice:
                 notice = str(selected_actor_summary.get('notebook_message') or '').strip() or 'Notebook refresh is running.'
         try:
-            if notebook is None:
-                notebook = _fetch_actor_notebook(
-                    selected_actor_id,
-                    source_tier=normalized_source_tier,
-                    min_confidence_weight=normalized_min_confidence_weight,
-                    source_days=normalized_source_days,
-                    build_on_cache_miss=False,
-                    allow_stale_cache=True,
+            notebook = _fetch_actor_notebook(
+                selected_actor_id,
+                source_tier=normalized_source_tier,
+                min_confidence_weight=normalized_min_confidence_weight,
+                source_days=normalized_source_days,
+                build_on_cache_miss=False,
+                allow_stale_cache=True,
+            )
+            if selected_actor_status == 'running' and isinstance(notebook, dict):
+                actor_meta = notebook.get('actor', {}) if isinstance(notebook.get('actor'), dict) else {}
+                actor_meta = dict(actor_meta)
+                actor_meta['notebook_status'] = 'running'
+                actor_meta['notebook_message'] = (
+                    str(selected_actor_summary.get('notebook_message') or '').strip()
+                    or str(actor_meta.get('notebook_message') or '').strip()
+                    or 'Refreshing notebook...'
                 )
+                notebook['actor'] = actor_meta
             if isinstance(notebook, dict) and bool(notebook.get('cache_miss')):
-                if callable(_submit_actor_refresh_job):
-                    try:
-                        _submit_actor_refresh_job(selected_actor_id, trigger_type='page_load')
-                    except Exception:
-                        pass
                 notebook = _idle_notebook_placeholder(
                     selected_actor_summary,
                     'Preparing notebook snapshot in the background. Refresh will appear automatically.',
@@ -301,7 +306,7 @@ def render_dashboard_root(
         except Exception as exc:
             if 'database is locked' in str(exc).lower():
                 LOGGER.warning('dashboard_fetch_locked actor_id=%s', selected_actor_id)
-            notebook = None
+            notebook = _running_notebook_placeholder(selected_actor_summary)
             if not notice:
                 notice = 'Unable to load notebook for selected actor.'
 

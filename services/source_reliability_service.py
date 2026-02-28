@@ -1,4 +1,5 @@
 from services.environment_profile_service import domain_from_url_core
+from urllib.parse import urlparse
 
 
 def apply_feedback_to_source_domains_core(
@@ -72,3 +73,40 @@ def confidence_weight_adjustment_core(reliability_score: float) -> int:
     if reliability_score <= 0.2:
         return -1
     return 0
+
+
+def source_trust_score_core(
+    url: str,
+    *,
+    high_confidence_domains: set[str],
+    medium_confidence_domains: set[str],
+    secondary_context_domains: set[str],
+    trusted_activity_domains: set[str],
+) -> int:
+    try:
+        host = (urlparse(url).hostname or '').strip('.').lower()
+    except Exception:
+        return 0
+    if not host:
+        return 0
+    if any(host == domain or host.endswith(f'.{domain}') for domain in high_confidence_domains):
+        return 4
+    if any(host == domain or host.endswith(f'.{domain}') for domain in medium_confidence_domains):
+        return 3
+    if any(host == domain or host.endswith(f'.{domain}') for domain in secondary_context_domains):
+        return 1
+    if any(host == domain or host.endswith(f'.{domain}') for domain in trusted_activity_domains):
+        return 2
+    return 0
+
+
+def source_tier_label_core(score: int) -> str:
+    if score >= 4:
+        return 'high'
+    if score == 3:
+        return 'medium'
+    if score == 2:
+        return 'trusted'
+    if score == 1:
+        return 'context'
+    return 'unrated'

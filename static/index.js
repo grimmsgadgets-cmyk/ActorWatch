@@ -55,6 +55,10 @@
         const reportNode = document.getElementById("recent-reports");
         const targetsNode = document.getElementById("recent-targets");
         const impactNode = document.getElementById("recent-impact");
+        const bastionTrendBars = document.getElementById("bastion-trend-bars");
+        const bastionTechniqueBars = document.getElementById("bastion-technique-bars");
+        const bastionChangeList = document.getElementById("bastion-change-list");
+        const bastionAiList = document.getElementById("bastion-ai-list");
         const refreshTimelineList = document.getElementById("refresh-timeline-list");
         const refreshTimelineStatus = document.getElementById("refresh-timeline-status");
         const refreshTimelineUpdated = document.getElementById("refresh-timeline-updated");
@@ -216,6 +220,114 @@
           if (reportNode && recent.new_reports !== undefined) reportNode.textContent = String(recent.new_reports);
           if (targetsNode && recent.targets !== undefined) targetsNode.textContent = String(recent.targets);
           if (impactNode && recent.damage !== undefined) impactNode.textContent = String(recent.damage);
+          renderBastionCards(data);
+        }
+
+        function clearNode(node) {
+          if (!node) return;
+          while (node.firstChild) node.removeChild(node.firstChild);
+        }
+
+        function renderInlineNote(node, text) {
+          if (!node) return;
+          const note = document.createElement("div");
+          note.className = "inline-note";
+          note.textContent = String(text || "");
+          node.appendChild(note);
+        }
+
+        function renderBastionCards(data) {
+          const timelineGraph = Array.isArray(data.timeline_graph) ? data.timeline_graph : [];
+          const topTechniques = Array.isArray(data.top_techniques) ? data.top_techniques : [];
+          const topChangeSignals = Array.isArray(data.top_change_signals) ? data.top_change_signals : [];
+          const synthesis = Array.isArray(data.recent_activity_synthesis) ? data.recent_activity_synthesis : [];
+
+          if (bastionTrendBars) {
+            clearNode(bastionTrendBars);
+            const trend = timelineGraph.slice(-8);
+            if (!trend.length) {
+              renderInlineNote(bastionTrendBars, "No timeline buckets available yet.");
+            } else {
+              let maxValue = 1;
+              trend.forEach((bucket) => {
+                const total = Number((bucket && bucket.total) || 0);
+                if (total > maxValue) maxValue = total;
+              });
+              trend.forEach((bucket) => {
+                const total = Number((bucket && bucket.total) || 0);
+                const label = String((bucket && bucket.label) || "-");
+                const h = maxValue > 0 ? Math.max(12, Math.round((total / maxValue) * 150)) : 12;
+                const col = document.createElement("div");
+                col.className = "bastion-bar-col";
+                const bar = document.createElement("div");
+                bar.className = "bastion-bar";
+                bar.style.height = String(h) + "px";
+                bar.title = label + ": " + String(total);
+                const barLabel = document.createElement("div");
+                barLabel.className = "bastion-bar-label";
+                barLabel.textContent = label ? label.slice(-5) : "-";
+                col.append(bar, barLabel);
+                bastionTrendBars.appendChild(col);
+              });
+            }
+          }
+
+          if (bastionTechniqueBars) {
+            clearNode(bastionTechniqueBars);
+            const techniques = topTechniques.slice(0, 8);
+            if (!techniques.length) {
+              renderInlineNote(bastionTechniqueBars, "No mapped techniques yet.");
+            } else {
+              techniques.forEach((technique) => {
+                const score = Number((technique && (technique.event_count || technique.source_count)) || 1);
+                const rawHeight = Math.round(score * 18);
+                const clamped = Math.min(170, Math.max(14, rawHeight));
+                const col = document.createElement("div");
+                col.className = "bastion-bar-col";
+                const bar = document.createElement("div");
+                bar.className = "bastion-bar";
+                bar.style.height = String(clamped) + "px";
+                const tId = String((technique && technique.technique_id) || "T");
+                const tName = String((technique && technique.technique_name) || "");
+                bar.title = tId + (tName ? " " + tName : "");
+                const barLabel = document.createElement("div");
+                barLabel.className = "bastion-bar-label";
+                barLabel.textContent = tId || "T";
+                col.append(bar, barLabel);
+                bastionTechniqueBars.appendChild(col);
+              });
+            }
+          }
+
+          if (bastionChangeList) {
+            clearNode(bastionChangeList);
+            if (!topChangeSignals.length) {
+              const li = document.createElement("li");
+              li.textContent = "No validated change signals yet.";
+              bastionChangeList.appendChild(li);
+            } else {
+              topChangeSignals.slice(0, 5).forEach((signal) => {
+                const li = document.createElement("li");
+                li.textContent = String((signal && (signal.change_summary || signal.change_why_new)) || "No summarized change text yet.");
+                bastionChangeList.appendChild(li);
+              });
+            }
+          }
+
+          if (bastionAiList) {
+            clearNode(bastionAiList);
+            if (!synthesis.length) {
+              const li = document.createElement("li");
+              li.textContent = "No recent AI synthesis available yet.";
+              bastionAiList.appendChild(li);
+            } else {
+              synthesis.slice(0, 5).forEach((item) => {
+                const li = document.createElement("li");
+                li.textContent = String((item && item.text) || "");
+                bastionAiList.appendChild(li);
+              });
+            }
+          }
         }
 
         async function runLiveRefresh() {
