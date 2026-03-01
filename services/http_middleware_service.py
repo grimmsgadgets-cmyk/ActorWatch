@@ -73,8 +73,11 @@ async def add_security_headers_core(*, request, call_next, deps: dict[str, objec
 
     csp_policy = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://unpkg.com; "
-        "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+        # unsafe-inline retained for inline <script>/<style> blocks in the single-page template.
+        # Removing it requires nonce-based CSP refactor (future hardening task).
+        # External sources scoped to the specific CDNs in use only.
+        "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; "
         "img-src 'self' data: https:; "
         "font-src 'self' data:; "
         "connect-src 'self' https://nominatim.openstreetmap.org; "
@@ -88,4 +91,7 @@ async def add_security_headers_core(*, request, call_next, deps: dict[str, objec
     response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
     response.headers.setdefault('X-Frame-Options', 'DENY')
     response.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+    # HSTS: tell browsers to always use HTTPS. max-age=1 year.
+    # Only effective when the app is served over TLS (behind a reverse proxy in production).
+    response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     return _finalize(response)

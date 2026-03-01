@@ -8,8 +8,9 @@ from fastapi import HTTPException
 
 
 def strip_html(value: str) -> str:
-    value = re.sub(r'<script[\s\S]*?</script>', ' ', value, flags=re.IGNORECASE)
-    value = re.sub(r'<style[\s\S]*?</style>', ' ', value, flags=re.IGNORECASE)
+    # Use \s* before > so </script > and </style > (with whitespace) are also matched.
+    value = re.sub(r'<script[\s\S]*?</script\s*>', ' ', value, flags=re.IGNORECASE)
+    value = re.sub(r'<style[\s\S]*?</style\s*>', ' ', value, flags=re.IGNORECASE)
     value = re.sub(r'<[^>]+>', ' ', value)
     value = html.unescape(value)
     value = re.sub(r'\s+', ' ', value).strip()
@@ -64,7 +65,7 @@ def evidence_source_label_from_source(
     source_url = str(source.get('url') or '').strip()
     parsed_source = urlparse(source_url)
     source_host = (parsed_source.netloc or '').lower()
-    if source_host.endswith('news.google.com'):
+    if source_host == 'news.google.com' or source_host.endswith('.news.google.com'):
         title_hint = evidence_title(source)
         if ' - ' in title_hint:
             publisher_hint = title_hint.rsplit(' - ', 1)[-1].strip()
@@ -89,14 +90,14 @@ def canonical_group_domain(
     source_url = str(source.get('url') or '').strip()
     parsed = urlparse(source_url)
     host = (parsed.netloc or '').lower()
-    if host.endswith('news.google.com'):
+    if host == 'news.google.com' or host.endswith('.news.google.com'):
         query_params = parse_qs(parsed.query)
         for key in ('url', 'u', 'q'):
             candidate = str((query_params.get(key) or [''])[0]).strip()
             if not candidate.startswith(('http://', 'https://')):
                 continue
             candidate_host = (urlparse(candidate).netloc or '').lower()
-            if candidate_host and not candidate_host.endswith('news.google.com'):
+            if candidate_host and candidate_host != 'news.google.com' and not candidate_host.endswith('.news.google.com'):
                 return candidate_host
         source_label = evidence_source_label(source)
         source_label_lower = source_label.lower().strip()
@@ -118,7 +119,7 @@ def _extract_structured_blocks(content: str, *, host: str) -> tuple[list[str], s
         containers = re.findall(r'<main[^>]*>(.*?)</main>', body, flags=re.IGNORECASE | re.DOTALL)
         if not containers:
             containers = re.findall(r'<article[^>]*>(.*?)</article>', body, flags=re.IGNORECASE | re.DOTALL)
-    elif lowered_host.endswith('cisa.gov'):
+    elif lowered_host == 'cisa.gov' or lowered_host.endswith('.cisa.gov'):
         parse_status = 'parsed_structured_cisa'
         containers = re.findall(r'<main[^>]*>(.*?)</main>', body, flags=re.IGNORECASE | re.DOTALL)
         if not containers:

@@ -8,9 +8,12 @@ dependencies = [
   "jinja2",
   "httpx",
   "python-multipart>=0.0.22",
+  "defusedxml>=0.7.1",
 ]
 
 [dependency-groups]
 dev = [
+  "bandit>=1.9.4",
   "pytest",
+  "semgrep>=1.153.1",
 ]

@@ -25,7 +25,7 @@ def source_fingerprint(
     if not normalized_title and not normalized_excerpt:
         return ''
     raw = f'{normalized_title}|{normalized_excerpt}'
-    return hashlib.sha1(raw.encode('utf-8')).hexdigest()
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
 
 def upsert_source_for_actor(

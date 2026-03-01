@@ -270,8 +270,9 @@ def actor_refresh_stats_core(
         recent_job_ids = [str(row[0] or '') for row in recent_job_rows if str(row[0] or '').strip()]
         phase_rows = []
         if recent_job_ids:
+            # {placeholders} is only '?,?,...' — no user data — safe from SQL injection.  # nosec B608
             placeholders = ','.join('?' for _ in recent_job_ids)
-            phase_rows = connection.execute(
+            phase_rows = connection.execute(  # nosec B608
                 f'''
                 SELECT
                     id,

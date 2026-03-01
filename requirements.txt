@@ -3,3 +3,6 @@ uvicorn[standard]==0.35.0
 jinja2==3.1.6
 httpx==0.28.1
 python-multipart==0.0.22
+defusedxml==0.7.1
+# Pin certifi to ensure up-to-date CA certificate bundle for TLS validation.
+certifi>=2024.2.2

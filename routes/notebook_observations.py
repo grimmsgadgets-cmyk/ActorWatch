@@ -3,6 +3,7 @@ import io
 import sqlite3
 import uuid
 from datetime import datetime
+from urllib.parse import urlparse
 
 import route_paths
 import services.observation_service as observation_service
@@ -170,7 +171,13 @@ def register_notebook_observation_routes(*, router: APIRouter, deps: dict[str, o
         claim_type = str(payload.get('claim_type') or 'assessment').strip().lower()
         if claim_type not in {'evidence', 'assessment'}:
             claim_type = 'assessment'
-        citation_url = str(payload.get('citation_url') or '').strip()[:500]
+        citation_url_raw = str(payload.get('citation_url') or '').strip()[:500]
+        # Only allow http/https schemes to prevent javascript:/data: XSS via stored URLs.
+        if citation_url_raw:
+            _scheme = urlparse(citation_url_raw).scheme.lower()
+            citation_url = citation_url_raw if _scheme in {'http', 'https'} else ''
+        else:
+            citation_url = ''
         observed_on = str(payload.get('observed_on') or '').strip()[:10]
         observed_on_normalized = ''
         if observed_on:

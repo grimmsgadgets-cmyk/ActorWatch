@@ -421,17 +421,18 @@ def fetch_analyst_observations(
         updated_from=updated_from,
         updated_to=updated_to,
     )
-    where_sql, params = observation_service.build_observation_where_clause_core(
-        actor_id,
-        filters=normalized_filters,
-    )
 
-    safe_limit: int | None = None
-    if limit is not None:
-        try:
-            safe_limit = max(1, min(500, int(limit)))
-        except Exception:
-            safe_limit = 100
+    # Build fully static parameterized query — no string concatenation from user input.
+    # Optional filters use the IS NULL sentinel so the query text is always identical.
+    analyst_param = f'%{normalized_filters["analyst"]}%' if normalized_filters.get('analyst') else None
+    confidence_param = normalized_filters.get('confidence') or None
+    from_param = normalized_filters.get('updated_from') or None
+    to_param = normalized_filters.get('updated_to') or None
+
+    try:
+        safe_limit: int = max(1, min(500, int(limit))) if limit is not None else -1
+    except Exception:
+        safe_limit = 100
     try:
         safe_offset = max(0, int(offset))
     except Exception:
@@ -440,21 +441,29 @@ def fetch_analyst_observations(
     with sqlite3.connect(db_path()) as connection:
         if not actor_exists(connection, actor_id):
             raise HTTPException(status_code=404, detail='actor not found')
-        query = (
+        rows = connection.execute(
             '''
             SELECT item_type, item_key, note, source_ref, confidence,
                    source_reliability, information_credibility, claim_type, citation_url, observed_on,
                    updated_by, updated_at
             FROM analyst_observations
-            WHERE '''
-            + where_sql
-            + '\nORDER BY updated_at DESC'
-        )
-        query_params: list[object] = list(params)
-        if safe_limit is not None:
-            query += '\nLIMIT ? OFFSET ?'
-            query_params.extend([safe_limit, safe_offset])
-        rows = connection.execute(query, query_params).fetchall()
+            WHERE actor_id = ?
+              AND (? IS NULL OR LOWER(updated_by) LIKE ?)
+              AND (? IS NULL OR confidence = ?)
+              AND (? IS NULL OR substr(updated_at, 1, 10) >= ?)
+              AND (? IS NULL OR substr(updated_at, 1, 10) <= ?)
+            ORDER BY updated_at DESC
+            LIMIT ? OFFSET ?
+            ''',
+            (
+                actor_id,
+                analyst_param, analyst_param,        # ? IS NULL OR LOWER(updated_by) LIKE ?
+                confidence_param, confidence_param,  # ? IS NULL OR confidence = ?
+                from_param, from_param,              # ? IS NULL OR substr(updated_at, 1, 10) >= ?
+                to_param, to_param,                  # ? IS NULL OR substr(updated_at, 1, 10) <= ?
+                safe_limit, safe_offset,
+            ),
+        ).fetchall()
         source_keys = observation_service.observation_source_keys_core(rows)
         source_lookup: dict[str, dict[str, str]] = {}
         if source_keys:

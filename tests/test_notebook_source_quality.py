@@ -2,6 +2,7 @@ import sqlite3
 import time
 import asyncio
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from fastapi import BackgroundTasks
 
 import pytest
@@ -12,6 +13,12 @@ from tests.notebook_test_helpers import JsonRequest as _JsonRequest
 from tests.notebook_test_helpers import app_endpoint as _app_endpoint
 from tests.notebook_test_helpers import http_request as _http_request
 from tests.notebook_test_helpers import setup_db as _setup_db
+
+
+def _url_has_domain(url: str, domain: str) -> bool:
+    """Return True if *url*'s hostname is exactly *domain* or a subdomain of it."""
+    h = (urlparse(url).hostname or '').lower()
+    return h == domain or h.endswith(f'.{domain}')
 
 
 def test_source_quality_filters_scope_recent_change_inputs(tmp_path):
@@ -86,7 +93,7 @@ def test_source_quality_filters_scope_recent_change_inputs(tmp_path):
         str(item.get('source_url') or '')
         for item in notebook_all.get('recent_activity_highlights', [])
     }
-    assert any('cisa.gov' in value for value in all_urls)
+    assert any(_url_has_domain(value, 'cisa.gov') for value in all_urls)
     assert any('unknown-security.example' in value for value in all_urls)
     assert any(
         str(item.get('technique_id') or '').strip().upper() == 'T1190'
@@ -102,7 +109,7 @@ def test_source_quality_filters_scope_recent_change_inputs(tmp_path):
         for item in notebook_high_only.get('recent_activity_highlights', [])
     ]
     assert high_urls
-    assert all('cisa.gov' in value for value in high_urls)
+    assert all(_url_has_domain(value, 'cisa.gov') for value in high_urls)
     filters = notebook_high_only.get('source_quality_filters', {})
     assert str(filters.get('source_tier') or '') == 'high'
     assert str(filters.get('total_sources') or '') == '2'
@@ -201,7 +208,7 @@ def test_source_quality_filters_apply_weight_and_days(tmp_path):
         for item in notebook_filtered.get('recent_activity_highlights', [])
     ]
     assert filtered_urls
-    assert any('cisa.gov' in value for value in filtered_urls)
+    assert any(_url_has_domain(value, 'cisa.gov') for value in filtered_urls)
     assert all('mandiant.com' not in value for value in filtered_urls)
     filters = notebook_filtered.get('source_quality_filters', {})
     assert str(filters.get('min_confidence_weight') or '') == '3'

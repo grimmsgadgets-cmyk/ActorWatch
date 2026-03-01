@@ -376,6 +376,10 @@ def test_priority_questions_use_source_derived_iocs_when_manual_iocs_missing(tmp
     assert card is not None
     related_iocs = card.get('related_iocs', [])
     assert any(str(ioc.get('ioc_type') or '').lower() == 'domain' for ioc in related_iocs)
-    assert any('qilin-test.net' in str(ioc.get('ioc_value') or '').lower() for ioc in related_iocs)
+    assert any(
+        str(ioc.get('ioc_value') or '').lower() == 'qilin-test.net'
+        or str(ioc.get('ioc_value') or '').lower().endswith('.qilin-test.net')
+        for ioc in related_iocs
+    )
 
 

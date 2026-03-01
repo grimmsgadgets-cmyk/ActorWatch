@@ -1,7 +1,8 @@
 import json
 import re
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+
+import defusedxml.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote_plus
 

@@ -2,6 +2,7 @@ import sqlite3
 import time
 import asyncio
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from fastapi import BackgroundTasks
 
 import pytest
@@ -12,6 +13,15 @@ from tests.notebook_test_helpers import JsonRequest as _JsonRequest
 from tests.notebook_test_helpers import app_endpoint as _app_endpoint
 from tests.notebook_test_helpers import http_request as _http_request
 from tests.notebook_test_helpers import setup_db as _setup_db
+
+
+def _evidence_has_domain(item: str, domain: str) -> bool:
+    """Return True if any pipe-delimited part of an evidence_used string has *domain* as its hostname."""
+    for part in item.split(' | '):
+        h = (urlparse(part.strip()).hostname or '').lower()
+        if h == domain or h.endswith(f'.{domain}'):
+            return True
+    return False
 
 
 def test_fetch_actor_notebook_returns_contract_payload_on_cache_miss(tmp_path, monkeypatch):
@@ -261,6 +271,6 @@ def test_quick_checks_can_use_recent_sources_when_question_updates_are_missing(t
     assert card is not None
     assert bool(card.get('evidence_backed')) is True
     evidence_used = [str(item) for item in (card.get('evidence_used') or [])]
-    assert any('unit42.paloaltonetworks.com' in item for item in evidence_used)
+    assert any(_evidence_has_domain(item, 'unit42.paloaltonetworks.com') for item in evidence_used)
     assert any('(ingested)' in item for item in evidence_used)
 

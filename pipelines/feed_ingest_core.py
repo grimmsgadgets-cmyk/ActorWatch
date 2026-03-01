@@ -20,7 +20,7 @@ def _is_google_news_wrapper_url(value: str | None) -> bool:
         return False
     host = (parsed.hostname or '').strip('.').lower()
     path = (parsed.path or '').strip()
-    return host.endswith('news.google.com') and path.startswith('/rss/articles/')
+    return (host == 'news.google.com' or host.endswith('.news.google.com')) and path.startswith('/rss/articles/')
 
 
 def _ensure_actor_feed_state_schema(connection: sqlite3.Connection) -> None:
@@ -495,9 +495,10 @@ def _promote_soft_sources_from_corroboration(
             supporting_keys.append(key)
     if not promotable_ids:
         return 0
+    # {placeholders} is only '?,?,...' — no user data — safe from SQL injection.  # nosec B608
     placeholders = ','.join('?' for _ in promotable_ids)
     params = ['feed_partial_match', 'trusted', 2, actor_id, *sorted(promotable_ids)]
-    cursor = connection.execute(
+    cursor = connection.execute(  # nosec B608
         f'''
         UPDATE sources
         SET source_type = ?,
