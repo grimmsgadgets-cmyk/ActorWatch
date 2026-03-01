@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
+from services.ioc_store_service import bulk_delete_ioc_items_core, delete_ioc_item_core
+
 
 def register_actor_source_and_ioc_routes(*, router: APIRouter, deps: dict[str, object]) -> None:
     _enforce_request_size = deps['enforce_request_size']
@@ -220,3 +222,28 @@ def register_actor_source_and_ioc_routes(*, router: APIRouter, deps: dict[str, o
             )
             connection.commit()
         return RedirectResponse(url=f'/?actor_id={actor_id}&notice=IOC+status+updated', status_code=303)
+
+    @router.post('/actors/{actor_id}/iocs/{ioc_id}/delete')
+    async def delete_ioc(actor_id: str, ioc_id: str, request: Request) -> RedirectResponse:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            deleted = delete_ioc_item_core(connection, actor_id=actor_id, ioc_id=ioc_id)
+            connection.commit()
+        notice = 'IOC+deleted' if deleted else 'IOC+not+found'
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice={notice}', status_code=303)
+
+    @router.post('/actors/{actor_id}/iocs/bulk-delete')
+    async def bulk_delete_iocs(actor_id: str, request: Request) -> RedirectResponse:
+        await _enforce_request_size(request, _default_body_limit_bytes)
+        form_data = await request.form()
+        ioc_ids = [str(v).strip() for v in form_data.getlist('ioc_ids') if str(v).strip()]
+        if not ioc_ids:
+            return RedirectResponse(url=f'/?actor_id={actor_id}&notice=No+IOCs+selected', status_code=303)
+        with sqlite3.connect(_db_path()) as connection:
+            if not _actor_exists(connection, actor_id):
+                raise HTTPException(status_code=404, detail='actor not found')
+            deleted = bulk_delete_ioc_items_core(connection, actor_id=actor_id, ioc_ids=ioc_ids)
+            connection.commit()
+        return RedirectResponse(url=f'/?actor_id={actor_id}&notice=Deleted+{deleted}+IOC(s)', status_code=303)

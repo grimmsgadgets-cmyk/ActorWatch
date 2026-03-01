@@ -294,3 +294,23 @@ def upsert_ioc_item_core(
         'ioc_value': ioc_value,
         'created': False,
     }
+
+
+def delete_ioc_item_core(connection, *, actor_id: str, ioc_id: str) -> bool:
+    row = connection.execute(
+        'SELECT id FROM ioc_items WHERE id = ? AND actor_id = ?',
+        (ioc_id, actor_id),
+    ).fetchone()
+    if row is None:
+        return False
+    connection.execute('DELETE FROM ioc_history WHERE ioc_item_id = ?', (ioc_id,))
+    connection.execute('DELETE FROM ioc_items WHERE id = ? AND actor_id = ?', (ioc_id, actor_id))
+    return True
+
+
+def bulk_delete_ioc_items_core(connection, *, actor_id: str, ioc_ids: list[str]) -> int:
+    deleted = 0
+    for ioc_id in ioc_ids:
+        if delete_ioc_item_core(connection, actor_id=actor_id, ioc_id=ioc_id):
+            deleted += 1
+    return deleted
