@@ -3,6 +3,7 @@
   const MODES = new Set(['classic', 'redraw', 'bastion']);
   const SELECT_ID = 'ui-mode-select';
   let bastionTick = null;
+  let bastionKeyHandler = null;
 
   function clickIfPresent(id) {
     const el = document.getElementById(id);
@@ -20,6 +21,58 @@
     log.scrollTop = log.scrollHeight;
   }
 
+  function dispatchBastionCmd(raw) {
+    const cmd = String(raw || '').trim().toLowerCase();
+    const rawTrimmed = String(raw || '').trim();
+    if (!cmd) return;
+    if (cmd === 'help') {
+      appendBastionLog('Commands: help  refresh  note <text>  timeline  status  clear  map');
+      appendBastionLog('Keys:     [R] refresh  [N] note  [T] timeline  [G] map');
+      return;
+    }
+    if (cmd === 'refresh' || cmd === 'r') {
+      clickIfPresent('refresh-actor-button');
+      appendBastionLog('Refresh actor requested.');
+      return;
+    }
+    if (cmd.startsWith('note ')) {
+      const text = rawTrimmed.slice(5).trim();
+      clickIfPresent('terminal-add-note');
+      appendBastionLog(text ? `Note dialog opened: "${text.slice(0, 40)}"` : 'Add note dialog opened.');
+      return;
+    }
+    if (cmd === 'note') {
+      clickIfPresent('terminal-add-note');
+      appendBastionLog('Add note dialog opened.');
+      return;
+    }
+    if (cmd === 'timeline' || cmd === 't') {
+      clickIfPresent('open-timeline-details-link');
+      appendBastionLog('Opened timeline details.');
+      return;
+    }
+    if (cmd === 'map' || cmd === 'g') {
+      clickIfPresent('geo-map-open');
+      appendBastionLog('Opened geography map.');
+      return;
+    }
+    if (cmd === 'status') {
+      const statusEl = document.getElementById('notebook-health-message');
+      const sourcesEl = document.getElementById('notebook-health-sources');
+      const s = statusEl ? statusEl.textContent.trim() : 'N/A';
+      const src = sourcesEl ? sourcesEl.textContent.trim() : 'N/A';
+      appendBastionLog(`Status: ${s} | Sources: ${src}`);
+      return;
+    }
+    if (cmd === 'clear') {
+      const log = document.getElementById('bastion-terminal-log');
+      if (log) log.textContent = '';
+      appendBastionLog('Terminal cleared.');
+      return;
+    }
+    appendBastionLog(`Unknown command: "${cmd}". Type "help" for available commands.`);
+  }
+
   function setupBastionDeck() {
     const shell = document.getElementById('bastion-shell');
     if (!shell) return;
@@ -31,16 +84,38 @@
       el.addEventListener('click', fn);
     };
 
+    bind('bastion-cmd-exit', () => { setMode('classic'); });
     bind('bastion-cmd-map', () => { clickIfPresent('geo-map-open'); appendBastionLog('Opened geography map.'); });
     bind('bastion-cmd-refresh', () => { clickIfPresent('refresh-actor-button'); appendBastionLog('Refresh actor requested.'); });
-    bind('bastion-cmd-terminal-notes', () => { clickIfPresent('terminal-add-note'); appendBastionLog('Add note dialog opened.'); });
-    bind('bastion-cmd-terminal-gennotes', () => { clickIfPresent('terminal-generate-notes'); appendBastionLog('Generate notes requested.'); });
-    bind('bastion-cmd-terminal-timeline', () => {
-      clickIfPresent('open-timeline-details-link');
-      appendBastionLog('Opened timeline details.');
-    });
-    bind('bastion-cmd-terminal-top', () => { window.scrollTo({ top: 0, behavior: 'smooth' }); appendBastionLog('Scrolled to top.'); });
 
+    const cmdInput = document.getElementById('bastion-cmd-input');
+    if (cmdInput && !cmdInput.dataset.bound) {
+      cmdInput.dataset.bound = '1';
+      cmdInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const val = cmdInput.value;
+          cmdInput.value = '';
+          dispatchBastionCmd(val);
+        }
+      });
+    }
+
+    if (!bastionKeyHandler) {
+      bastionKeyHandler = (e) => {
+        if (document.body.dataset.uiMode !== 'bastion') return;
+        const tag = (e.target.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+        const key = e.key.toLowerCase();
+        if (key === 'r') { e.preventDefault(); clickIfPresent('refresh-actor-button'); appendBastionLog('Refresh requested. [R]'); }
+        else if (key === 'n') { e.preventDefault(); clickIfPresent('terminal-add-note'); appendBastionLog('Add note dialog opened. [N]'); }
+        else if (key === 't') { e.preventDefault(); clickIfPresent('open-timeline-details-link'); appendBastionLog('Timeline opened. [T]'); }
+        else if (key === 'g') { e.preventDefault(); clickIfPresent('geo-map-open'); appendBastionLog('Geography map opened. [G]'); }
+      };
+      document.addEventListener('keydown', bastionKeyHandler);
+    }
+
+    const ping = document.getElementById('bastion-terminal-ping');
     const sync = () => {
       const status = document.getElementById('notebook-health-message');
       const sources = document.getElementById('notebook-health-sources');
@@ -54,6 +129,11 @@
       if (sourcesOut && sources) sourcesOut.textContent = String(sources.textContent || '').trim() || sourcesOut.textContent;
       if (activityOut && activity) activityOut.textContent = String(activity.textContent || '').trim() || activityOut.textContent;
       if (techniquesOut && techniques) techniquesOut.textContent = String(techniques.textContent || '').trim() || techniquesOut.textContent;
+      if (ping) {
+        ping.textContent = '● LIVE';
+        ping.classList.add('live');
+        setTimeout(() => { ping.classList.remove('live'); ping.textContent = 'ONLINE'; }, 1200);
+      }
     };
 
     sync();
@@ -64,6 +144,10 @@
     if (bastionTick) {
       window.clearInterval(bastionTick);
       bastionTick = null;
+    }
+    if (bastionKeyHandler) {
+      document.removeEventListener('keydown', bastionKeyHandler);
+      bastionKeyHandler = null;
     }
   }
 

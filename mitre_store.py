@@ -660,7 +660,7 @@ def group_top_techniques(group_stix_id: str, limit: int = 6) -> list[dict[str, s
 
     ranked: list[tuple[str, int]] = sorted(counts.items(), key=lambda item: item[1], reverse=True)
     results: list[dict[str, str]] = []
-    for attack_pattern_id, _ in ranked:
+    for attack_pattern_id, use_count in ranked:
         attack_obj = attack_patterns.get(attack_pattern_id, {})
         name = str(attack_obj.get('name') or '').strip()
         if not name:
@@ -694,6 +694,7 @@ def group_top_techniques(group_stix_id: str, limit: int = 6) -> list[dict[str, s
                 'name': name,
                 'phase': phase,
                 'technique_url': technique_url,
+                'use_count': use_count,
             }
         )
         if len(results) >= limit:

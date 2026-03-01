@@ -158,17 +158,51 @@ In `Bastion` mode:
 - Top command bar keeps high-frequency actions:
   - `Geography`
   - `Refresh actor`
-- Bottom operations terminal focuses on analyst workflow actions:
-  - `Write analyst note`
-  - `Auto-draft notes`
-  - `Timeline`
-  - `Back to top`
-- Right-side `Mission console` shows:
-  - `Now processing`
-  - `Latest signal`
-  - `Attention queue`
-  - `System health`
-  - `Last analyst action`
+  - `← Classic` to exit back to Classic mode
+- Command terminal (bottom of main panel) accepts typed commands:
+  - `help` — show available commands
+  - `refresh` — trigger actor refresh
+  - `note <text>` — open analyst note dialog
+  - `timeline` — open timeline details
+  - `map` — open geography map
+  - `status` — read health and source count to log
+  - `clear` — clear terminal log
+- Keyboard shortcuts (when not in an input field):
+  - `R` — refresh actor
+  - `N` — open analyst note dialog
+  - `T` — open timeline details
+  - `G` — open geography map
+- Right-side `Ops console` shows:
+  - `Status` — notebook health
+  - `Sources` — ingested source count
+  - `Activity` — recent activity highlight
+  - `Techniques` — top MITRE ATT&CK technique
+- Right-side data panels:
+  - `Operational trend` — bar chart of activity over time
+  - `Top techniques` — ranked MITRE ATT&CK techniques with usage bars
+  - `Change signals` — what changed and why it matters
+  - `Synthesis` — AI-reviewed activity summary
+  - `Open questions` — data-driven analyst nudges (no AI; derived from gaps in record)
+
+------------------------------------------------------------------------
+
+## Actor Geography Map
+
+Click the **Geography** button (available in all modes) to open the map overlay.
+
+- **Dark tile layer** — CartoDB Dark Matter, matching the app's dark aesthetic
+- **Clustering** — when multiple actors share the same mapped location, a single
+  cluster dot is shown with the actor count. Click the cluster to list those actors
+  in the sidebar, then select one to view details.
+- **Status-based dot colors**:
+  - Red — Active (`ready` or `running` notebook state)
+  - Amber — Quiet (`warning` notebook state)
+  - Grey — Dormant (`idle`, `error`, or no notebook yet)
+- Click any map location to filter the sidebar by country (or continent if
+  country lookup is unavailable). Click an actor in the list to view details
+  and track them from the map.
+
+------------------------------------------------------------------------
 
 Auto-refresh defaults:
 

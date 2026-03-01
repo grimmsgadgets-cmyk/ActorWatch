@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from services import notebook_cache_service
 from services.notebook_contract_service import finalize_notebook_contract_core
@@ -163,3 +164,49 @@ def fetch_actor_notebook_wrapper_core(*, actor_id: str, deps: dict[str, object])
             )
             connection.commit()
     return finalize_notebook_contract_core(notebook if isinstance(notebook, dict) else {})
+
+
+def compute_bastion_nudges_core(notebook: dict | None) -> list[str]:
+    """Data-driven analyst nudges for the Bastion HUD — no AI, no drama, just record gaps."""
+    if not isinstance(notebook, dict):
+        return []
+
+    nudges: list[str] = []
+    counts = notebook.get('counts') or {}
+    ioc_items = notebook.get('ioc_items') or []
+    timeline_graph = notebook.get('timeline_graph') or []
+    top_techniques = notebook.get('top_techniques') or []
+    source_count = int(counts.get('sources') or 0)
+    event_count = int(counts.get('timeline_events') or 0)
+
+    if source_count == 0:
+        nudges.append('No sources ingested — run a refresh to start building this record.')
+
+    if event_count == 0:
+        nudges.append('No timeline events — check source quality or add observations manually.')
+    elif timeline_graph:
+        recent = timeline_graph[-2:]
+        if all(int(b.get('total') or 0) == 0 for b in recent):
+            nudges.append('No activity in the last 2 reporting periods — actor may be dormant or sources have dried up.')
+
+    sourceless = [i for i in ioc_items if not str(i.get('source_ref') or '').strip()]
+    if sourceless:
+        n = len(sourceless)
+        nudges.append(f'{n} IOC{"s" if n > 1 else ""} {"have" if n > 1 else "has"} no source reference — provenance unclear.')
+
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).date().isoformat()
+        stale = [
+            i for i in ioc_items
+            if str(i.get('last_seen_at') or '')[:10] and str(i.get('last_seen_at') or '')[:10] < cutoff
+        ]
+        if stale:
+            n = len(stale)
+            nudges.append(f'{n} IOC{"s" if n > 1 else ""} last seen over 90 days ago — review for expiry or retirement.')
+    except Exception:
+        pass
+
+    if event_count > 5 and not top_techniques:
+        nudges.append('No MITRE techniques mapped — check if this actor has a MITRE ATT&CK group record.')
+
+    return nudges

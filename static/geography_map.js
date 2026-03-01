@@ -38,6 +38,7 @@
     selectedRegion: '',
     selectedCountry: '',
     selectedActorId: '',
+    selectedClusterActors: null,
     map: null,
     markersLayer: null,
   };
@@ -51,6 +52,7 @@
           id: String(actor.id || ''),
           name: raw,
           is_tracked: !!actor.is_tracked,
+          notebook_status: String(actor.notebook_status || '').toLowerCase(),
           summary: String(actor.scope_statement || ''),
           lon: m.lon,
           lat: m.lat,
@@ -61,6 +63,27 @@
       }
     }
     return null;
+  }
+
+  // Derive Active / Quiet / Dormant from notebook_status
+  function actorStatus(point) {
+    const ns = String(point.notebook_status || '').toLowerCase();
+    if (ns === 'ready' || ns === 'running') return 'active';
+    if (ns === 'warning') return 'quiet';
+    return 'dormant';
+  }
+
+  // Dominant status for a cluster: loudest wins
+  function clusterStatus(points) {
+    if (points.some((p) => actorStatus(p) === 'active')) return 'active';
+    if (points.some((p) => actorStatus(p) === 'quiet')) return 'quiet';
+    return 'dormant';
+  }
+
+  function statusColor(status) {
+    if (status === 'active') return '#ef4444';
+    if (status === 'quiet') return '#f59e0b';
+    return '#6b7280';
   }
 
   function pointInPoly(x, y, poly) {
@@ -101,7 +124,11 @@
     if (!title || !hint || !list) return;
 
     let rows = [];
-    if (state.selectedCountry) {
+    if (state.selectedClusterActors) {
+      rows = state.selectedClusterActors;
+      title.textContent = `${rows[0].place} — ${rows.length} actors`;
+      hint.textContent = 'Multiple actors mapped to this location. Select one to view details.';
+    } else if (state.selectedCountry) {
       rows = state.points.filter((p) => String(p.country || '').toLowerCase() === state.selectedCountry.toLowerCase());
       title.textContent = `Country: ${state.selectedCountry}`;
       hint.textContent = rows.length
@@ -152,10 +179,19 @@
     `;
   }
 
-  function markerIcon(tracked) {
+  function markerIcon(status, count) {
+    const color = statusColor(status);
+    if (count > 1) {
+      return L.divIcon({
+        className: 'geo-actor-marker geo-actor-cluster',
+        html: `<div style="width:22px;height:22px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,0.35);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;font-family:'Courier New',monospace;line-height:1">${count}</div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+    }
     return L.divIcon({
       className: 'geo-actor-marker',
-      html: `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid #0f172a;background:${tracked ? '#16a34a' : '#f59e0b'}"></span>`,
+      html: `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid rgba(255,255,255,0.3);background:${color}"></span>`,
       iconSize: [12, 12],
       iconAnchor: [6, 6],
     });
@@ -164,11 +200,43 @@
   function drawMarkers() {
     if (!state.map || !state.markersLayer) return;
     state.markersLayer.clearLayers();
-    state.points.forEach((p) => {
-      const marker = L.marker([p.lat, p.lon], { icon: markerIcon(p.is_tracked) });
-      marker.bindPopup(`<strong>${p.name}</strong><br>${p.place}<br>${p.country}<br>${p.is_tracked ? 'Tracked' : 'Not tracked'}`);
+
+    // Group actors by coordinate key
+    const clusters = new Map();
+    for (const p of state.points) {
+      const key = `${p.lat},${p.lon}`;
+      if (!clusters.has(key)) clusters.set(key, []);
+      clusters.get(key).push(p);
+    }
+
+    for (const [, group] of clusters) {
+      const p = group[0];
+      const status = clusterStatus(group);
+      const marker = L.marker([p.lat, p.lon], { icon: markerIcon(status, group.length) });
+
+      if (group.length === 1) {
+        marker.bindPopup(`<strong>${p.name}</strong><br>${p.place}`);
+        marker.on('click', () => {
+          state.selectedClusterActors = null;
+          state.selectedCountry = p.country;
+          state.selectedRegion = p.region;
+          renderRegionList();
+          renderActorDetail(p.id);
+        });
+      } else {
+        const names = group.map((a) => a.name).join(', ');
+        marker.bindPopup(`<strong>${group.length} actors</strong><br>${p.place}<br><small>${names}</small>`);
+        marker.on('click', () => {
+          state.selectedClusterActors = group;
+          state.selectedCountry = '';
+          state.selectedRegion = '';
+          renderRegionList();
+          if (qs('#geo-actor-detail')) qs('#geo-actor-detail').innerHTML = '<small>Select an actor to view details.</small>';
+        });
+      }
+
       state.markersLayer.addLayer(marker);
-    });
+    }
   }
 
   async function fetchActors() {
@@ -194,6 +262,7 @@
   }
 
   async function handleMapPick(lat, lng) {
+    state.selectedClusterActors = null;
     state.selectedCountry = '';
     state.selectedRegion = continentFromLngLat(lng, lat);
     renderRegionList();
@@ -227,8 +296,8 @@
       zoomControl: true,
     }).setView([20, 10], 2);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       maxZoom: 19,
     }).addTo(state.map);
 
@@ -249,6 +318,7 @@
     modal.setAttribute('aria-hidden', 'false');
     state.selectedRegion = '';
     state.selectedCountry = '';
+    state.selectedClusterActors = null;
     renderRegionList();
     ensureMap();
     if (state.map) setTimeout(() => state.map.invalidateSize(), 0);

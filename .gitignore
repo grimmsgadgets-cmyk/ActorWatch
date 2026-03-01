@@ -48,3 +48,11 @@ docs/drafts/edition-boundary-charter.md
 docs/drafts/edition-matrix.md
 docs/drafts/contributing-commercial-use-policy.md
 docs/drafts/trust-rationale.md
+
+# Internal architecture RCA and refactor planning docs (not for public distribution)
+ARCH_RCA_AND_PYTHONIC_REFACTOR_PLAN.md
+CURRENT_ARCH_DEFECTS_ONLY.md
+CURRENT_ARCH_ROOT_CAUSE.md
+
+# uv cache
+.uv-cache/

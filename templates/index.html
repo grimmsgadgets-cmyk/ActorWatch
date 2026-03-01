@@ -620,6 +620,59 @@
         font-size: 11px;
         text-transform: uppercase;
       }
+      .bastion-callsign { font-size: 17px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #f0d5a8; }
+      .bastion-exit-btn {
+        background: transparent;
+        border: 1px solid #ae7a3b;
+        color: #d4a96a;
+        padding: 5px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .bastion-exit-btn:hover { background: rgba(174, 122, 59, 0.15); color: #f7e8cf; }
+      .bastion-terminal-input-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid #4e3620;
+        border-radius: 6px;
+        padding: 5px 8px;
+        background: #0e0b09;
+      }
+      .bastion-prompt { color: #d9a254; font-family: "Courier New", Courier, monospace; font-size: 14px; user-select: none; }
+      .bastion-cmd-input {
+        flex: 1;
+        background: transparent;
+        border: none;
+        outline: none;
+        color: #dfcca8;
+        font-family: "Courier New", Courier, monospace;
+        font-size: 13px;
+        caret-color: #d9a254;
+      }
+      .bastion-cmd-input::placeholder { color: #5f4a2e; opacity: 1; }
+      .bastion-mission-item .value { font-family: "Courier New", Courier, monospace; }
+      @keyframes bastion-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+      #bastion-terminal-ping { transition: color 0.3s; }
+      #bastion-terminal-ping.live { color: #5fc98a; animation: bastion-blink 1.8s ease-in-out; }
+      .bastion-trend-svg { display: block; width: 100%; height: 185px; overflow: visible; }
+      .bastion-tech-list { display: flex; flex-direction: column; gap: 5px; }
+      .bastion-tech-row { display: grid; grid-template-columns: 80px 220px 100px; align-items: center; column-gap: 6px; }
+      .bastion-tech-id { font-family: "Courier New", Courier, monospace; font-size: 11px; color: #c9a870; white-space: nowrap; overflow: hidden; }
+      .bastion-tech-name { font-size: 11px; color: #e8d5b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bastion-tech-right { display: flex; align-items: center; gap: 5px; overflow: hidden; }
+      .bastion-hbar-wrap { flex: 1; min-width: 0; background: #1e1610; border-radius: 3px; height: 8px; overflow: hidden; }
+      .bastion-hbar { height: 100%; background: linear-gradient(90deg, #d9a254, #815b2e); border-radius: 3px; }
+      .bastion-tech-count { flex: 0 0 22px; font-family: "Courier New", Courier, monospace; font-size: 11px; color: #c9a870; text-align: right; white-space: nowrap; }
+      .bastion-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .bastion-two-col h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #c9a870; }
+      .bastion-sections-list { margin: 0; padding-left: 16px; display: grid; gap: 5px; font-size: 12px; color: #e8d5b8; }
+      .bastion-pq-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+      .bastion-pq-item { font-size: 12px; color: #e8d5b8; padding: 5px 8px; background: #140f0c; border: 1px solid #5e4322; border-left: 2px solid #d9a254; border-radius: 4px; line-height: 1.4; }
+      .bastion-pq-clear { font-size: 12px; color: #7a9e87; font-style: italic; padding: 4px 2px; }
       body[data-ui-mode="redraw"] {
         background:
           radial-gradient(1200px 720px at 12% -8%, #173c2c 0%, #07140f 52%, #030806 100%),
@@ -1693,7 +1746,8 @@
         <section id="bastion-shell" class="bastion-shell" aria-label="Bastion command deck">
           <div class="bastion-top">
             <div>
-              <div class="bastion-sub">Immersive command workflow for rapid actor review</div>
+              <div class="bastion-callsign">{{ notebook.actor.display_name }}</div>
+              <div class="bastion-sub">Bastion command deck</div>
             </div>
             <div class="bastion-micro">
               <div class="m"><div class="mk">Status</div><div id="bastion-k-status" class="mv">{{ notebook_health.state|capitalize }}</div></div>
@@ -1704,6 +1758,7 @@
             <div class="bastion-actions">
               <button type="button" id="bastion-cmd-map">Geography</button>
               <button type="button" id="bastion-cmd-refresh">Refresh actor</button>
+              <button type="button" id="bastion-cmd-exit" class="bastion-exit-btn">← Classic</button>
             </div>
           </div>
           <div class="bastion-grid">
@@ -1711,65 +1766,121 @@
               <section class="bastion-viz">
                 <article class="bastion-card">
                   <h3>Operational Trend</h3>
-                  <div id="bastion-trend-bars" class="bastion-bars">
-                    {% if bastion_trend %}
-                      {% for bucket in bastion_trend %}
-                      {% set h = ((bucket.total / bastion_ns.trend_max) * 150) | int if bastion_ns.trend_max else 12 %}
-                      <div class="bastion-bar-col">
-                        <div class="bastion-bar" style="height: {{ [h, 12]|max }}px;" title="{{ bucket.label }}: {{ bucket.total }}"></div>
-                        <div class="bastion-bar-label">{{ bucket.label[-5:] if bucket.label else '-' }}</div>
-                      </div>
-                      {% endfor %}
-                    {% else %}
-                      <div class="inline-note">No timeline buckets available yet.</div>
+                  {% if bastion_trend %}
+                  {# SVG coordinate space: 400 × 185. Margins carve out chart area. #}
+                  {% set _ml = 34 %}{% set _mr = 6 %}{% set _mt = 18 %}{% set _mb = 40 %}
+                  {% set _cw = 400 - _ml - _mr %}
+                  {% set _ch = 185 - _mt - _mb %}
+                  {% set _n = bastion_trend | length %}
+                  {% set _ymax = bastion_ns.trend_max %}
+                  {% set _ymid = (_ymax / 2) | int %}
+                  {% set _ymid_px = (_mt + _ch - ((_ymid / _ymax) * _ch) | int) if _ymax and _ymid else 0 %}
+                  {% set _col_w = _cw / _n if _n > 0 else _cw %}
+                  {% set _bar_w = (_col_w * 0.65) | int %}
+                  {% set _bar_pad = ((_col_w - _bar_w) / 2) | int %}
+                  {% set _months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+                  <svg class="bastion-trend-svg" viewBox="0 0 400 185" preserveAspectRatio="none" role="img" aria-label="Operational activity trend">
+                    <defs>
+                      <linearGradient id="btg-fill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#d9a254"/>
+                        <stop offset="100%" stop-color="#815b2e"/>
+                      </linearGradient>
+                    </defs>
+                    {# Baseline #}
+                    <line x1="{{ _ml }}" y1="{{ _mt + _ch }}" x2="{{ _ml + _cw }}" y2="{{ _mt + _ch }}" stroke="#4a3520" stroke-width="1"/>
+                    {# Midpoint gridline (only when distinct from 0 and max) #}
+                    {% if _ymid_px and _ymid > 0 and _ymid < _ymax %}
+                    <line x1="{{ _ml }}" y1="{{ _ymid_px }}" x2="{{ _ml + _cw }}" y2="{{ _ymid_px }}" stroke="#3a2c1e" stroke-width="1" stroke-dasharray="4,3"/>
                     {% endif %}
-                  </div>
+                    {# Top gridline #}
+                    <line x1="{{ _ml }}" y1="{{ _mt }}" x2="{{ _ml + _cw }}" y2="{{ _mt }}" stroke="#3a2c1e" stroke-width="1" stroke-dasharray="4,3"/>
+                    {# Y-axis labels #}
+                    <text x="{{ _ml - 4 }}" y="{{ _mt + _ch + 4 }}" text-anchor="end" fill="#7a6040" font-size="9" font-family="monospace">0</text>
+                    {% if _ymid_px and _ymid > 0 and _ymid < _ymax %}
+                    <text x="{{ _ml - 4 }}" y="{{ _ymid_px + 4 }}" text-anchor="end" fill="#7a6040" font-size="9" font-family="monospace">{{ _ymid }}</text>
+                    {% endif %}
+                    <text x="{{ _ml - 4 }}" y="{{ _mt + 4 }}" text-anchor="end" fill="#7a6040" font-size="9" font-family="monospace">{{ _ymax }}</text>
+                    {# Bars + X labels #}
+                    {% for bucket in bastion_trend %}
+                    {% set _bx = (_ml + loop.index0 * _col_w + _bar_pad) | int %}
+                    {% set _bh = ([((bucket.total / _ymax) * _ch) | int, 4] | max) if _ymax else 4 %}
+                    {% set _by = _mt + _ch - _bh %}
+                    {% set _bar_cx = (_bx + _bar_w / 2) | int %}
+                    {% set _lmonth = (bucket.label[5:7] | int) if bucket.label | length >= 7 else 0 %}
+                    {% set _lyear = bucket.label[2:4] if bucket.label | length >= 4 else '' %}
+                    {% set _ltext = (_months[_lmonth] ~ ' ' ~ _lyear) if _lmonth else bucket.label %}
+                    {% set _label_y = _mt + _ch + 14 %}
+                    <g>
+                      <title>{{ bucket.label }}: {{ bucket.total }} events</title>
+                      <rect x="{{ _bx }}" y="{{ _by }}" width="{{ _bar_w }}" height="{{ _bh }}" fill="url(#btg-fill)" rx="2"/>
+                      <text x="{{ _bar_cx }}" y="{{ _by - 3 }}" text-anchor="middle" fill="#c9a870" font-size="9" font-family="monospace">{{ bucket.total }}</text>
+                      <text x="{{ _bar_cx }}" y="{{ _label_y }}" text-anchor="end" fill="#8a6f49" font-size="9" font-family="monospace" transform="rotate(-45, {{ _bar_cx }}, {{ _label_y }})">{{ _ltext }}</text>
+                    </g>
+                    {% endfor %}
+                  </svg>
+                  {% else %}
+                  <div class="inline-note">No timeline data available yet.</div>
+                  {% endif %}
                 </article>
                 <article class="bastion-card">
-                  <h3>Technique Pressure</h3>
-                  <div id="bastion-technique-bars" class="bastion-bars">
-                    {% if notebook.top_techniques %}
-                      {% for technique in notebook.top_techniques[:8] %}
-                      {% set score = technique.event_count or technique.source_count or 1 %}
-                      {% set th = (score * 18) | int %}
-                      {% set th_clamped = [170, [th, 14]|max]|min %}
-                      <div class="bastion-bar-col">
-                        <div class="bastion-bar" style="height: {{ th_clamped }}px;" title="{{ technique.technique_id }} {{ technique.technique_name }}"></div>
-                        <div class="bastion-bar-label">{{ technique.technique_id or 'T' }}</div>
+                  <h3>Top techniques</h3>
+                  {% if notebook.top_techniques %}
+                  {% set tech_max_ns = namespace(m=1) %}
+                  {% set tech_min_ns = namespace(m=999999) %}
+                  {% for technique in notebook.top_techniques[:8] %}
+                    {% set score = (technique.use_count or technique.event_count or technique.source_count or 1) | int %}
+                    {% if score > tech_max_ns.m %}{% set tech_max_ns.m = score %}{% endif %}
+                    {% if score < tech_min_ns.m %}{% set tech_min_ns.m = score %}{% endif %}
+                  {% endfor %}
+                  {% set bar_scale = 45 if tech_min_ns.m == tech_max_ns.m else 85 %}
+                  <div id="bastion-technique-list" class="bastion-tech-list">
+                    {% for technique in notebook.top_techniques[:8] %}
+                    {% set score = (technique.use_count or technique.event_count or technique.source_count or 1) | int %}
+                    {% set pct = ((score / tech_max_ns.m) * bar_scale) | int %}
+                    {% set tname = technique.name or technique.technique_name or '' %}
+                    <div class="bastion-tech-row">
+                      <span class="bastion-tech-id">{{ technique.technique_id or 'T?' }}</span>
+                      <span class="bastion-tech-name" title="{{ tname }}">{{ tname or technique.technique_id or 'T?' }}</span>
+                      <div class="bastion-tech-right">
+                        <div class="bastion-hbar-wrap"><div class="bastion-hbar" style="width: {{ [pct, 4]|max }}%;"></div></div>
+                        <span class="bastion-tech-count">{{ score }}</span>
                       </div>
-                      {% endfor %}
-                    {% else %}
-                      <div class="inline-note">No mapped techniques yet.</div>
-                    {% endif %}
+                    </div>
+                    {% endfor %}
                   </div>
+                  {% else %}
+                  <div class="inline-note">No mapped techniques yet.</div>
+                  {% endif %}
                 </article>
               </section>
-              <section class="bastion-sections">
-                <article class="bastion-card">
-                  <h3>What changed and why it matters</h3>
-                  <ul id="bastion-change-list">
-                    {% if notebook.top_change_signals %}
-                      {% for signal in notebook.top_change_signals[:5] %}
-                      <li>{{ signal.change_summary or signal.change_why_new or 'No summarized change text yet.' }}</li>
-                      {% endfor %}
-                    {% else %}
-                      <li>No validated change signals yet.</li>
-                    {% endif %}
-                  </ul>
-                </article>
-                <article class="bastion-card">
-                  <h3>AI review: what changed recently</h3>
-                  <ul id="bastion-ai-list">
-                    {% if notebook.recent_activity_synthesis %}
-                      {% for synthesis in notebook.recent_activity_synthesis[:5] %}
-                      <li>{{ synthesis.text }}</li>
-                      {% endfor %}
-                    {% else %}
-                      <li>No recent AI synthesis available yet.</li>
-                    {% endif %}
-                  </ul>
-                </article>
-              </section>
+              <article class="bastion-card">
+                <div class="bastion-two-col">
+                  <div>
+                    <h4>Change signals</h4>
+                    <ul id="bastion-change-list" class="bastion-sections-list">
+                      {% if notebook.top_change_signals %}
+                        {% for signal in notebook.top_change_signals[:4] %}
+                        <li>{{ signal.change_summary or signal.change_why_new or 'No summarized change text yet.' }}</li>
+                        {% endfor %}
+                      {% else %}
+                        <li>No validated change signals yet.</li>
+                      {% endif %}
+                    </ul>
+                  </div>
+                  <div>
+                    <h4>Synthesis</h4>
+                    <ul id="bastion-ai-list" class="bastion-sections-list">
+                      {% if notebook.recent_activity_synthesis %}
+                        {% for synthesis in notebook.recent_activity_synthesis[:4] %}
+                        <li>{{ synthesis.text }}</li>
+                        {% endfor %}
+                      {% else %}
+                        <li>No recent AI synthesis available yet.</li>
+                      {% endif %}
+                    </ul>
+                  </div>
+                </div>
+              </article>
             </div>
             <aside class="bastion-right">
               {% set latest_run = (refresh_stats.recent_generation_runs[0] if refresh_stats and refresh_stats.recent_generation_runs else None) %}
@@ -1788,7 +1899,7 @@
                 {% endfor %}
               {% endif %}
               <article class="bastion-card">
-                <h3>Mission console</h3>
+                <h3>Ops console</h3>
                 <div class="bastion-mission-grid">
                   <div class="bastion-mission-item">
                     <div class="label">Now processing</div>
@@ -1850,19 +1961,29 @@
                   </div>
                 </div>
               </article>
+              <article class="bastion-card">
+                <h3>Open questions</h3>
+                {% if bastion_nudges %}
+                <ul class="bastion-pq-list">
+                  {% for nudge in bastion_nudges %}
+                  <li class="bastion-pq-item">{{ nudge }}</li>
+                  {% endfor %}
+                </ul>
+                {% else %}
+                <div class="bastion-pq-clear">No open questions — actor record looks complete.</div>
+                {% endif %}
+              </article>
             </aside>
           </div>
           <section class="bastion-terminal">
             <div class="head"><span>Operations Terminal</span><span id="bastion-terminal-ping">ONLINE</span></div>
-            <pre id="bastion-terminal-log" class="log">[BOOT] Bastion deck online for {{ notebook.actor.display_name }}
-[STATUS] System: {{ notebook_health.message }}
-[SYNC] Live updates enabled
-[READY] Use command buttons above to run notebook actions.</pre>
-            <div class="cmds">
-              <button type="button" id="bastion-cmd-terminal-notes">Write analyst note</button>
-              <button type="button" id="bastion-cmd-terminal-gennotes">Auto-draft notes</button>
-              <button type="button" id="bastion-cmd-terminal-timeline">Timeline</button>
-              <button type="button" id="bastion-cmd-terminal-top">Back to top</button>
+            <pre id="bastion-terminal-log" class="log">[BOOT]   Bastion deck online — {{ notebook.actor.display_name }}
+[STATUS] {{ notebook_health.message }}
+[SYNC]   Live sync active (5s interval)
+[READY]  Type "help" for commands. Keys: [R] refresh  [N] note  [T] timeline  [G] map</pre>
+            <div class="bastion-terminal-input-row">
+              <span class="bastion-prompt">▶</span>
+              <input id="bastion-cmd-input" type="text" class="bastion-cmd-input" placeholder="help" autocomplete="off" spellcheck="false" aria-label="Bastion command input" />
             </div>
           </section>
         </section>

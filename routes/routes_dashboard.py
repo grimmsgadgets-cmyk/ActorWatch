@@ -350,6 +350,10 @@ def render_dashboard_root(
         notebook_health['last_refresh_duration'] = _format_duration_ms(refresh_duration_ms)
         notebook_health['last_refresh_sources'] = str(refresh_sources) if refresh_sources is not None else 'n/a'
 
+    bastion_nudges = notebook_service.compute_bastion_nudges_core(
+        notebook if isinstance(notebook, dict) else None
+    )
+
     return _templates.TemplateResponse(
         request,
         'index.html',
@@ -369,6 +373,7 @@ def render_dashboard_root(
             'notebook_health': notebook_health,
             'refresh_stats': refresh_stats,
             'duplicate_actor_groups': duplicate_actor_groups,
+            'bastion_nudges': bastion_nudges,
         },
     )
 
