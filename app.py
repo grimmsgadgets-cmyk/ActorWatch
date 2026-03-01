@@ -45,6 +45,8 @@ import services.refresh_ops_service as refresh_ops_service
 import services.runtime_service as runtime_service
 import routes.routes_api as routes_api
 import routes.routes_actor_ops as routes_actor_ops
+import routes.routes_chat as routes_chat
+import services.chat_service as chat_service
 import routes.routes_dashboard as routes_dashboard
 import routes.routes_evolution as routes_evolution
 import routes.routes_notebook as routes_notebook

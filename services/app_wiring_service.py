@@ -141,3 +141,13 @@ def register_routers(app, *, deps: dict[str, object]) -> None:
             }
         )
     )
+
+    routes_chat = deps.get('routes_chat')
+    if routes_chat:
+        app.include_router(
+            routes_chat.create_chat_router(
+                deps={
+                    'stream_chat_response': deps['stream_chat_response'],
+                }
+            )
+        )

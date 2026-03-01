@@ -89,6 +89,8 @@ def build_router_registration_deps_core(*, namespace: dict[str, object]) -> dict
         'routes_actor_ops': _require(namespace, 'routes_actor_ops'),
         'routes_notebook': _require(namespace, 'routes_notebook'),
         'routes_evolution': _require(namespace, 'routes_evolution'),
+        'routes_chat': _require(namespace, 'routes_chat'),
+        'stream_chat_response': _require(namespace, 'chat_service').stream_chat_response_core,
         'list_actor_profiles': _require(namespace, 'list_actor_profiles'),
         'fetch_actor_notebook': _require(namespace, '_fetch_actor_notebook'),
         'set_actor_notebook_status': _require(namespace, 'set_actor_notebook_status'),

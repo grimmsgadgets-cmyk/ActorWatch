@@ -1449,6 +1449,27 @@
 
   applySettings(loadSettings());
 
+  // ── Resources modal ───────────────────────────────────────────────────────────
+  const resourcesModal = document.getElementById('resources-modal');
+  const resourcesOpenBtn = document.getElementById('resources-open');
+  const resourcesCloseBtn = document.getElementById('resources-close');
+
+  function openResourcesModal() {
+    if (!resourcesModal) return;
+    resourcesModal.classList.add('open');
+    resourcesModal.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeResourcesModal() {
+    if (!resourcesModal) return;
+    resourcesModal.classList.remove('open');
+    resourcesModal.setAttribute('aria-hidden', 'true');
+  }
+
+  if (resourcesOpenBtn) resourcesOpenBtn.addEventListener('click', openResourcesModal);
+  if (resourcesCloseBtn) resourcesCloseBtn.addEventListener('click', closeResourcesModal);
+  if (resourcesModal) resourcesModal.addEventListener('click', (e) => { if (e.target === resourcesModal) closeResourcesModal(); });
+
   // ── Sidebar collapse ─────────────────────────────────────────────────────────
   const sidebarCollapseBtn = document.getElementById('sidebar-collapse-btn');
   const layoutEl = document.querySelector('.layout');
@@ -1672,6 +1693,140 @@
     window.requestAnimationFrame(() => initActivityChart());
   } else {
     window.addEventListener('load', () => window.requestAnimationFrame(initActivityChart));
+  }
+
+  // ── AI Methodology Assistant chat widget ──────────────────────────────────────
+  const chatPanel = document.getElementById('chat-panel');
+  const chatToggleBtn = document.getElementById('chat-toggle-btn');
+  const chatCloseBtn = document.getElementById('chat-close-btn');
+  const chatClearBtn = document.getElementById('chat-clear-btn');
+  const chatHistory = document.getElementById('chat-history');
+  const chatEmpty = document.getElementById('chat-empty');
+  const chatInput = document.getElementById('chat-input');
+  const chatSendBtn = document.getElementById('chat-send-btn');
+
+  if (!chatPanel || !chatToggleBtn) {
+    // widget not present in this template variant — skip
+  } else {
+    /** @type {Array<{role: string, content: string}>} */
+    let chatConversation = [];
+    let chatBusy = false;
+
+    function chatOpen() {
+      chatPanel.classList.add('open');
+      chatToggleBtn.setAttribute('aria-expanded', 'true');
+      chatInput.focus();
+    }
+
+    function chatClose() {
+      chatPanel.classList.remove('open');
+      chatToggleBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    function chatClear() {
+      chatConversation = [];
+      chatHistory.innerHTML = '';
+      if (chatEmpty) {
+        const clone = chatEmpty.cloneNode(true);
+        clone.removeAttribute('id');
+        chatHistory.appendChild(clone);
+      }
+    }
+
+    function chatScrollBottom() {
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function chatAppendMessage(role, text) {
+      // Remove empty-state placeholder on first real message
+      const placeholder = chatHistory.querySelector('.chat-empty');
+      if (placeholder) placeholder.remove();
+
+      const el = document.createElement('div');
+      el.className = `chat-msg ${role}`;
+      el.textContent = text;
+      chatHistory.appendChild(el);
+      chatScrollBottom();
+      return el;
+    }
+
+    async function chatSend() {
+      const text = chatInput.value.trim();
+      if (!text || chatBusy) return;
+
+      chatBusy = true;
+      chatSendBtn.disabled = true;
+      chatInput.value = '';
+      chatInput.style.height = 'auto';
+
+      chatAppendMessage('user', text);
+      chatConversation.push({ role: 'user', content: text });
+
+      // Create assistant bubble with typing indicator
+      const assistantEl = chatAppendMessage('assistant typing', '…');
+
+      let reply = '';
+
+      try {
+        const resp = await fetch('/chat/message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: text,
+            history: chatConversation.slice(0, -1).slice(-20),
+          }),
+        });
+
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        assistantEl.classList.remove('typing');
+        assistantEl.textContent = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          reply += chunk;
+          assistantEl.textContent = reply;
+          chatScrollBottom();
+        }
+      } catch (err) {
+        assistantEl.classList.remove('typing');
+        assistantEl.textContent = `[Error: ${err.message}]`;
+      }
+
+      if (reply) {
+        chatConversation.push({ role: 'assistant', content: reply });
+      }
+
+      chatBusy = false;
+      chatSendBtn.disabled = false;
+      chatInput.focus();
+    }
+
+    chatToggleBtn.addEventListener('click', () => {
+      chatPanel.classList.contains('open') ? chatClose() : chatOpen();
+    });
+    if (chatCloseBtn) chatCloseBtn.addEventListener('click', chatClose);
+    if (chatClearBtn) chatClearBtn.addEventListener('click', chatClear);
+
+    chatSendBtn.addEventListener('click', chatSend);
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        chatSend();
+      }
+    });
+
+    // Auto-resize textarea as user types
+    chatInput.addEventListener('input', () => {
+      chatInput.style.height = 'auto';
+      chatInput.style.height = Math.min(chatInput.scrollHeight, 80) + 'px';
+    });
   }
 
 })();

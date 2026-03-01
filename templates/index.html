@@ -1286,7 +1286,7 @@
       .layout.sidebar-collapsed .sidebar-card { display: none; }
       .layout.sidebar-collapsed .sidebar-settings-row { display: none; }
       .layout.sidebar-collapsed .sidebar-collapse-btn { margin: 0 auto; display: block; }
-      .sidebar-settings-row { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #4f5e77; }
+      .sidebar-settings-row { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #4f5e77; display: grid; gap: 6px; }
       .settings-btn {
         display: block; width: 100%; padding: 7px; border-radius: 6px; border: 1px solid #4f6080;
         background: #1e2a3b; color: #9fb3d5; font-size: 12px; cursor: pointer; text-align: left;
@@ -1359,6 +1359,173 @@
       .visuals-chart-title { font-size: 13px; font-weight: 600; color: #1f2937; margin: 0 0 10px; }
       .visuals-chart-canvas-wrap { position: relative; height: 200px; }
       .visuals-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+      /* ── Resource Directory modal ────────────────────────────────────────────── */
+      .res-modal-body { padding: 2px 0 6px; }
+      .res-categories-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .res-category { border: 1px solid #dce7f8; border-radius: 8px; padding: 10px; background: #f8fbff; }
+      .res-category-title {
+        font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+        color: #1f4a8a; margin: 0 0 7px; padding-bottom: 5px; border-bottom: 1px solid #dce7f8;
+      }
+      .res-tool-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+      .res-tool { display: flex; align-items: flex-start; gap: 6px; }
+      .res-favicon { flex-shrink: 0; margin-top: 1px; border-radius: 2px; width: 14px; height: 14px; }
+      .res-tool-body { display: flex; flex-direction: column; min-width: 0; }
+      .res-tool-name {
+        font-size: 12px; font-weight: 600; color: #1f4a8a; text-decoration: none;
+        line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .res-tool-name:hover { text-decoration: underline; }
+      .res-tool-desc { font-size: 11px; color: #475569; line-height: 1.3; margin-top: 1px; }
+      .res-suggest {
+        display: flex; align-items: center; gap: 10px; margin-top: 10px;
+        padding: 7px 10px; border: 1px dashed #c9d7ef; border-radius: 8px;
+        background: #f3f8ff; font-size: 12px; color: #475569;
+      }
+      .res-suggest a { color: #1f4a8a; font-weight: 600; text-decoration: none; }
+      .res-suggest a:hover { text-decoration: underline; }
+      /* ── AI Methodology Assistant chat widget ────────────────────────────────── */
+      .chat-widget {
+        position: fixed;
+        bottom: 16px;
+        right: 16px;
+        z-index: 65;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+      }
+      .chat-toggle-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        border: 1px solid #3d5a86;
+        background: #1e2a3b;
+        color: #9fb3d5;
+        font-size: 20px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 10px rgba(15,23,42,0.3);
+        transition: background 120ms ease, color 120ms ease;
+      }
+      .chat-toggle-btn:hover { background: #2a3a52; color: #d6e3f5; }
+      .chat-panel {
+        display: none;
+        flex-direction: column;
+        width: 340px;
+        height: 480px;
+        border: 1px solid #d6e2f5;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 8px 32px rgba(15,23,42,0.18);
+        overflow: hidden;
+      }
+      .chat-panel.open { display: flex; }
+      .chat-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        background: #1e2430;
+        color: #d6e3f5;
+        flex-shrink: 0;
+      }
+      .chat-header-title { font-size: 13px; font-weight: 600; flex: 1; }
+      .chat-header-sub { font-size: 10px; color: #6a88b0; margin-top: 1px; }
+      .chat-header-btn {
+        border: 1px solid #3d4658;
+        border-radius: 6px;
+        background: transparent;
+        color: #9fb3d5;
+        font-size: 11px;
+        padding: 3px 7px;
+        cursor: pointer;
+      }
+      .chat-header-btn:hover { background: #2a3a52; color: #d6e3f5; }
+      .chat-history {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        background: #f7f9fc;
+      }
+      .chat-empty {
+        margin: auto;
+        text-align: center;
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.5;
+        padding: 20px;
+      }
+      .chat-empty strong { display: block; font-size: 13px; color: #334155; margin-bottom: 4px; }
+      .chat-msg {
+        max-width: 92%;
+        padding: 7px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        line-height: 1.45;
+        word-break: break-word;
+      }
+      .chat-msg.user {
+        align-self: flex-end;
+        background: #35527f;
+        color: #fff;
+        border-bottom-right-radius: 3px;
+      }
+      .chat-msg.assistant {
+        align-self: flex-start;
+        background: #fff;
+        color: #1f2937;
+        border: 1px solid #dce7f8;
+        border-bottom-left-radius: 3px;
+        white-space: pre-wrap;
+      }
+      .chat-msg.typing { color: #64748b; font-style: italic; }
+      .chat-input-row {
+        display: flex;
+        gap: 6px;
+        padding: 8px 10px;
+        border-top: 1px solid #e8eef8;
+        background: #fff;
+        flex-shrink: 0;
+      }
+      .chat-input {
+        flex: 1;
+        resize: none;
+        border: 1px solid #c9d7ef;
+        border-radius: 8px;
+        padding: 6px 8px;
+        font-size: 12px;
+        font-family: inherit;
+        line-height: 1.4;
+        max-height: 80px;
+        min-height: 32px;
+        color: #1f2937;
+        background: #f8fbff;
+      }
+      .chat-input:focus { outline: 2px solid #1f4a8a; outline-offset: 1px; }
+      .chat-send-btn {
+        border: 0;
+        border-radius: 8px;
+        background: #35527f;
+        color: #fff;
+        font-size: 13px;
+        padding: 6px 11px;
+        cursor: pointer;
+        align-self: flex-end;
+        flex-shrink: 0;
+      }
+      .chat-send-btn:hover { background: #1f4a8a; }
+      .chat-send-btn:disabled { opacity: 0.5; cursor: default; }
     </style>
   </head>
   <body {% if notebook %}data-actor-id="{{ notebook.actor.id }}"{% endif %}>
@@ -1718,6 +1885,7 @@
 
         {% endif %}
         <div class="sidebar-settings-row">
+          <button id="resources-open" type="button" class="settings-btn">&#128196; Resources</button>
           <button id="settings-open" type="button" class="settings-btn">&#9881; Settings</button>
         </div>
       </aside>
@@ -2884,6 +3052,387 @@
         </div>
         {% endif %}
       </main>
+    </div>
+    <!-- AI Methodology Assistant chat widget -->
+    <div class="chat-widget" id="chat-widget">
+      <div class="chat-panel" id="chat-panel" role="region" aria-label="AI methodology assistant">
+        <div class="chat-header">
+          <div>
+            <div class="chat-header-title">&#129302; AI Methodology Assistant</div>
+            <div class="chat-header-sub">Guidance only &mdash; does not produce threat intelligence</div>
+          </div>
+          <button type="button" class="chat-header-btn" id="chat-clear-btn" title="Clear conversation">Clear</button>
+          <button type="button" class="chat-header-btn" id="chat-close-btn" title="Close assistant">&#x2715;</button>
+        </div>
+        <div class="chat-history" id="chat-history">
+          <div class="chat-empty" id="chat-empty">
+            <strong>Analyst methodology guide</strong>
+            Ask me how to start an investigation, pivot on infrastructure, interpret ATT&amp;CK techniques, or use ActorWatch effectively.
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <textarea
+            id="chat-input"
+            class="chat-input"
+            rows="1"
+            placeholder="Ask a methodology question&hellip;"
+            aria-label="Chat message"
+          ></textarea>
+          <button type="button" class="chat-send-btn" id="chat-send-btn">Send</button>
+        </div>
+      </div>
+      <button type="button" class="chat-toggle-btn" id="chat-toggle-btn" title="Open AI methodology assistant" aria-expanded="false">&#129302;</button>
+    </div>
+    <!-- Resources modal -->
+    <div id="resources-modal" class="geo-modal" aria-hidden="true">
+      <div class="geo-modal-card" role="dialog" aria-modal="true" aria-labelledby="resources-modal-title">
+        <div class="geo-modal-head">
+          <h3 id="resources-modal-title">CTI Resource Directory</h3>
+          <button id="resources-close" type="button">Close</button>
+        </div>
+        <div class="res-modal-body">
+          <div class="res-categories-grid">
+            <!-- Infrastructure Pivoting -->
+            <div class="res-category">
+              <div class="res-category-title">Infrastructure Pivoting</div>
+              <ul class="res-tool-list">
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=virustotal.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://virustotal.com" target="_blank" rel="noreferrer noopener">VirusTotal</a>
+                    <span class="res-tool-desc">Multi-engine file, URL, IP, and domain reputation analysis</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=shodan.io&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://shodan.io" target="_blank" rel="noreferrer noopener">Shodan</a>
+                    <span class="res-tool-desc">Search engine for internet-connected devices and exposed services</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=censys.io&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://search.censys.io" target="_blank" rel="noreferrer noopener">Censys</a>
+                    <span class="res-tool-desc">Internet-wide scanning for hosts, certificates, and services</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=criminalip.io&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://criminalip.io" target="_blank" rel="noreferrer noopener">Criminal IP</a>
+                    <span class="res-tool-desc">OSINT-driven IP threat intelligence and attack surface search</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=binaryedge.io&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://app.binaryedge.io" target="_blank" rel="noreferrer noopener">BinaryEdge</a>
+                    <span class="res-tool-desc">Real-time internet scanning and exposure monitoring platform</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <!-- Historical DNS / WHOIS -->
+            <div class="res-category">
+              <div class="res-category-title">Historical DNS / WHOIS</div>
+              <ul class="res-tool-list">
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=securitytrails.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://securitytrails.com" target="_blank" rel="noreferrer noopener">SecurityTrails</a>
+                    <span class="res-tool-desc">Historical DNS, WHOIS, IP ranges, and subdomain lookup</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=viewdns.info&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://viewdns.info" target="_blank" rel="noreferrer noopener">ViewDNS</a>
+                    <span class="res-tool-desc">Lightweight DNS lookup, reverse IP, and WHOIS tools</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=whoisxmlapi.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://whois.whoisxmlapi.com" target="_blank" rel="noreferrer noopener">WhoisXML</a>
+                    <span class="res-tool-desc">Bulk WHOIS and DNS history lookup with API access</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=dnslytics.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://dnslytics.com" target="_blank" rel="noreferrer noopener">DNSlytics</a>
+                    <span class="res-tool-desc">Reverse DNS, IP ownership, and hosting infrastructure attribution</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=ti.defender.microsoft.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://ti.defender.microsoft.com" target="_blank" rel="noreferrer noopener">Microsoft Defender TI</a>
+                    <span class="res-tool-desc">Historical passive DNS and threat context (formerly RiskIQ)</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <!-- Passive DNS / Pivot Chaining -->
+            <div class="res-category">
+              <div class="res-category-title">Passive DNS / Pivot Chaining</div>
+              <ul class="res-tool-list">
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=circl.lu&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://www.circl.lu/services/passive-dns" target="_blank" rel="noreferrer noopener">CIRCL pDNS</a>
+                    <span class="res-tool-desc">Community-operated passive DNS for pivoting on IPs and domains</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=robtex.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://robtex.com" target="_blank" rel="noreferrer noopener">Robtex</a>
+                    <span class="res-tool-desc">DNS graph visualization and shared-hosting pivot tool</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=hackertarget.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://hackertarget.com" target="_blank" rel="noreferrer noopener">HackerTarget</a>
+                    <span class="res-tool-desc">Network tools including reverse IP lookups and ASN queries</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <!-- Malware Analysis -->
+            <div class="res-category">
+              <div class="res-category-title">Malware Analysis</div>
+              <ul class="res-tool-list">
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=hybrid-analysis.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://hybrid-analysis.com" target="_blank" rel="noreferrer noopener">Hybrid Analysis</a>
+                    <span class="res-tool-desc">Free behavioral sandbox with CrowdStrike Falcon intelligence</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=any.run&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://any.run" target="_blank" rel="noreferrer noopener">Any.run</a>
+                    <span class="res-tool-desc">Interactive cloud sandbox for malware analysis in real time</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=bazaar.abuse.ch&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://bazaar.abuse.ch" target="_blank" rel="noreferrer noopener">MalwareBazaar</a>
+                    <span class="res-tool-desc">Community malware sample database by Abuse.ch</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=joesandbox.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://joesandbox.com" target="_blank" rel="noreferrer noopener">Joe Sandbox</a>
+                    <span class="res-tool-desc">Deep behavioral analysis platform for files and URLs</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=unpac.me&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://unpac.me" target="_blank" rel="noreferrer noopener">Unpac.me</a>
+                    <span class="res-tool-desc">Automated malware unpacker with YARA-based classification</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <!-- Threat Actor / Campaign Context -->
+            <div class="res-category">
+              <div class="res-category-title">Threat Actor / Campaign Context</div>
+              <ul class="res-tool-list">
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=attack.mitre.org&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://attack.mitre.org" target="_blank" rel="noreferrer noopener">MITRE ATT&amp;CK</a>
+                    <span class="res-tool-desc">Authoritative adversary tactics, techniques, and procedures knowledge base</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=malpedia.caad.fkie.fraunhofer.de&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://malpedia.caad.fkie.fraunhofer.de" target="_blank" rel="noreferrer noopener">Malpedia</a>
+                    <span class="res-tool-desc">Curated malware family encyclopedia with actor associations</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=apt.etda.or.th&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://apt.etda.or.th" target="_blank" rel="noreferrer noopener">ETDA Threat Actor Encyclopedia</a>
+                    <span class="res-tool-desc">Comprehensive APT and actor tracking by Thailand CERT</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=apt.etda.or.th&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://apt.etda.or.th/cgi-bin/listgroups.cgi" target="_blank" rel="noreferrer noopener">ThaiCERT APT Groups</a>
+                    <span class="res-tool-desc">Grouped APT listings from the ETDA actor encyclopedia</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=blog.google&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://blog.google/threat-analysis-group" target="_blank" rel="noreferrer noopener">Google TAG</a>
+                    <span class="res-tool-desc">Google Threat Analysis Group public blog and campaign reporting</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <!-- IOC Feeds & Reputation -->
+            <div class="res-category">
+              <div class="res-category-title">IOC Feeds &amp; Reputation</div>
+              <ul class="res-tool-list">
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=otx.alienvault.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://otx.alienvault.com" target="_blank" rel="noreferrer noopener">OTX AlienVault</a>
+                    <span class="res-tool-desc">Community threat sharing platform with indicators and pulses</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=threatfox.abuse.ch&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://threatfox.abuse.ch" target="_blank" rel="noreferrer noopener">ThreatFox</a>
+                    <span class="res-tool-desc">IOC submission and lookup platform by Abuse.ch</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=urlhaus.abuse.ch&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://urlhaus.abuse.ch" target="_blank" rel="noreferrer noopener">URLhaus</a>
+                    <span class="res-tool-desc">Malicious URL database and reporting service by Abuse.ch</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=feodotracker.abuse.ch&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://feodotracker.abuse.ch" target="_blank" rel="noreferrer noopener">Feodo Tracker</a>
+                    <span class="res-tool-desc">Botnet C2 IP blocklist tracker for banking trojans and ransomware</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=viz.greynoise.io&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://viz.greynoise.io" target="_blank" rel="noreferrer noopener">GreyNoise</a>
+                    <span class="res-tool-desc">Classifies internet-wide scanners and separates noise from threats</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=abuseipdb.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://abuseipdb.com" target="_blank" rel="noreferrer noopener">AbuseIPDB</a>
+                    <span class="res-tool-desc">Community IP reputation database for checking and reporting abuse</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <!-- Vulnerability Context -->
+            <div class="res-category">
+              <div class="res-category-title">Vulnerability Context</div>
+              <ul class="res-tool-list">
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=nvd.nist.gov&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://nvd.nist.gov" target="_blank" rel="noreferrer noopener">NVD</a>
+                    <span class="res-tool-desc">NIST National Vulnerability Database with CVSS scores and references</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=cisa.gov&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noreferrer noopener">CISA KEV</a>
+                    <span class="res-tool-desc">Known Exploited Vulnerabilities catalog with remediation deadlines</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=exploit-db.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://exploit-db.com" target="_blank" rel="noreferrer noopener">Exploit-DB</a>
+                    <span class="res-tool-desc">Public exploit archive maintained by Offensive Security</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=vuldb.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://vuldb.com" target="_blank" rel="noreferrer noopener">VulnDB</a>
+                    <span class="res-tool-desc">Community vulnerability database with free public search</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <!-- Visualization & Graphing -->
+            <div class="res-category">
+              <div class="res-category-title">Visualization &amp; Graphing</div>
+              <ul class="res-tool-list">
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=mitre-attack.github.io&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://mitre-attack.github.io/attack-navigator" target="_blank" rel="noreferrer noopener">ATT&amp;CK Navigator</a>
+                    <span class="res-tool-desc">Interactive layer-based ATT&amp;CK coverage and heat-map tool</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=gopivot.ing&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://gopivot.ing" target="_blank" rel="noreferrer noopener">Gepivot</a>
+                    <span class="res-tool-desc">Graph-based OSINT pivot visualization for infrastructure analysis</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=maltego.com&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://maltego.com/get-started" target="_blank" rel="noreferrer noopener">Maltego Community</a>
+                    <span class="res-tool-desc">Graph link analysis and OSINT pivoting platform (free tier)</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <!-- Reporting & Standards -->
+            <div class="res-category">
+              <div class="res-category-title">Reporting &amp; Standards</div>
+              <ul class="res-tool-list">
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=misp-project.org&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://misp-project.org" target="_blank" rel="noreferrer noopener">MISP Project</a>
+                    <span class="res-tool-desc">Open-source threat intelligence sharing and correlation platform</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=opencti.io&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://opencti.io" target="_blank" rel="noreferrer noopener">OpenCTI</a>
+                    <span class="res-tool-desc">Open Cyber Threat Intelligence structured data platform</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=oasis-open.github.io&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://oasis-open.github.io/cti-documentation" target="_blank" rel="noreferrer noopener">STIX/TAXII</a>
+                    <span class="res-tool-desc">OASIS standards for threat intelligence representation and transport</span>
+                  </div>
+                </li>
+                <li class="res-tool">
+                  <img class="res-favicon" src="https://www.google.com/s2/favicons?domain=cve.org&sz=16" alt="" loading="lazy" />
+                  <div class="res-tool-body">
+                    <a class="res-tool-name" href="https://cve.org" target="_blank" rel="noreferrer noopener">CVE Program</a>
+                    <span class="res-tool-desc">Authoritative CVE identifier database and disclosure program</span>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <div class="res-suggest">
+            <span>Missing a tool?</span>
+            <a href="https://github.com/actorwatch/actorwatch/issues/new?labels=resource-directory&title=Resource+suggestion" target="_blank" rel="noreferrer noopener">Suggest one on GitHub &#8599;</a>
+          </div>
+        </div>
+      </div>
     </div>
     <!-- Settings modal -->
     <div id="settings-modal" class="geo-modal" aria-hidden="true">
